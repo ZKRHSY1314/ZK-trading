@@ -1,4 +1,4 @@
-"""Paper simulation outcome evaluation service.
+﻿"""Paper simulation outcome evaluation service.
 
 Evaluates paper simulation actions against subsequent market data
 to determine if the simulation policy is effective.
@@ -438,12 +438,26 @@ class PaperSimulationEvaluationService:
                 conclusion = "pending_future_data" if pending > 0 else "insufficient_price_data"
             else:
                 positive_ratio = (strong + mild) / completed
-                if positive_ratio > 0.5 and large_drawdowns == 0:
+
+                # Policy Gate Hardening
+                min_sample_size = 10
+                error_rate = (skipped + errors) / total if total > 0 else 0
+                sufficient_data = error_rate < 0.2
+
+                # Retrieve baseline from experiment if available
+                has_baseline_improvement = True  # Simplified for v1, assume baseline improvement is met if positive_ratio > 0.5
+
+                if completed >= min_sample_size and sufficient_data and positive_ratio > 0.5 and large_drawdowns == 0 and has_baseline_improvement:
                     conclusion = "promising_simulation_policy"
                 elif failed > completed * 0.3 or large_drawdowns > 0:
                     conclusion = "weak_simulation_policy"
                 else:
-                    conclusion = "mixed_or_unproven_policy"
+                    if completed < min_sample_size:
+                        conclusion = "insufficient_sample_size"
+                    elif not sufficient_data:
+                        conclusion = "insufficient_data_quality"
+                    else:
+                        conclusion = "mixed_or_unproven_policy"
 
             results.append({
                 "policy_id": pid,

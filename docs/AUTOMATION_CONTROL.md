@@ -613,3 +613,30 @@ cd C:\Users\lenovo\Desktop\A股记录\ai_trading_system\backend
 - 不影响真实系统的候选打分、监控规则和策略配置。
 - 所有返回结果均带有 "Simulation only. Not investment advice." 声明。
 - `/health` 始终为 `live_trading_enabled=false`。
+
+## Data Readiness (数据就绪与日线缓存)
+
+在进行自动化扫描和评估之前，可以使用数据就绪工具提前拉取和刷新基础行情，减少盘中 API 压力。
+
+### 自动化模式
+
+- **price-readiness**: 检查候选池和持仓标的的最新价格可用性，验证各数据源的健康状况，并在必要时触发兜底。
+- **daily-bar-cache**: 为焦点候选批量预热近 120 天日线数据到本地 SQLite 缓存，避免盘中反复调用远程 API。
+
+```powershell
+# 运行数据就绪检查
+.\.venv\Scripts\python.exe scripts\automation_loop.py --mode price-readiness --max-cycles 1 --limit 50
+
+# 运行日线缓存刷新
+.\.venv\Scripts\python.exe scripts\automation_loop.py --mode daily-bar-cache --max-cycles 1 --limit 50
+```
+
+## Schedule Cadence (调度建议)
+
+建议在交易日中按以下时间点执行完整的 `cycle` 循环：
+- **10:00**：开盘后，评估早盘动量。
+- **13:00**：午盘开盘，检查趋势延续性。
+- **16:00**：收盘后，日线数据最终落定，执行复盘和纸面策略评估。
+
+**非交易日 (周末/节假日)**：
+- 运行 `--mode potential` 进行盘后/非工作日的宽泛潜力搜索（比如自动发现 200+ 候选用于下周观察）。

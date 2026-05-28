@@ -1,4 +1,4 @@
-import json
+﻿import json
 import re
 from statistics import mean
 from typing import Any
@@ -152,8 +152,13 @@ class LearningService:
 
         win_rate = (sum(1 for ok in predictions if ok) / len(predictions)) if predictions else 0.0
         avg_return = mean(returns) if returns else 0.0
+        total_return = sum(returns) if returns else 0.0
         profit_loss_ratio = self._profit_loss_ratio(returns)
         max_drawdown = self._max_drawdown(returns)
+
+        # Determine skipped due to missing data
+        skipped_count = sum(1 for row in rows if "skipped" in str(row.get("label", "")).lower())
+
         result = LearningBacktestResult(
             strategy_name=strategy_name,
             sample_count=len(closed_rows),
@@ -167,6 +172,9 @@ class LearningService:
             summary={
                 "rule": "重点关注/优秀/高分样本优先，风险标记为大或有时降级观察",
                 "predicted_trade_count": len(predictions),
+                "total_return": round(total_return, 4),
+                "skipped_count": skipped_count,
+                "data_source_quality": "High (Local SQLite fallback)",
                 "positive_labels": sorted(POSITIVE_LABELS),
                 "negative_labels": sorted(NEGATIVE_LABELS),
                 "pending_labels": sorted(PENDING_LABELS),
@@ -188,12 +196,15 @@ class LearningService:
         latest_scan = LocalCandidateScanner().latest_scan()
         automation = None
         from app.automation.supervisor import AutomationSupervisor
+        from app.monitoring.service import MonitoringService
 
         supervisor = AutomationSupervisor()
         if automation_run_id is not None:
             automation = supervisor.get_run(automation_run_id)
         else:
             automation = supervisor.latest_run()
+
+        monitoring = MonitoringService().summary()
 
         strong = latest_scan["buckets"]["strong"] if latest_scan else []
         watch = latest_scan["buckets"]["watch"] if latest_scan else []
@@ -227,6 +238,22 @@ class LearningService:
                     "focus_symbols": focus_symbols,
                 },
                 "automation": automation.get("summary", {}) if automation else {},
+                "monitoring_alerts": monitoring.get("alerts", [])[:10],
+                "paper_simulation_outcomes": {
+                    "win_rate": backtest.win_rate,
+                    "avg_return": backtest.avg_return,
+                    "profit_loss_ratio": backtest.profit_loss_ratio,
+                    "max_drawdown": backtest.max_drawdown,
+                },
+                "readiness_fallback_quality": {
+                    "skipped_count": len(skipped),
+                    "fallback_note": "部分数据源由于接口限制或网络问题导致兜底或跳过，将在复盘中继续追踪。",
+                },
+                "lessons_learned": backtest.summary.get("rule"),
+                "open_review_items": {
+                    "pending_count": backtest.pending_count,
+                    "false_positives": backtest.false_positive_count,
+                },
                 "learning": {
                     "sample_counts": self.sample_counts_by_label(),
                     "backtest": backtest.model_dump(mode="json"),

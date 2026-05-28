@@ -4,6 +4,7 @@ from app.models import DecisionAnalysis, KnowledgeContext, MarketSnapshot
 from app.rules.engine import RuleEngine
 from app.rules.loader import load_rule_config
 from app.storage.sqlite_store import SQLiteStore
+from app.ai.model_gateway import DisabledModelGateway
 
 
 class DecisionAnalyzer:
@@ -12,6 +13,7 @@ class DecisionAnalyzer:
         self.store.init()
         self.repository = KnowledgeRepository(self.store)
         self.engine = RuleEngine(load_rule_config())
+        self.ai = DisabledModelGateway()
 
     def analyze(self, snapshot: MarketSnapshot) -> DecisionAnalysis:
         decision = self.engine.evaluate(snapshot)
@@ -27,13 +29,15 @@ class DecisionAnalyzer:
             user_notes=self.repository.search_user_notes(keywords),
         )
 
-        return DecisionAnalysis(
+        analysis = DecisionAnalysis(
             snapshot=snapshot,
             decision=decision,
             knowledge=knowledge,
             risk_notes=self._risk_notes(decision, knowledge),
             suggested_next_actions=self._suggested_next_actions(decision, knowledge),
         )
+        analysis.explanation = self.ai.explain(analysis)
+        return analysis
 
     def _risk_notes(self, decision, knowledge: KnowledgeContext) -> list[str]:
         notes: list[str] = []

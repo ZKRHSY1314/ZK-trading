@@ -62,12 +62,24 @@ class KnowledgeContext(BaseModel):
     user_notes: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class Explanation(BaseModel):
+    signal_summary: str
+    matched_rules: list[str] = Field(default_factory=list)
+    risk_blockers: list[str] = Field(default_factory=list)
+    data_quality: str
+    similar_cases: list[dict[str, Any]] = Field(default_factory=list)
+    uncertainty_notes: list[str] = Field(default_factory=list)
+    simulation_disclaimer: str = "This is a simulation review based on historical data. Not investment advice."
+
+
+
 class DecisionAnalysis(BaseModel):
     snapshot: MarketSnapshot
     decision: CandidateDecision
     knowledge: KnowledgeContext
     risk_notes: list[str] = Field(default_factory=list)
     suggested_next_actions: list[str] = Field(default_factory=list)
+    explanation: Explanation | None = None
 
 
 class SimulationOrder(BaseModel):

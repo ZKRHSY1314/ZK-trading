@@ -21,23 +21,40 @@
 - `docs/PRD.md`：产品需求文档。
 - `docs/TECHNICAL_ROADMAP.md`：分阶段技术路线。
 - `docs/RISK_BOUNDARIES.md`：风控和权限边界。
+- `docs/AUTOMATION_CONTROL.md`：自动化运行文档。
+- `docs/RELEASE_CHECKLIST.md`：发版自检清单。
 - `backend/`：FastAPI 后端骨架。
 - `frontend/`：Vue 控制台骨架。
 
-## 后端本地启动
+## 首次安装与运行 (Demo Mode)
+
+本项目支持在没有私有数据集 `数据集1` 的情况下，使用内置的 Demo 种子数据进行运行体验。
+
+1. **后端安装与运行**
 
 ```powershell
 cd C:\Users\lenovo\Desktop\A股记录\ai_trading_system\backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
+
+# 导入种子数据（无私有数据时将自动使用 demo_seed）
+python -X utf8 scripts\import_legacy_data.py
+
+# 启动后端
 uvicorn app.main:app --reload
 ```
+API 健康检查：`http://127.0.0.1:8000/health`
+API 文档：`http://127.0.0.1:8000/docs`
 
-启动后访问：
+2. **前端安装与运行**
 
-- API 健康检查：`http://127.0.0.1:8000/health`
-- API 文档：`http://127.0.0.1:8000/docs`
+```powershell
+cd C:\Users\lenovo\Desktop\A股记录\ai_trading_system\frontend
+npm install
+npm run dev
+```
+前端访问地址详见终端输出（通常为 `http://127.0.0.1:3000` 或 `http://localhost:5173`）。
 
 ## 导入交易知识库
 

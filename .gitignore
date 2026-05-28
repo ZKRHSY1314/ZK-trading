@@ -33,3 +33,6 @@ data/external/
 output/
 tmp/
 temp/
+scratch/
+frontend/scratch/
+frontend/smoke_result.json

@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import json
 import math
 import sqlite3
@@ -10,6 +10,8 @@ import pandas as pd
 
 from app.config import settings
 from app.storage.sqlite_store import SQLiteStore
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 
 def clean_value(value: Any) -> Any:
@@ -363,7 +365,7 @@ def import_strategy_documents(conn: sqlite3.Connection, legacy_dir: Path) -> int
 
 
 def import_user_seed(conn: sqlite3.Connection) -> dict[str, int]:
-    seed_path = Path("configs/user_knowledge_seed.json")
+    seed_path = BACKEND_ROOT / "configs" / "user_knowledge_seed.json"
     if not seed_path.exists():
         return {
             "user_stock_notes": 0,
@@ -460,38 +462,290 @@ def import_user_seed(conn: sqlite3.Connection) -> dict[str, int]:
 
 
 def import_all(reset: bool = True) -> dict[str, int]:
-    legacy_dir = settings.legacy_data_dir.resolve()
-    if not legacy_dir.exists():
-        raise FileNotFoundError(f"找不到资料目录: {legacy_dir}")
+    legacy_dir = settings.legacy_data_dir
+    if not legacy_dir.is_absolute():
+        legacy_dir = BACKEND_ROOT / legacy_dir
+    legacy_dir = legacy_dir.resolve()
 
     store = SQLiteStore(settings.database_path)
     store.init()
     if reset:
         store.reset_knowledge()
 
+    has_legacy = legacy_dir.exists()
+    if not has_legacy:
+        print(f"⚠️ 警告: 找不到私有资料目录: {legacy_dir}。将仅使用 demo 种子数据和用户补充数据进行初始化。")
+
     with store.connect() as conn:
-        summary = {
-            "source_documents": register_sources(conn, legacy_dir),
-            "principles": import_principles(conn, legacy_dir),
-        }
-        strategy_count, indicator_count = import_strategies(conn, legacy_dir)
-        summary["strategies"] = strategy_count
-        summary["technical_indicators"] = indicator_count
-        summary["trade_cases"] = import_cases(conn, legacy_dir)
-        summary["trade_records"] = import_trade_records(conn, legacy_dir)
-        summary["stock_profiles"] = import_stock_profiles(conn, legacy_dir)
-        summary["strategy_documents"] = import_strategy_documents(conn, legacy_dir)
+        summary = {}
+        if has_legacy:
+            summary = {
+                "source_documents": register_sources(conn, legacy_dir),
+                "principles": import_principles(conn, legacy_dir),
+            }
+            strategy_count, indicator_count = import_strategies(conn, legacy_dir)
+            summary["strategies"] = strategy_count
+            summary["technical_indicators"] = indicator_count
+            summary["trade_cases"] = import_cases(conn, legacy_dir)
+            summary["trade_records"] = import_trade_records(conn, legacy_dir)
+            summary["stock_profiles"] = import_stock_profiles(conn, legacy_dir)
+            summary["strategy_documents"] = import_strategy_documents(conn, legacy_dir)
+        else:
+            summary = {
+                "source_documents": 0, "principles": 0, "strategies": 0,
+                "technical_indicators": 0, "trade_cases": 0, "trade_records": 0,
+                "stock_profiles": 0, "strategy_documents": 0
+            }
+
+        # Import Demo Seed if it exists
+        demo_seed_path = BACKEND_ROOT / "configs" / "demo_seed.json"
+        if demo_seed_path.exists():
+            demo_seed = read_json(demo_seed_path)
+            for item in demo_seed.get("principles", []):
+                insert_principle(conn, item, "交易铁律")
+                summary["principles"] += 1
+            for item in demo_seed.get("strategies", []):
+                insert_strategy(conn, item, "buy")
+                summary["strategies"] += 1
+            for item in demo_seed.get("trade_records", []):
+                record = clean_record(item)
+                conn.execute(
+                    """
+                    INSERT INTO trade_records(
+                        trade_date, stock_code, stock_name, operation_type, reference_price,
+                        pct_change_text, turnover_text, float_ratio_text, result, remarks, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.get("trade_date") or record.get("日期"),
+                        record.get("stock_code") or record.get("股票代码"),
+                        record.get("stock_name") or record.get("股票名称"),
+                        record.get("operation_type") or record.get("操作类型"),
+                        maybe_float(record.get("reference_price") or record.get("参考价格")),
+                        record.get("pct_change_text") or record.get("涨幅"),
+                        record.get("turnover_text") or record.get("成交额"),
+                        record.get("float_ratio_text") or record.get("占流通盘"),
+                        record.get("result") or record.get("结果"),
+                        record.get("remarks") or record.get("备注"),
+                        dump_json(record),
+                    ),
+                )
+                summary["trade_records"] += 1
+            demo_candidates = demo_seed.get("demo_candidates", [])
+            for item in demo_candidates:
+                record = clean_record(item)
+                reasons = record.get("reasons") or []
+                raw = {**record, "demo_fixture": True, "simulation_only": True}
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO candidate_lifecycle(
+                        symbol, name, state, score, rating, risk_level, source, reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.get("symbol"),
+                        record.get("name"),
+                        record.get("state") or "pending_review",
+                        maybe_float(record.get("score")) or 0,
+                        record.get("rating"),
+                        record.get("risk_level") or "demo_only",
+                        "demo_seed",
+                        "；".join(reasons),
+                        dump_json(raw),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO candidate_lifecycle_events(
+                        symbol, name, from_state, to_state, event_type, source, payload_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.get("symbol"),
+                        record.get("name"),
+                        None,
+                        record.get("state") or "pending_review",
+                        "demo_seed_imported",
+                        "demo_seed",
+                        dump_json(raw),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO candidate_scores(
+                        symbol, name, total_score, discovery_score, volume_score, phase_score,
+                        lifecycle_score, focus_score, risk_penalty, rating, state, source,
+                        reasons_json, components_json, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.get("symbol"),
+                        record.get("name"),
+                        maybe_float(record.get("score")) or 0,
+                        10,
+                        5,
+                        10,
+                        8,
+                        10,
+                        0,
+                        record.get("rating"),
+                        record.get("state") or "pending_review",
+                        "demo_seed",
+                        dump_json(reasons),
+                        dump_json({"demo_fixture": True, "simulation_only": True}),
+                        dump_json(raw),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO price_readiness_reports(
+                        symbol, name, source, latest_price, latest_price_at, coverage_status,
+                        history_points, error_message, metrics_json, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        record.get("symbol"),
+                        record.get("name"),
+                        "demo_seed_fixture",
+                        maybe_float(record.get("current_price")),
+                        "2026-05-26T15:00:00",
+                        "demo_fixture",
+                        2,
+                        None,
+                        dump_json({"demo_fixture": True, "simulation_only": True}),
+                    ),
+                )
+            for item in demo_seed.get("demo_daily_bars", []):
+                symbol = item.get("symbol")
+                for bar in item.get("bars", []):
+                    record = clean_record(bar)
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO daily_bar_cache(
+                            symbol, trade_date, open, high, low, close, volume, amount,
+                            source, quality_status, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        """,
+                        (
+                            symbol,
+                            record.get("trade_date"),
+                            maybe_float(record.get("open")),
+                            maybe_float(record.get("high")),
+                            maybe_float(record.get("low")),
+                            maybe_float(record.get("close")),
+                            maybe_float(record.get("volume")),
+                            maybe_float(record.get("amount")),
+                            "demo_seed_fixture",
+                            "demo_fixture",
+                        ),
+                    )
+            demo_sim = demo_seed.get("demo_paper_simulation") or {}
+            if demo_sim and demo_candidates:
+                proposal = conn.execute(
+                    """
+                    INSERT INTO agent_calibration_proposals(
+                        proposal_type, target, status, evidence_json, proposal_json, created_by
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "demo_policy",
+                        "demo_seed",
+                        "approved",
+                        dump_json({"demo_fixture": True, "simulation_only": True}),
+                        dump_json({"action": "observe_only"}),
+                        "demo_seed",
+                    ),
+                )
+                experiment = conn.execute(
+                    """
+                    INSERT INTO agent_sandbox_experiments(
+                        proposal_id, status, baseline_metrics_json, proposed_metrics_json,
+                        comparison_json, conclusion, created_by, completed_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        proposal.lastrowid,
+                        "completed",
+                        dump_json({"sample_count": len(demo_candidates), "demo_fixture": True}),
+                        dump_json({"action": "observe_only", "demo_fixture": True}),
+                        dump_json({"simulation_only": True}),
+                        "demo_observe_only",
+                        "demo_seed",
+                    ),
+                )
+                policy = conn.execute(
+                    """
+                    INSERT INTO agent_simulation_policies(
+                        source_experiment_id, policy_type, status, policy_json,
+                        risk_limits_json, created_by, reviewed_by, review_note, reviewed_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        experiment.lastrowid,
+                        demo_sim.get("policy_type") or "demo_observe_only",
+                        "approved",
+                        dump_json({"action": "observe", "demo_fixture": True, "simulation_only": True}),
+                        dump_json({"max_position_pct": 0, "demo_fixture": True}),
+                        "demo_seed",
+                        "demo_seed",
+                        "Demo policy for local dashboard only.",
+                    ),
+                )
+                run = conn.execute(
+                    """
+                    INSERT INTO agent_paper_simulation_runs(
+                        policy_id, status, started_at, completed_at, metrics_json, created_by
+                    )
+                    VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)
+                    """,
+                    (
+                        policy.lastrowid,
+                        "completed",
+                        dump_json({"demo_fixture": True, "total_candidates": len(demo_candidates)}),
+                        "demo_seed",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_paper_simulation_actions(
+                        run_id, symbol, action_type, reason_json, simulated_price,
+                        simulated_quantity, risk_flags_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run.lastrowid,
+                        demo_sim.get("symbol") or demo_candidates[0].get("symbol"),
+                        "observe",
+                        dump_json(["Demo fixture: observation only", "SIMULATION ONLY"]),
+                        maybe_float(demo_sim.get("simulated_price")),
+                        0,
+                        dump_json(["demo_fixture", "not_investment_advice"]),
+                    ),
+                )
+
         user_seed_counts = import_user_seed(conn)
         summary["user_stock_notes"] = user_seed_counts["user_stock_notes"]
         summary["trade_cases"] += user_seed_counts["trade_cases"]
         summary["stock_profiles"] += user_seed_counts["stock_profiles"]
         summary["main_force_phase_patterns"] = user_seed_counts["main_force_phase_patterns"]
+
+        status = "success" if has_legacy else "demo_only"
         conn.execute(
             """
             INSERT INTO import_runs(source_dir, status, summary_json)
             VALUES (?, ?, ?)
             """,
-            (str(legacy_dir), "success", dump_json(summary)),
+            (str(legacy_dir) if has_legacy else "demo_seed", status, dump_json(summary)),
         )
 
     return store.table_counts()

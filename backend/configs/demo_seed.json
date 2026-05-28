@@ -1,0 +1,80 @@
+{
+  "principles": [
+    {
+      "id": "DEMO_P_001",
+      "name": "严格风控 (Demo Fixture)",
+      "description": "任何单次模拟交易亏损不得超过总资金的2%。此为Demo演示原则。",
+      "来源": "demo_seed",
+      "severity": "hard"
+    }
+  ],
+  "strategies": [
+    {
+      "id": "DEMO_S_001",
+      "策略名": "均线多头 (Demo Fixture)",
+      "触发条件": "5日均线上穿10日均线。",
+      "操作标准": "此为Demo演示策略，主要用于展示候选池和模拟计划界面。",
+      "仓位管理": "首次建仓不超过20%",
+      "参考指标": "MA5, MA10",
+      "风险控制": "跌破10日均线止损",
+      "来源": "demo_seed"
+    }
+  ],
+  "trade_records": [
+    {
+      "日期": "2023-01-01",
+      "股票代码": "SH600000",
+      "股票名称": "DemoBank",
+      "操作类型": "模拟买入",
+      "参考价格": "10.00",
+      "涨幅": "1%",
+      "成交额": "100万",
+      "占流通盘": "0.01%",
+      "结果": "盈利",
+      "备注": "此为Demo演示模拟流水"
+    }
+  ],
+  "demo_candidates": [
+    {
+      "symbol": "SH600135",
+      "name": "乐凯胶片 Demo",
+      "score": 42.5,
+      "rating": "demo_focus_watch",
+      "state": "focus_watch",
+      "risk_level": "demo_only",
+      "current_price": 9.72,
+      "reasons": ["Demo fixture: focus watch", "Simulation-only local seed"]
+    },
+    {
+      "symbol": "SZ002081",
+      "name": "金螳螂 Demo",
+      "score": 31.0,
+      "rating": "demo_distribution_sample",
+      "state": "phase_guarded",
+      "risk_level": "demo_only",
+      "current_price": 3.88,
+      "reasons": ["Demo fixture: completed distribution sample", "Simulation-only local seed"]
+    }
+  ],
+  "demo_daily_bars": [
+    {
+      "symbol": "SH600135",
+      "bars": [
+        {"trade_date": "2026-05-25", "open": 9.40, "high": 9.70, "low": 9.30, "close": 9.55, "volume": 1000000, "amount": 9550000},
+        {"trade_date": "2026-05-26", "open": 9.55, "high": 9.80, "low": 9.50, "close": 9.72, "volume": 1200000, "amount": 11664000}
+      ]
+    },
+    {
+      "symbol": "SZ002081",
+      "bars": [
+        {"trade_date": "2026-05-25", "open": 3.95, "high": 4.02, "low": 3.82, "close": 3.90, "volume": 2200000, "amount": 8580000},
+        {"trade_date": "2026-05-26", "open": 3.90, "high": 3.93, "low": 3.80, "close": 3.88, "volume": 1800000, "amount": 6984000}
+      ]
+    }
+  ],
+  "demo_paper_simulation": {
+    "policy_type": "demo_observe_only",
+    "symbol": "SH600135",
+    "simulated_price": 9.72
+  }
+}

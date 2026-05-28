@@ -208,6 +208,10 @@ def main() -> int:
         except (urllib.error.URLError, RuntimeError, subprocess.TimeoutExpired) as exc:
             entry["status"] = "failed"
             entry["error"] = str(exc)
+            if isinstance(exc, urllib.error.URLError):
+                entry["next_action"] = "Check backend API health and connectivity."
+            else:
+                entry["next_action"] = "Check provider stability or fallback data sources."
             append_log(entry)
             print(json.dumps(entry, ensure_ascii=False, indent=2))
             if not args.continue_on_error:

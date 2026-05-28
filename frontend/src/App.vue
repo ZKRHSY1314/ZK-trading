@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <main class="shell">
     <section class="topbar">
       <div>
@@ -31,7 +31,47 @@
     </section>
 
     <section class="grid">
-      <article class="panel">
+<article class="panel wide">
+        <h2>Price Readiness</h2>
+        <p class="review-only-banner">⚠ This data is for simulation and system readiness only. Do not use as investment advice.</p>
+        <div class="metrics">
+          <span>就绪 (Ready) {{ priceReadinessSummary?.ready ?? 0 }}</span>
+          <span>无价格 (Missing) {{ priceReadinessSummary?.missing_price ?? 0 }}</span>
+          <span>价格陈旧 (Stale) {{ priceReadinessSummary?.stale_price ?? 0 }}</span>
+          <span>历史不足 {{ priceReadinessSummary?.insufficient_history ?? 0 }}</span>
+          <span>错误 (Error) {{ priceReadinessSummary?.error ?? 0 }}</span>
+        </div>
+        <div class="actions">
+          <button data-testid="run-price-readiness-button" @click="runPriceReadiness" :disabled="priceReadinessLoading">
+            {{ priceReadinessLoading ? '检查中' : '运行价格就绪检查' }}
+          </button>
+          <button data-testid="run-daily-bar-refresh-button" @click="runDailyBarRefresh" :disabled="dailyBarRefreshLoading">
+            {{ dailyBarRefreshLoading ? '刷新中' : '刷新日线缓存' }}
+          </button>
+        </div>
+
+        <h3 style="margin-top: 16px;">Daily Bar Coverage</h3>
+        <div v-if="dailyBarCoverage.length" class="score-list" style="margin-bottom: 24px;">
+          <div v-for="cov in dailyBarCoverage" :key="cov.symbol" class="score-item">
+            <strong>{{ cov.symbol }} / {{ cov.quality_status }}</strong>
+            <span>数量: {{ cov.cached_bar_count }} / 范围: {{ cov.first_trade_date }} 至 {{ cov.last_trade_date }}</span>
+            <small>数据源: {{ cov.source }}</small>
+          </div>
+        </div>
+        <p v-else style="margin-bottom: 24px;">暂无日线缓存覆盖率数据。点击上方按钮进行刷新。</p>
+
+        <h3 style="margin-top: 16px;">Readiness Reports</h3>
+        <div v-if="priceReadinessReports.length" class="score-list">
+          <div v-for="report in priceReadinessReports" :key="report.symbol" class="score-item">
+            <strong>{{ report.symbol }} {{ report.name }} / {{ report.coverage_status }}</strong>
+            <span>最新价格: {{ report.latest_price ?? 'N/A' }} / 数据源: {{ report.source }}</span>
+            <small>更新时间: {{ report.latest_price_at ?? 'N/A' }} / 历史数据点: {{ report.history_points }}</small>
+            <small v-if="report.error_message">⚠ {{ report.error_message }}</small>
+          </div>
+        </div>
+        <p v-else>暂无价格就绪报告。点击上方按钮进行检查。</p>
+      </article>
+<article class="panel">
         <h2>候选池</h2>
         <div class="metrics">
           <span>强候选 {{ latestScan?.strong_count ?? 0 }}</span>
@@ -52,39 +92,204 @@
           <small>{{ item.reasons?.join("；") }}</small>
         </div>
       </article>
-
-      <article class="panel">
-        <h2>知识库</h2>
-        <div class="knowledge">
-          <span>铁律 {{ summary?.principles ?? 0 }}</span>
-          <span>战法 {{ summary?.strategies ?? 0 }}</span>
-          <span>案例 {{ summary?.trade_cases ?? 0 }}</span>
-          <span>档案 {{ summary?.stock_profiles ?? 0 }}</span>
+<article class="panel wide">
+        <h2>盘后潜力搜索</h2>
+        <div v-if="potentialSearch" class="metrics">
+          <span>状态 {{ potentialSearch.status }}</span>
+          <span>扫描 {{ potentialSearch.total_scanned }}</span>
+          <span>入库 {{ potentialSearch.stored_count }}</span>
+          <span>评分 {{ potentialSearch.scored_count }}</span>
         </div>
-        <p>候选股分析会自动引用交易铁律、相关战法、相似案例和成本线档案。</p>
-        <div class="actions">
-          <button data-testid="simulation-plan-button" @click="loadPlan" :disabled="!topCandidates.length || planLoading">
-            {{ planLoading ? "生成中" : "生成模拟计划" }}
-          </button>
-          <button disabled>模拟卖出</button>
-          <button class="ghost" disabled>实盘买入</button>
+        <div v-if="potentialSearch?.errors?.length" class="potential-errors">
+          <small v-for="(err, idx) in potentialSearch.errors" :key="idx">⚠ {{ err }}</small>
         </div>
-        <div v-if="topScores.length" class="score-list">
-          <div v-for="item in topScores.slice(0, 5)" :key="item.symbol" class="score-item">
-            <strong>{{ item.symbol }} {{ item.name }} / {{ item.total_score.toFixed(1) }}</strong>
-            <span>{{ item.state }} / 发现 {{ item.components.discovery_score.toFixed(1) }} / 量能 {{ item.components.volume_score.toFixed(1) }} / 阶段 {{ item.components.phase_score.toFixed(1) }}</span>
-            <small>{{ item.reasons.slice(0, 3).join("；") }}</small>
+        <div v-if="potentialTopItems.length" class="score-list">
+          <div v-for="item in potentialTopItems" :key="item.symbol" class="score-item">
+            <strong>{{ item.symbol }} {{ item.name }} / {{ (item.potential_score ?? 0).toFixed(1) }}</strong>
+            <span>{{ item.lifecycle_state ?? '未知' }}
+              <template v-if="item.current_price"> / ¥{{ item.current_price }}</template>
+              <template v-if="item.pct_change != null"> / {{ item.pct_change.toFixed(2) }}%</template>
+            </span>
+            <small>{{ (item.reasons ?? []).slice(0, 3).join('；') }}</small>
           </div>
         </div>
-        <div v-if="plan" class="plan">
-          <strong>{{ plan.symbol }} {{ plan.name }}：{{ plan.action }}</strong>
-          <span>数量 {{ plan.quantity }} 股 / 参考价 {{ plan.reference_price }}</span>
-          <span>止损 {{ plan.stop_loss ?? "待确认" }} / 目标 {{ plan.target_price ?? "待确认" }}</span>
-          <small>{{ plan.reasons.join("；") }}</small>
+        <p v-else>暂无搜索记录。可在盘后运行「潜力搜索」按钮收集更多候选。</p>
+      </article>
+<article class="panel wide">
+        <h2>Agent Control Queue</h2>
+        <div class="metrics">
+          <span>实盘状态: {{ agentCapabilities?.live_trading_enabled ? '允许' : '禁用' }}</span>
+          <span>券商控制: {{ agentCapabilities?.broker_control_blocked ? '拦截' : '允许' }}</span>
+        </div>
+        <p>安全沙盒任务:</p>
+        <div class="actions">
+          <button v-for="t in agentCapabilities?.safe_tasks" :key="t" @click="runAgentTask(t)" :disabled="agentTaskLoading">
+            运行 {{ t }}
+          </button>
+        </div>
+        <p>需要审批的任务:</p>
+        <div class="actions">
+          <button v-for="t in agentCapabilities?.observation_tasks" :key="t" @click="runAgentTask(t)" :disabled="agentTaskLoading" class="ghost">
+            发起 {{ t }}
+          </button>
+        </div>
+        <p>阻断任务:</p>
+        <div class="actions">
+          <button class="disabled-live" v-for="t in agentCapabilities?.blocked_tasks" :key="t" disabled>
+            拦截 {{ t }}
+          </button>
+        </div>
+
+        <div v-if="agentTasks.length" class="score-list">
+          <div v-for="task in agentTasks" :key="task.id" class="score-item">
+            <strong>任务 #{{ task.id }} : {{ task.task_type }}</strong>
+            <span>状态: {{ task.status }} / 审批: {{ task.approval_status }}</span>
+            <div class="actions" v-if="task.approval_status === 'pending'">
+              <button @click="approveTask(task.id)">Approve</button>
+              <button class="disabled-live" @click="rejectTask(task.id)">Reject</button>
+            </div>
+            <div class="actions" v-else-if="task.approval_status === 'approved' && task.status !== 'completed' && task.status !== 'failed'">
+              <button @click="executeTask(task.id)" :disabled="agentTaskLoading">Execute</button>
+            </div>
+            <small v-if="task.error">⚠ {{ task.error }}</small>
+          </div>
+        </div>
+        <p v-else>暂无Agent任务记录。</p>
+
+        <p>审计日志:</p>
+        <div v-if="agentAudit.length" class="score-list">
+          <div v-for="audit in agentAudit" :key="audit.id" class="score-item">
+            <strong>事件: {{ audit.event_type }} (任务 #{{ audit.task_id }})</strong>
+            <span>{{ audit.message }}</span>
+            <small>{{ audit.created_at }}</small>
+          </div>
         </div>
       </article>
 
-      <article class="panel wide">
+<article class="panel wide">
+        <h2>Sandbox Experiments</h2>
+        <p class="review-only-banner">🔬 Sandbox-only: experiments simulate what-if scenarios for approved proposals. No scoring rules, candidate scores, or trading behavior are changed.</p>
+        <div class="metrics">
+          <span>实验总数 {{ sandboxSummary?.total_experiments ?? 0 }}</span>
+          <span>待运行提案 {{ sandboxSummary?.approved_proposals_without_experiment ?? 0 }}</span>
+        </div>
+        <div class="metrics" v-if="sandboxSummary?.by_conclusion">
+          <span v-for="(cnt, key) in sandboxSummary.by_conclusion" :key="key">{{ key }}: {{ cnt }}</span>
+        </div>
+        <div class="actions">
+          <button data-testid="run-sandbox-approved-button" @click="runSandboxApproved" :disabled="sandboxLoading">
+            {{ sandboxLoading ? '实验中' : '运行已批准提案实验' }}
+          </button>
+        </div>
+        <div v-if="sandboxExperiments.length" class="score-list">
+          <div v-for="exp in sandboxExperiments" :key="exp.id" :class="['score-item', sandboxConclusionClass(exp)]">
+            <strong>实验 #{{ exp.id }} / 提案 #{{ exp.proposal_id }} — {{ exp.conclusion }}</strong>
+            <span>
+              基线样本 {{ exp.baseline_metrics?.sample_count ?? 0 }} /
+              强突破 {{ exp.baseline_metrics?.strong_follow_through_count ?? 0 }} /
+              失败 {{ exp.baseline_metrics?.failed_signal_count ?? 0 }}
+            </span>
+            <span v-if="exp.proposed_metrics?.behavior_change">
+              提案动作: {{ exp.proposed_metrics?.action }} /
+              <template v-if="exp.proposed_metrics?.estimated_coverage_pct != null">覆盖率 {{ exp.proposed_metrics.estimated_coverage_pct }}%</template>
+              <template v-if="exp.proposed_metrics?.collateral_damage_pct != null">误伤率 {{ exp.proposed_metrics.collateral_damage_pct }}%</template>
+            </span>
+            <span v-else>无行为变化: {{ exp.proposed_metrics?.note }}</span>
+            <small>创建: {{ exp.created_at }} / 状态: {{ exp.status }}</small>
+          </div>
+        </div>
+        <p v-else>暂无沙盒实验记录。批准校准提案后点击「运行已批准提案实验」开始。</p>
+      </article>
+<article class="panel wide">
+        <h2>Paper Simulation</h2>
+        <p class="review-only-banner">🧪 SIMULATION ONLY: All actions shown here are simulated paper-trading results. They are NOT real orders, NOT investment advice, and NOT connected to any broker.</p>
+        <div class="metrics">
+          <span>策略总数 {{ paperSimSummary?.policy_count ?? 0 }}</span>
+          <span>草稿 {{ paperSimSummary?.policy_by_status?.draft ?? 0 }}</span>
+          <span>已批准 {{ paperSimSummary?.policy_by_status?.approved ?? 0 }}</span>
+          <span>已拒绝 {{ paperSimSummary?.policy_by_status?.rejected ?? 0 }}</span>
+        </div>
+        <div class="metrics">
+          <span>模拟运行 {{ paperSimSummary?.run_count ?? 0 }}</span>
+          <span>模拟动作 {{ paperSimSummary?.action_count ?? 0 }}</span>
+          <span v-for="(cnt, key) in paperSimSummary?.action_by_type" :key="key">{{ key }}: {{ cnt }}</span>
+        </div>
+        <div class="actions">
+          <button data-testid="draft-sim-policies-button" @click="draftSimPolicies" :disabled="paperSimLoading">
+            {{ paperSimLoading ? '生成中' : '从实验生成策略草稿' }}
+          </button>
+          <button data-testid="run-approved-sims-button" @click="runApprovedSimulations" :disabled="paperSimLoading">
+            {{ paperSimLoading ? '运行中' : '运行已批准模拟' }}
+          </button>
+        </div>
+
+        <h3 v-if="paperSimPolicies.length" style="margin-top: 16px;">Simulation Policies</h3>
+        <div v-if="paperSimPolicies.length" class="score-list">
+          <div v-for="p in paperSimPolicies" :key="p.id" :class="['score-item', policyStatusClass(p)]">
+            <strong>策略 #{{ p.id }} / 实验 #{{ p.source_experiment_id }} — {{ p.policy_type }}</strong>
+            <span>状态: {{ p.status }} / {{ p.policy?.disclaimer ? '⚠ 仅限模拟' : '' }}</span>
+            <small>动作: {{ p.policy?.action ?? '观察' }} / 创建: {{ p.created_at }}</small>
+            <div class="actions" v-if="p.status === 'draft'">
+              <button @click="approveSimPolicy(p.id)">Approve</button>
+              <button class="disabled-live" @click="rejectSimPolicy(p.id)">Reject</button>
+            </div>
+          </div>
+        </div>
+
+        <h3 v-if="paperSimRuns.length" style="margin-top: 16px;">Recent Simulation Runs</h3>
+        <div v-if="paperSimRuns.length" class="score-list">
+          <div v-for="run in paperSimRuns" :key="run.id" class="score-item">
+            <strong>运行 #{{ run.id }} / 策略 #{{ run.policy_id }} — {{ run.status }}</strong>
+            <span>
+              候选 {{ run.metrics?.total_candidates ?? 0 }} /
+              观察 {{ run.metrics?.observe_count ?? 0 }} /
+              模拟入场 {{ run.metrics?.simulated_entry_count ?? 0 }} /
+              模拟退出 {{ run.metrics?.simulated_exit_count ?? 0 }} /
+              跳过 {{ run.metrics?.skip_count ?? 0 }}
+            </span>
+            <small>{{ run.metrics?.disclaimer ?? '仅限模拟' }}</small>
+          </div>
+        </div>
+        <p v-if="!paperSimPolicies.length && !paperSimRuns.length">暂无模拟策略或运行记录。请先运行沙盒实验，然后点击「从实验生成策略草稿」。</p>
+      </article>
+<article class="panel wide">
+        <h2>Simulation Evaluation</h2>
+        <p class="review-only-banner">🧪 EVALUATION ONLY: This panel evaluates simulated actions against subsequent market data. It does NOT alter production scoring, rules, or live trading.</p>
+        <div class="metrics">
+          <span>总评估数 {{ paperSimEvalSummary?.total_evaluations ?? 0 }}</span>
+          <span>已完成 {{ paperSimEvalSummary?.by_status?.completed ?? 0 }}</span>
+          <span>等待未来数据 {{ paperSimEvalSummary?.by_status?.pending_future_data ?? 0 }}</span>
+          <span>无价格跳过 {{ paperSimEvalSummary?.by_status?.skipped_no_price ?? 0 }}</span>
+        </div>
+        <div class="metrics">
+          <span v-for="(cnt, key) in paperSimEvalSummary?.by_outcome_label" :key="'lbl-'+key">{{ key }}: {{ cnt }}</span>
+        </div>
+        <div class="actions">
+          <button data-testid="eval-recent-sims-button" @click="evaluateRecentSimulations" :disabled="paperSimEvalLoading">
+            {{ paperSimEvalLoading ? '评估中' : '评估近期模拟动作' }}
+          </button>
+        </div>
+
+        <h3 v-if="paperSimEvalPolicies.length" style="margin-top: 16px;">Policy Performance Conclusions</h3>
+        <div v-if="paperSimEvalPolicies.length" class="score-list">
+          <div v-for="p in paperSimEvalPolicies" :key="p.policy_id" :class="['score-item', evalConclusionClass(p.conclusion)]">
+            <strong>策略 #{{ p.policy_id }} ({{ p.policy_type }}) — {{ p.conclusion }}</strong>
+            <span>
+              已完成 {{ p.completed }} /
+              强突破 {{ p.strong_follow_through }} /
+              失败信号 {{ p.failed_signal }} /
+              大回撤 {{ p.large_drawdowns }}
+            </span>
+            <small>
+              待定: {{ p.pending_future_data }} /
+              跳过: {{ p.skipped_no_price }} /
+              {{ p.disclaimer }}
+            </small>
+          </div>
+        </div>
+        <p v-if="!paperSimEvalPolicies.length">暂无策略评估结论。点击「评估近期模拟动作」开始评估。</p>
+      </article>
+<article class="panel wide">
         <h2>AI复盘</h2>
         <p>{{ reviewText }}</p>
         <div class="account">
@@ -183,83 +388,7 @@
           <small>{{ phaseMatch.summary.next_actions.slice(0, 3).join("；") }}</small>
         </div>
       </article>
-
-      <article class="panel wide">
-        <h2>Agent Control Queue</h2>
-        <div class="metrics">
-          <span>实盘状态: {{ agentCapabilities?.live_trading_enabled ? '允许' : '禁用' }}</span>
-          <span>券商控制: {{ agentCapabilities?.broker_control_blocked ? '拦截' : '允许' }}</span>
-        </div>
-        <p>安全沙盒任务:</p>
-        <div class="actions">
-          <button v-for="t in agentCapabilities?.safe_tasks" :key="t" @click="runAgentTask(t)" :disabled="agentTaskLoading">
-            运行 {{ t }}
-          </button>
-        </div>
-        <p>需要审批的任务:</p>
-        <div class="actions">
-          <button v-for="t in agentCapabilities?.observation_tasks" :key="t" @click="runAgentTask(t)" :disabled="agentTaskLoading" class="ghost">
-            发起 {{ t }}
-          </button>
-        </div>
-        <p>阻断任务:</p>
-        <div class="actions">
-          <button class="disabled-live" v-for="t in agentCapabilities?.blocked_tasks" :key="t" disabled>
-            拦截 {{ t }}
-          </button>
-        </div>
-        
-        <div v-if="agentTasks.length" class="score-list">
-          <div v-for="task in agentTasks" :key="task.id" class="score-item">
-            <strong>任务 #{{ task.id }} : {{ task.task_type }}</strong>
-            <span>状态: {{ task.status }} / 审批: {{ task.approval_status }}</span>
-            <div class="actions" v-if="task.approval_status === 'pending'">
-              <button @click="approveTask(task.id)">Approve</button>
-              <button class="disabled-live" @click="rejectTask(task.id)">Reject</button>
-            </div>
-            <div class="actions" v-else-if="task.approval_status === 'approved' && task.status !== 'completed' && task.status !== 'failed'">
-              <button @click="executeTask(task.id)" :disabled="agentTaskLoading">Execute</button>
-            </div>
-            <small v-if="task.error">⚠ {{ task.error }}</small>
-          </div>
-        </div>
-        <p v-else>暂无Agent任务记录。</p>
-        
-        <p>审计日志:</p>
-        <div v-if="agentAudit.length" class="score-list">
-          <div v-for="audit in agentAudit" :key="audit.id" class="score-item">
-            <strong>事件: {{ audit.event_type }} (任务 #{{ audit.task_id }})</strong>
-            <span>{{ audit.message }}</span>
-            <small>{{ audit.created_at }}</small>
-          </div>
-        </div>
-      </article>
-
-      <article class="panel wide">
-        <h2>盘后潜力搜索</h2>
-        <div v-if="potentialSearch" class="metrics">
-          <span>状态 {{ potentialSearch.status }}</span>
-          <span>扫描 {{ potentialSearch.total_scanned }}</span>
-          <span>入库 {{ potentialSearch.stored_count }}</span>
-          <span>评分 {{ potentialSearch.scored_count }}</span>
-        </div>
-        <div v-if="potentialSearch?.errors?.length" class="potential-errors">
-          <small v-for="(err, idx) in potentialSearch.errors" :key="idx">⚠ {{ err }}</small>
-        </div>
-        <div v-if="potentialTopItems.length" class="score-list">
-          <div v-for="item in potentialTopItems" :key="item.symbol" class="score-item">
-            <strong>{{ item.symbol }} {{ item.name }} / {{ (item.potential_score ?? 0).toFixed(1) }}</strong>
-            <span>{{ item.lifecycle_state ?? '未知' }}
-              <template v-if="item.current_price"> / ¥{{ item.current_price }}</template>
-              <template v-if="item.pct_change != null"> / {{ item.pct_change.toFixed(2) }}%</template>
-            </span>
-            <small>{{ (item.reasons ?? []).slice(0, 3).join('；') }}</small>
-          </div>
-        </div>
-        <p v-else>暂无搜索记录。可在盘后运行「潜力搜索」按钮收集更多候选。</p>
-      </article>
-
-      <article class="panel wide">
+<article class="panel wide">
         <h2>Agent Learning Samples</h2>
         <div class="metrics">
           <span>总样本 {{ agentLearningSummary?.total_count ?? 0 }}</span>
@@ -286,8 +415,7 @@
         </div>
         <p v-else>暂无Agent学习样本。点击「收集最近完成的任务」开始收集。</p>
       </article>
-
-      <article class="panel wide">
+<article class="panel wide">
         <h2>Agent Learning Outcomes</h2>
         <div class="metrics">
           <span>覆盖数 {{ agentOutcomeSummary?.coverage_count ?? 0 }}</span>
@@ -315,8 +443,7 @@
         </div>
         <p v-else>暂无结局评估记录。点击「评估最近样本结局」开始评估。</p>
       </article>
-
-      <article class="panel wide">
+<article class="panel wide">
         <h2>Signal Performance & Calibration</h2>
         <p class="review-only-banner">⚠ All calibration proposals are review-only. No scoring weights or trading rules are changed automatically.</p>
         <div class="metrics">
@@ -364,172 +491,50 @@
           </div>
         </div>
       </article>
-
-      <article class="panel wide">
-        <h2>Sandbox Experiments</h2>
-        <p class="review-only-banner">🔬 Sandbox-only: experiments simulate what-if scenarios for approved proposals. No scoring rules, candidate scores, or trading behavior are changed.</p>
-        <div class="metrics">
-          <span>实验总数 {{ sandboxSummary?.total_experiments ?? 0 }}</span>
-          <span>待运行提案 {{ sandboxSummary?.approved_proposals_without_experiment ?? 0 }}</span>
+<article class="panel">
+        <h2>知识库</h2>
+        <div class="knowledge">
+          <span>铁律 {{ summary?.principles ?? 0 }}</span>
+          <span>战法 {{ summary?.strategies ?? 0 }}</span>
+          <span>案例 {{ summary?.trade_cases ?? 0 }}</span>
+          <span>档案 {{ summary?.stock_profiles ?? 0 }}</span>
         </div>
-        <div class="metrics" v-if="sandboxSummary?.by_conclusion">
-          <span v-for="(cnt, key) in sandboxSummary.by_conclusion" :key="key">{{ key }}: {{ cnt }}</span>
-        </div>
+        <p>候选股分析会自动引用交易铁律、相关战法、相似案例和成本线档案。</p>
         <div class="actions">
-          <button data-testid="run-sandbox-approved-button" @click="runSandboxApproved" :disabled="sandboxLoading">
-            {{ sandboxLoading ? '实验中' : '运行已批准提案实验' }}
+          <button data-testid="simulation-plan-button" @click="loadPlan" :disabled="!topCandidates.length || planLoading">
+            {{ planLoading ? "生成中" : "生成模拟计划" }}
           </button>
+          <button data-testid="analyze-symbol-button" @click="runAnalysis" :disabled="!topCandidates.length || analysisLoading">
+            {{ analysisLoading ? "分析中" : "生成分析解释" }}
+          </button>
+          <button disabled>模拟卖出</button>
+          <button class="ghost" disabled>实盘买入</button>
         </div>
-        <div v-if="sandboxExperiments.length" class="score-list">
-          <div v-for="exp in sandboxExperiments" :key="exp.id" :class="['score-item', sandboxConclusionClass(exp)]">
-            <strong>实验 #{{ exp.id }} / 提案 #{{ exp.proposal_id }} — {{ exp.conclusion }}</strong>
-            <span>
-              基线样本 {{ exp.baseline_metrics?.sample_count ?? 0 }} /
-              强突破 {{ exp.baseline_metrics?.strong_follow_through_count ?? 0 }} /
-              失败 {{ exp.baseline_metrics?.failed_signal_count ?? 0 }}
-            </span>
-            <span v-if="exp.proposed_metrics?.behavior_change">
-              提案动作: {{ exp.proposed_metrics?.action }} /
-              <template v-if="exp.proposed_metrics?.estimated_coverage_pct != null">覆盖率 {{ exp.proposed_metrics.estimated_coverage_pct }}%</template>
-              <template v-if="exp.proposed_metrics?.collateral_damage_pct != null">误伤率 {{ exp.proposed_metrics.collateral_damage_pct }}%</template>
-            </span>
-            <span v-else>无行为变化: {{ exp.proposed_metrics?.note }}</span>
-            <small>创建: {{ exp.created_at }} / 状态: {{ exp.status }}</small>
+        <div v-if="topScores.length" class="score-list">
+          <div v-for="item in topScores.slice(0, 5)" :key="item.symbol" class="score-item">
+            <strong>{{ item.symbol }} {{ item.name }} / {{ item.total_score.toFixed(1) }}</strong>
+            <span>{{ item.state }} / 发现 {{ item.components.discovery_score.toFixed(1) }} / 量能 {{ item.components.volume_score.toFixed(1) }} / 阶段 {{ item.components.phase_score.toFixed(1) }}</span>
+            <small>{{ item.reasons.slice(0, 3).join("；") }}</small>
           </div>
         </div>
-        <p v-else>暂无沙盒实验记录。批准校准提案后点击「运行已批准提案实验」开始。</p>
-      </article>
-
-      <article class="panel wide">
-        <h2>Paper Simulation</h2>
-        <p class="review-only-banner">🧪 SIMULATION ONLY: All actions shown here are simulated paper-trading results. They are NOT real orders, NOT investment advice, and NOT connected to any broker.</p>
-        <div class="metrics">
-          <span>策略总数 {{ paperSimSummary?.policy_count ?? 0 }}</span>
-          <span>草稿 {{ paperSimSummary?.policy_by_status?.draft ?? 0 }}</span>
-          <span>已批准 {{ paperSimSummary?.policy_by_status?.approved ?? 0 }}</span>
-          <span>已拒绝 {{ paperSimSummary?.policy_by_status?.rejected ?? 0 }}</span>
+        <div v-if="plan" class="plan">
+          <strong>{{ plan.symbol }} {{ plan.name }}：{{ plan.action }}</strong>
+          <span>数量 {{ plan.quantity }} 股 / 参考价 {{ plan.reference_price }}</span>
+          <span>止损 {{ plan.stop_loss ?? "待确认" }} / 目标 {{ plan.target_price ?? "待确认" }}</span>
+          <small>{{ plan.reasons.join("；") }}</small>
         </div>
-        <div class="metrics">
-          <span>模拟运行 {{ paperSimSummary?.run_count ?? 0 }}</span>
-          <span>模拟动作 {{ paperSimSummary?.action_count ?? 0 }}</span>
-          <span v-for="(cnt, key) in paperSimSummary?.action_by_type" :key="key">{{ key }}: {{ cnt }}</span>
+        <div v-if="analysis?.explanation" class="plan">
+          <strong>AI 决策分析：{{ analysis.snapshot.symbol }}</strong>
+          <span>{{ analysis.explanation.signal_summary }}</span>
+          <span>匹配规则：{{ analysis.explanation.matched_rules.join("；") || "无" }}</span>
+          <span>风险拦截：{{ analysis.explanation.risk_blockers.join("；") || "无" }}</span>
+          <span>数据质量：{{ analysis.explanation.data_quality }}</span>
+          <span v-if="analysis.explanation.similar_cases?.length">
+            相似案例：{{ analysis.explanation.similar_cases.map((c: any) => c.name).join("；") }}
+          </span>
+          <small v-for="(note, idx) in analysis.explanation.uncertainty_notes" :key="idx">⚠ {{ note }}</small>
+          <small class="review-only-banner">{{ analysis.explanation.simulation_disclaimer }}</small>
         </div>
-        <div class="actions">
-          <button data-testid="draft-sim-policies-button" @click="draftSimPolicies" :disabled="paperSimLoading">
-            {{ paperSimLoading ? '生成中' : '从实验生成策略草稿' }}
-          </button>
-          <button data-testid="run-approved-sims-button" @click="runApprovedSimulations" :disabled="paperSimLoading">
-            {{ paperSimLoading ? '运行中' : '运行已批准模拟' }}
-          </button>
-        </div>
-
-        <h3 v-if="paperSimPolicies.length" style="margin-top: 16px;">Simulation Policies</h3>
-        <div v-if="paperSimPolicies.length" class="score-list">
-          <div v-for="p in paperSimPolicies" :key="p.id" :class="['score-item', policyStatusClass(p)]">
-            <strong>策略 #{{ p.id }} / 实验 #{{ p.source_experiment_id }} — {{ p.policy_type }}</strong>
-            <span>状态: {{ p.status }} / {{ p.policy?.disclaimer ? '⚠ 仅限模拟' : '' }}</span>
-            <small>动作: {{ p.policy?.action ?? '观察' }} / 创建: {{ p.created_at }}</small>
-            <div class="actions" v-if="p.status === 'draft'">
-              <button @click="approveSimPolicy(p.id)">Approve</button>
-              <button class="disabled-live" @click="rejectSimPolicy(p.id)">Reject</button>
-            </div>
-          </div>
-        </div>
-
-        <h3 v-if="paperSimRuns.length" style="margin-top: 16px;">Recent Simulation Runs</h3>
-        <div v-if="paperSimRuns.length" class="score-list">
-          <div v-for="run in paperSimRuns" :key="run.id" class="score-item">
-            <strong>运行 #{{ run.id }} / 策略 #{{ run.policy_id }} — {{ run.status }}</strong>
-            <span>
-              候选 {{ run.metrics?.total_candidates ?? 0 }} /
-              观察 {{ run.metrics?.observe_count ?? 0 }} /
-              模拟入场 {{ run.metrics?.simulated_entry_count ?? 0 }} /
-              模拟退出 {{ run.metrics?.simulated_exit_count ?? 0 }} /
-              跳过 {{ run.metrics?.skip_count ?? 0 }}
-            </span>
-            <small>{{ run.metrics?.disclaimer ?? '仅限模拟' }}</small>
-          </div>
-        </div>
-        <p v-if="!paperSimPolicies.length && !paperSimRuns.length">暂无模拟策略或运行记录。请先运行沙盒实验，然后点击「从实验生成策略草稿」。</p>
-      </article>
-
-      <article class="panel wide">
-        <h2>Simulation Evaluation</h2>
-        <p class="review-only-banner">🧪 EVALUATION ONLY: This panel evaluates simulated actions against subsequent market data. It does NOT alter production scoring, rules, or live trading.</p>
-        <div class="metrics">
-          <span>总评估数 {{ paperSimEvalSummary?.total_evaluations ?? 0 }}</span>
-          <span>已完成 {{ paperSimEvalSummary?.by_status?.completed ?? 0 }}</span>
-          <span>等待未来数据 {{ paperSimEvalSummary?.by_status?.pending_future_data ?? 0 }}</span>
-          <span>无价格跳过 {{ paperSimEvalSummary?.by_status?.skipped_no_price ?? 0 }}</span>
-        </div>
-        <div class="metrics">
-          <span v-for="(cnt, key) in paperSimEvalSummary?.by_outcome_label" :key="'lbl-'+key">{{ key }}: {{ cnt }}</span>
-        </div>
-        <div class="actions">
-          <button data-testid="eval-recent-sims-button" @click="evaluateRecentSimulations" :disabled="paperSimEvalLoading">
-            {{ paperSimEvalLoading ? '评估中' : '评估近期模拟动作' }}
-          </button>
-        </div>
-
-        <h3 v-if="paperSimEvalPolicies.length" style="margin-top: 16px;">Policy Performance Conclusions</h3>
-        <div v-if="paperSimEvalPolicies.length" class="score-list">
-          <div v-for="p in paperSimEvalPolicies" :key="p.policy_id" :class="['score-item', evalConclusionClass(p.conclusion)]">
-            <strong>策略 #{{ p.policy_id }} ({{ p.policy_type }}) — {{ p.conclusion }}</strong>
-            <span>
-              已完成 {{ p.completed }} /
-              强突破 {{ p.strong_follow_through }} /
-              失败信号 {{ p.failed_signal }} /
-              大回撤 {{ p.large_drawdowns }}
-            </span>
-            <small>
-              待定: {{ p.pending_future_data }} /
-              跳过: {{ p.skipped_no_price }} /
-              {{ p.disclaimer }}
-            </small>
-          </div>
-        </div>
-        <p v-if="!paperSimEvalPolicies.length">暂无策略评估结论。点击「评估近期模拟动作」开始评估。</p>
-      </article>
-
-      <article class="panel wide">
-        <h2>Price Readiness</h2>
-        <p class="review-only-banner">⚠ This data is for simulation and system readiness only. Do not use as investment advice.</p>
-        <div class="metrics">
-          <span>就绪 (Ready) {{ priceReadinessSummary?.ready ?? 0 }}</span>
-          <span>无价格 (Missing) {{ priceReadinessSummary?.missing_price ?? 0 }}</span>
-          <span>价格陈旧 (Stale) {{ priceReadinessSummary?.stale_price ?? 0 }}</span>
-          <span>历史不足 {{ priceReadinessSummary?.insufficient_history ?? 0 }}</span>
-          <span>错误 (Error) {{ priceReadinessSummary?.error ?? 0 }}</span>
-        </div>
-        <div class="actions">
-          <button data-testid="run-price-readiness-button" @click="runPriceReadiness" :disabled="priceReadinessLoading">
-            {{ priceReadinessLoading ? '检查中' : '运行价格就绪检查' }}
-          </button>
-          <button data-testid="run-daily-bar-refresh-button" @click="runDailyBarRefresh" :disabled="dailyBarRefreshLoading">
-            {{ dailyBarRefreshLoading ? '刷新中' : '刷新日线缓存' }}
-          </button>
-        </div>
-        
-        <h3 style="margin-top: 16px;">Daily Bar Coverage</h3>
-        <div v-if="dailyBarCoverage.length" class="score-list" style="margin-bottom: 24px;">
-          <div v-for="cov in dailyBarCoverage" :key="cov.symbol" class="score-item">
-            <strong>{{ cov.symbol }} / {{ cov.quality_status }}</strong>
-            <span>数量: {{ cov.cached_bar_count }} / 范围: {{ cov.first_trade_date }} 至 {{ cov.last_trade_date }}</span>
-            <small>数据源: {{ cov.source }}</small>
-          </div>
-        </div>
-        <p v-else style="margin-bottom: 24px;">暂无日线缓存覆盖率数据。点击上方按钮进行刷新。</p>
-
-        <h3 style="margin-top: 16px;">Readiness Reports</h3>
-        <div v-if="priceReadinessReports.length" class="score-list">
-          <div v-for="report in priceReadinessReports" :key="report.symbol" class="score-item">
-            <strong>{{ report.symbol }} {{ report.name }} / {{ report.coverage_status }}</strong>
-            <span>最新价格: {{ report.latest_price ?? 'N/A' }} / 数据源: {{ report.source }}</span>
-            <small>更新时间: {{ report.latest_price_at ?? 'N/A' }} / 历史数据点: {{ report.history_points }}</small>
-            <small v-if="report.error_message">⚠ {{ report.error_message }}</small>
-          </div>
-        </div>
-        <p v-else>暂无价格就绪报告。点击上方按钮进行检查。</p>
       </article>
     </section>
   </main>
@@ -1050,6 +1055,7 @@ const discovery = ref<AutoDiscoveryResult | null>(null);
 const lifecycleSummary = ref<CandidateLifecycleSummary | null>(null);
 const topScores = ref<CandidateScore[]>([]);
 const plan = ref<SimulationPlan | null>(null);
+const analysis = ref<any | null>(null);
 const account = ref<SimulationAccount | null>(null);
 const automation = ref<AutomationRun | null>(null);
 const learningReport = ref<LearningReport | null>(null);
@@ -1064,6 +1070,7 @@ const agentAudit = ref<any[]>([]);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
+const analysisLoading = ref(false);
 const automationLoading = ref(false);
 const monitoringLoading = ref(false);
 const phaseReplayLoading = ref(false);
@@ -1270,6 +1277,20 @@ async function loadPlan() {
   }
 }
 
+async function runAnalysis() {
+  const first = topCandidates.value[0];
+  if (!first) return;
+  analysisLoading.value = true;
+  error.value = "";
+  try {
+    analysis.value = await fetchJson<any>(`/api/decision/analyze-symbol/${first.symbol}`);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "分析生成失败";
+  } finally {
+    analysisLoading.value = false;
+  }
+}
+
 async function runAutomation() {
   automationLoading.value = true;
   error.value = "";
@@ -1430,10 +1451,10 @@ async function executeTask(id: number) {
 
 async function approveTask(id: number) {
   try {
-    await fetchJson(`/api/agent-control/tasks/${id}/approve`, { 
-      method: "POST", 
-      body: JSON.stringify({ user: "admin", note: "Approved via UI" }), 
-      headers: { 'Content-Type': 'application/json' } 
+    await fetchJson(`/api/agent-control/tasks/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ user: "admin", note: "Approved via UI" }),
+      headers: { 'Content-Type': 'application/json' }
     });
     await loadAgentTasks();
     await loadAgentAudit();
@@ -1444,10 +1465,10 @@ async function approveTask(id: number) {
 
 async function rejectTask(id: number) {
   try {
-    await fetchJson(`/api/agent-control/tasks/${id}/reject`, { 
-      method: "POST", 
-      body: JSON.stringify({ user: "admin", note: "Rejected via UI" }), 
-      headers: { 'Content-Type': 'application/json' } 
+    await fetchJson(`/api/agent-control/tasks/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ user: "admin", note: "Rejected via UI" }),
+      headers: { 'Content-Type': 'application/json' }
     });
     await loadAgentTasks();
     await loadAgentAudit();

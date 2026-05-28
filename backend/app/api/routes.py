@@ -99,6 +99,13 @@ def automation_run_detail(run_id: int) -> dict:
 
 @router.post("/automation/runs/start")
 def automation_start_external_run(mode: str = "browser_control") -> dict:
+    normalized_mode = mode.strip().lower()
+    blocked_terms = ("live", "broker", "credential", "password", "order")
+    if any(term in normalized_mode for term in blocked_terms):
+        raise HTTPException(
+            status_code=400,
+            detail="External live trading, broker, credential, and order-control modes are blocked.",
+        )
     return AutomationSupervisor().start_external_run(mode)
 
 
@@ -326,7 +333,13 @@ def start_monitoring_session(limit: int = 5, name: str = "intraday_watch") -> di
 def latest_monitoring_session() -> dict:
     session = MonitoringService().latest_session()
     if session is None:
-        raise HTTPException(status_code=404, detail="尚未创建监控会话")
+        return {
+            "status": "empty",
+            "summary": None,
+            "events": [],
+            "alerts": [],
+            "message": "尚未创建监控会话",
+        }
     return session
 
 
@@ -477,7 +490,15 @@ def run_potential_search(limit: int = 100, persist: bool = True) -> dict:
 def latest_potential_search() -> dict:
     latest = OffhourPotentialSearchService().latest_run()
     if latest is None:
-        raise HTTPException(status_code=404, detail="尚未产生潜力搜索记录")
+        return {
+            "status": "empty",
+            "total_scanned": 0,
+            "stored_count": 0,
+            "scored_count": 0,
+            "items": [],
+            "errors": [],
+            "message": "尚未产生潜力搜索记录",
+        }
     return latest
 
 
