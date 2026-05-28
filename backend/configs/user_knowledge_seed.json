@@ -1,0 +1,112 @@
+{
+  "user_stock_notes": [
+    {
+      "id": "USER_NOTE_001",
+      "symbol": "SZ002115",
+      "name": "三维通信",
+      "note_type": "method_success",
+      "priority": 90,
+      "content": "用户确认：三维通信是已经通过当前方法成功预测主力动向并获利的股票，应作为该方法的成功训练样本。",
+      "tags": ["成功案例", "主力动向", "方法验证", "重点训练"]
+    },
+    {
+      "id": "USER_NOTE_002",
+      "symbol": "SZ002081",
+      "name": "金螳螂",
+      "note_type": "completed_distribution_training",
+      "priority": 95,
+      "content": "用户确认：金螳螂是前几天主力已经完成拉升出货、符合当前理论的典型股票。短期内不应按继续创新高处理，应作为训练数据学习主力如何在大拉升前一到两年吸筹、什么时候试盘、什么时候开始拉升以及何时出货。",
+      "tags": ["训练样本", "主力动向", "吸筹", "试盘", "拉升", "出货完成", "短期不追高"]
+    },
+    {
+      "id": "USER_NOTE_003",
+      "symbol": "SH600135",
+      "name": "乐凯胶片",
+      "note_type": "focus_priority",
+      "priority": 100,
+      "content": "用户确认：乐凯胶片是重点关注股票，候选池和模拟计划应优先展示。",
+      "tags": ["重点关注", "优先监控", "自选股"]
+    }
+  ],
+  "trade_cases": [
+    {
+      "id": "USER_CASE_S_001",
+      "case_type": "success",
+      "trade_date": "用户补充",
+      "stock_text": "三维通信 SZ002115",
+      "operation": "通过当前方法成功预测主力动向并获利",
+      "result": "成功",
+      "lesson": "该方法对三维通信的主力动向判断有效，应作为后续相似案例检索和策略权重验证的重要正样本。"
+    }
+  ],
+  "stock_profiles": [
+    {
+      "symbol": "SZ002081",
+      "name": "金螳螂",
+      "score": 18,
+      "rating": "出货完成训练样本",
+      "risk_level": "短期不追高",
+      "dataset_name": "用户补充主力阶段训练样本",
+      "source_file": "user_knowledge_seed.json",
+      "note": "用户确认金螳螂已完成拉升出货，短期不按创新高处理，重点用于训练吸筹-试盘-拉升-出货阶段识别。"
+    },
+    {
+      "symbol": "SH600135",
+      "name": "乐凯胶片",
+      "score": 25,
+      "rating": "重点关注",
+      "risk_level": "小",
+      "dataset_name": "用户重点关注",
+      "source_file": "user_knowledge_seed.json",
+      "note": "用户确认重点关注，候选池优先。"
+    }
+  ],
+  "main_force_phase_patterns": [
+    {
+      "id": "USER_PATTERN_SZ002081_001",
+      "symbol": "SZ002081",
+      "name": "金螳螂",
+      "pattern_type": "accumulation_test_markup_distribution",
+      "status": "completed_distribution",
+      "priority": 95,
+      "phase_timeline": [
+        {
+          "phase": "long_accumulation",
+          "name": "大拉升前一到两年吸筹",
+          "description": "主力在大拉升前一到两年通过低位震荡、箱体整理、反复洗盘和成本区沉淀完成筹码收集。",
+          "training_signal": "长期横盘或缓慢抬升，成交量间歇放大但价格不过度脱离成本区。"
+        },
+        {
+          "phase": "test_pull",
+          "name": "试盘",
+          "description": "主力在拉升前用脉冲式放量、冲高回落或突破压力位测试抛压和跟风强度。",
+          "training_signal": "短线放量、上影线、突破后回踩、关键价位反复确认。"
+        },
+        {
+          "phase": "markup",
+          "name": "开始拉升",
+          "description": "确认抛压后进入主升段，价格脱离长期成本区，量价同步放大，涨幅和市场关注度快速提升。",
+          "training_signal": "连续阳线、放量突破、回踩不破关键线、涨速明显快于前期吸筹阶段。"
+        },
+        {
+          "phase": "distribution_completed",
+          "name": "拉升出货完成",
+          "description": "金螳螂属于前几天已完成拉升出货的典型样本，短期不应默认会继续创造新高。",
+          "training_signal": "拉升后高位放量、冲高回落或滞涨，后续优先观察风险释放而不是追高买入。"
+        }
+      ],
+      "theory_tags": ["吸筹", "试盘", "主升", "出货", "短期不追高", "主力阶段识别"],
+      "training_focus": [
+        "学习主力在一到两年吸筹期的量价结构和成本区痕迹。",
+        "学习试盘阶段与真正启动阶段的区别，避免把单次脉冲误判为主升。",
+        "学习拉升出货完成后的风险标记，短期不按继续创新高作为默认假设。",
+        "把金螳螂作为阶段识别训练样本，不作为当前短线买入样本。"
+      ],
+      "caution_notes": [
+        "该样本用于训练和复盘，不构成买入建议。",
+        "当前阶段优先标记为出货完成后的观察样本，模拟系统应避免追高。",
+        "后续若行情继续变化，需要用新的监控事件重新校准阶段判断。"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+"""Intraday monitoring event stream."""

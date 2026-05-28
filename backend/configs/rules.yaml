@@ -1,0 +1,54 @@
+version: 1
+decision_priority:
+  - constitution
+  - risk
+  - strategy
+  - case_memory
+  - ai_explanation
+
+candidate_tiers:
+  strong_min_score: 80
+  watch_min_score: 60
+
+rules:
+  - id: constitution_no_high_position
+    name: 不做高位股
+    group: constitution
+    enabled: true
+    weight: 100
+    hard_block: true
+    params:
+      max_price_to_high_ratio: 0.5
+
+  - id: dengzhan_low_position_limit_up
+    name: 灯盏策略-低位涨停候选
+    group: strategy
+    enabled: true
+    weight: 25
+    hard_block: false
+    params:
+      max_price_to_high_ratio: 0.5
+      min_limit_up_pct: 9.9
+      max_pb: 6.0
+      min_market_cap_billion: 50
+      max_market_cap_billion: 200
+
+  - id: dengzhan_forced_divergence
+    name: 灯盏策略-强制分歧点
+    group: strategy
+    enabled: true
+    weight: 20
+    hard_block: false
+    params:
+      min_volume_ratio: 1.5
+      ma_window: 5
+
+  - id: risk_no_chasing_after_big_rise
+    name: 大涨后轻仓
+    group: risk
+    enabled: true
+    weight: 50
+    hard_block: false
+    params:
+      big_rise_pct: 20
+      max_position_ratio: 0.1

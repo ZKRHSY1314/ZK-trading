@@ -1,0 +1,22 @@
+{
+  "name": "a-share-ai-trading-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview",
+    "automation:browser": "node scripts/browser_control_adapter.mjs"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
+    "vite": "^8.0.14",
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0",
+    "typescript": "^5.4.0",
+    "vue-tsc": "^2.0.0"
+  }
+}
