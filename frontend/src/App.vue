@@ -72,7 +72,7 @@
         <p v-else>暂无价格就绪报告。点击上方按钮进行检查。</p>
       </article>
 <article class="panel wide">
-        <h2>V1.2-V1.5 验证面板</h2>
+        <h2>V2.0 可信度证据面板</h2>
         <p class="review-only-banner">所有内容仅用于历史回测、模拟风控、告警复核和 AI 参数提案审查，不连接券商，不产生实盘订单。</p>
         <div class="actions">
           <button @click="runBacktest" :disabled="v15Loading">{{ v15Loading ? "运行中" : "运行回测" }}</button>
@@ -89,13 +89,27 @@
           <div v-for="run in backtestRuns.slice(0, 3)" :key="run.id" class="score-item">
             <strong>回测 #{{ run.id }} / {{ run.status }}</strong>
             <span>收益 {{ ((run.metrics?.total_return ?? 0) * 100).toFixed(2) }}% / 回撤 {{ ((run.metrics?.max_drawdown ?? 0) * 100).toFixed(2) }}%</span>
-            <small>交易 {{ run.metrics?.trade_count ?? 0 }} / 数据源 {{ run.data_source }}</small>
+            <small>成交 {{ run.metrics?.trade_count ?? 0 }} / 平仓 {{ run.metrics?.closed_trade_count ?? 0 }} / 期望 {{ (run.metrics?.expectancy ?? 0).toFixed(2) }}</small>
+            <small>基准 {{ run.benchmark?.symbol ?? run.benchmark_symbol ?? "SH000300" }} / 超额 {{ ((run.metrics?.excess_return ?? 0) * 100).toFixed(2) }}%</small>
+          </div>
+        </div>
+        <div v-if="backtestDetail" class="score-list">
+          <div class="score-item">
+            <strong>详情 #{{ backtestDetail.run.id }} / {{ backtestDetail.benchmark?.status ?? "benchmark_unknown" }}</strong>
+            <span>权益点 {{ backtestDetail.daily_equity.length }} / 执行警告 {{ backtestDetail.execution_warnings.length }}</span>
+            <small>{{ backtestDetail.execution_warnings.slice(0, 3).join("；") || "暂无执行警告" }}</small>
+          </div>
+          <div v-for="trade in backtestDetail.closed_trades.slice(0, 5)" :key="trade.id" class="score-item">
+            <strong>{{ trade.symbol }} 平仓 / {{ trade.exit_reason }}</strong>
+            <span>收益 {{ trade.realized_pnl.toFixed(2) }} / {{ (trade.realized_pnl_pct * 100).toFixed(2) }}%</span>
+            <small>{{ trade.entry_date }} → {{ trade.exit_date }} / {{ trade.holding_days }} 天</small>
           </div>
         </div>
         <div v-if="portfolioRisk" class="score-list">
           <div v-for="gate in portfolioRisk.gates" :key="gate.name" class="score-item">
             <strong>{{ gate.name }} / {{ gate.status }}</strong>
             <span>当前 {{ gate.value }} / 限制 {{ gate.limit }}</span>
+            <small>{{ gate.reason }}</small>
           </div>
         </div>
         <div v-if="monitoringLifecycle?.items?.length" class="score-list">
@@ -104,6 +118,7 @@
             <span>{{ item.alert_type }} / {{ item.severity }}</span>
             <div class="actions" v-if="item.state === 'open'">
               <button @click="acknowledgeAlert(item.alert_id)">确认</button>
+              <button @click="actionAlert(item.alert_id, 'add_to_review')">加入复核</button>
             </div>
           </div>
         </div>
@@ -112,6 +127,7 @@
             <strong>AI提案 #{{ proposal.id }} / {{ proposal.status }}</strong>
             <span>样本 {{ proposal.trades_analyzed }} / 安全拦截 {{ proposal.safety_blocks?.length ?? 0 }}</span>
             <small>验证 {{ proposal.validation?.status ?? "未验证" }}</small>
+            <small v-if="proposal.validation?.out_of_sample">样本外 {{ proposal.validation.out_of_sample?.period?.start }} → {{ proposal.validation.out_of_sample?.period?.end }}</small>
             <div class="actions">
               <button @click="validateAiProposal(proposal.id)">验证</button>
               <button class="disabled-live" @click="rejectAiProposal(proposal.id)">拒绝</button>
@@ -1101,7 +1117,31 @@ type BacktestRunItem = {
   id: number;
   status: string;
   data_source: string;
+  benchmark_symbol?: string;
   metrics: Record<string, number>;
+  benchmark?: Record<string, any>;
+  execution_warnings?: string[];
+};
+
+type BacktestDetail = {
+  run: BacktestRunItem;
+  trades: Array<Record<string, any>>;
+  closed_trades: Array<{
+    id: number;
+    symbol: string;
+    quantity: number;
+    entry_date: string;
+    exit_date: string;
+    entry_price: number;
+    exit_price: number;
+    realized_pnl: number;
+    realized_pnl_pct: number;
+    holding_days: number;
+    exit_reason: string;
+  }>;
+  daily_equity: Array<Record<string, any>>;
+  benchmark: Record<string, any>;
+  execution_warnings: string[];
 };
 
 type MarketRegimeData = {
@@ -1113,7 +1153,7 @@ type MarketRegimeData = {
 
 type PortfolioRiskData = {
   posture: string;
-  gates: Array<{ name: string; status: string; value: string | number; limit: string | number }>;
+  gates: Array<{ name: string; status: string; value: string | number; limit: string | number; reason: string }>;
 };
 
 type MonitoringLifecycleData = {
@@ -1191,6 +1231,7 @@ const priceReadinessLoading = ref(false);
 const dailyBarCoverage = ref<any[]>([]);
 const dailyBarRefreshLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
+const backtestDetail = ref<BacktestDetail | null>(null);
 const marketRegime = ref<MarketRegimeData | null>(null);
 const portfolioRisk = ref<PortfolioRiskData | null>(null);
 const monitoringLifecycle = ref<MonitoringLifecycleData | null>(null);
@@ -1959,8 +2000,14 @@ async function runDailyBarRefresh() {
 async function loadBacktestRuns() {
   try {
     backtestRuns.value = await fetchJson<BacktestRunItem[]>("/api/backtest/runs?limit=10");
+    if (backtestRuns.value[0]?.id) {
+      backtestDetail.value = await fetchJson<BacktestDetail>(`/api/backtest/runs/${backtestRuns.value[0].id}`);
+    } else {
+      backtestDetail.value = null;
+    }
   } catch {
     backtestRuns.value = [];
+    backtestDetail.value = null;
   }
 }
 
@@ -1980,6 +2027,7 @@ async function runBacktest() {
         initial_cash: 100000,
         max_positions: 5,
         per_symbol_cap: 0.2,
+        benchmark_symbol: "SH000300",
       }),
     });
     await loadBacktestRuns();
@@ -2028,11 +2076,16 @@ async function loadMonitoringLifecycle() {
 }
 
 async function acknowledgeAlert(alertId: number) {
+  await actionAlert(alertId, "acknowledge");
+}
+
+async function actionAlert(alertId: number, actionType: string) {
   try {
-    await fetchJson(`/api/monitoring/alerts/${alertId}/action?action_type=acknowledge`, { method: "POST" });
+    await fetchJson(`/api/monitoring/alerts/${alertId}/action?action_type=${encodeURIComponent(actionType)}`, { method: "POST" });
     await loadMonitoringLifecycle();
+    await loadLifecycleSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "告警确认失败";
+    error.value = err instanceof Error ? err.message : "告警动作失败";
   }
 }
 

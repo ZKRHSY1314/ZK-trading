@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     commission_rate: float = 0.0003
     stamp_tax_rate: float = 0.0005
     slippage_rate: float = 0.0005
+    backtest_max_participation_rate: float = 0.005
+    backtest_default_partial_fill_ratio: float = 0.5
+    backtest_default_benchmark_symbol: str = "SH000300"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

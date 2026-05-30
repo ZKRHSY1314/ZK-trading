@@ -6,9 +6,8 @@ from app.storage.sqlite_store import SQLiteStore
 from app.config import settings
 
 
-def test_market_regime_refresh_and_portfolio_state():
-    store = SQLiteStore(settings.database_path)
-    store.init()
+def test_market_regime_refresh_and_portfolio_state(test_db):
+    store = test_db
     with store.connect() as conn:
         conn.execute("DELETE FROM daily_bar_cache")
         for idx, close in enumerate([100, 101, 102, 103, 104], start=1):
@@ -40,7 +39,7 @@ def test_market_regime_refresh_and_portfolio_state():
     assert state["posture"] in {"normal", "reduce", "stop_new_entries"}
 
 
-def test_ai_proposal_validation_and_rejection():
+def test_ai_proposal_validation_and_rejection(test_db):
     worker = AIReviewWorker()
     proposal = worker.generate_review()
     validation = worker.validate_proposal(proposal["id"])
@@ -49,9 +48,8 @@ def test_ai_proposal_validation_and_rejection():
     assert rejected["status"] == "rejected"
 
 
-def test_monitoring_alert_action_lifecycle():
-    store = SQLiteStore(settings.database_path)
-    store.init()
+def test_monitoring_alert_action_lifecycle(test_db):
+    store = test_db
     with store.connect() as conn:
         cursor = conn.execute(
             """
@@ -81,3 +79,36 @@ def test_monitoring_alert_action_lifecycle():
     assert action["payload"]["live_trading_enabled"] is False
     lifecycle = MonitoringService().alert_lifecycle(symbol="SH600000")
     assert lifecycle["actioned_count"] >= 1
+
+
+def test_monitoring_action_updates_candidate_lifecycle(test_db):
+    store = test_db
+    with store.connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO monitoring_sessions(name, status, symbols_json)
+            VALUES (?, ?, ?)
+            """,
+            ("pytest-lifecycle", "running", "[]"),
+        )
+        session_id = int(cursor.lastrowid)
+        event_cursor = conn.execute(
+            """
+            INSERT INTO monitoring_events(session_id, symbol, signal, allowed)
+            VALUES (?, ?, ?, ?)
+            """,
+            (session_id, "SH600010", "sim_buy_allowed", 1),
+        )
+        alert_cursor = conn.execute(
+            """
+            INSERT INTO monitoring_alerts(session_id, event_id, symbol, severity, alert_type, message)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, int(event_cursor.lastrowid), "SH600010", "high", "sim_buy_allowed", "review"),
+        )
+        alert_id = int(alert_cursor.lastrowid)
+
+    action = MonitoringService().record_alert_action(alert_id, "add_to_review", created_by="pytest")
+    assert action["candidate_lifecycle"]["to_state"] == "pending_review"
+    row = store.fetch_one("SELECT state FROM candidate_lifecycle WHERE symbol = ?", ("SH600010",))
+    assert row["state"] == "pending_review"

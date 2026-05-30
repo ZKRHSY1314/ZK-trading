@@ -1,4 +1,4 @@
-# V1 Release Checklist
+# V1/V2 Release Checklist
 
 ## 1. Backend Compile & Test
 - [ ] Backend compiles successfully (`python -m compileall app scripts`)
@@ -36,7 +36,17 @@
 - [ ] AI parameter proposals require validation and human review before simulation-only approval.
 - [ ] Dashboard V1.2-V1.5 panel renders without TypeScript or build errors.
 
-## 7. Desired Workday Schedule Cadence
+## 7. V2.0 Credibility Milestone
+- [ ] Historical backtests persist FIFO closed trades with realized P/L, holding days, fees, stamp tax, and exit reason.
+- [ ] Backtest metrics use closed trades for win rate, profit/loss ratio, average win/loss, expectancy, and consecutive losses.
+- [ ] Execution model records full, partial, and rejected fills for one-word limit-up, one-word limit-down, and low-liquidity cases.
+- [ ] Backtest APIs return benchmark comparison, execution warnings, daily equity, trades, and closed trades without realtime benchmark data.
+- [ ] AI proposal validation uses a 70/30 time-series in-sample/out-of-sample check before simulation approval.
+- [ ] Portfolio risk gates include exposure, single position, market regime, daily loss, drawdown, consecutive-loss cooldown, and new-position limits.
+- [ ] Monitoring review/simulation actions update candidate lifecycle state.
+- [ ] AI model outputs are audit logged and remain review-only.
+
+## 8. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
 - **10:00 AM:** First cycle (Candidate scan, morning momentum check).
 - **1:00 PM (13:00):** Mid-day cycle (Trend persistence, early reversals).

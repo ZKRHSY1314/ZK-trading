@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+from app.candidates.lifecycle import CandidateLifecycleService
 from app.candidates.local_scanner import LocalCandidateScanner
 from app.config import settings
 from app.data.snapshot_builder import MarketDataError, MarketSnapshotBuilder
@@ -317,6 +318,14 @@ class MonitoringService:
                 ),
             )
             action_id = int(cursor.lastrowid)
+        lifecycle_change = self._sync_action_to_candidate_lifecycle(
+            alert=dict(alert),
+            action_id=action_id,
+            action_type=action_type,
+            note=note,
+            created_by=created_by,
+            payload=payload,
+        )
         return {
             "id": action_id,
             "alert_id": alert_id,
@@ -324,6 +333,7 @@ class MonitoringService:
             "note": note,
             "created_by": created_by,
             "payload": payload,
+            "candidate_lifecycle": lifecycle_change,
         }
 
     def alert_lifecycle(self, symbol: str | None = None, limit: int = 100) -> dict[str, Any]:
@@ -381,7 +391,13 @@ class MonitoringService:
                     "created_at": row["action_created_at"],
                 }
                 item["actions"].append(action)
-                if row["action_type"] in {"acknowledge", "ignore_today", "add_to_review"}:
+                if row["action_type"] in {
+                    "acknowledge",
+                    "ignore_today",
+                    "add_to_review",
+                    "simulate_buy_plan",
+                    "simulate_sell_plan",
+                }:
                     item["state"] = row["action_type"]
         items = list(grouped.values())
         return {
@@ -390,6 +406,44 @@ class MonitoringService:
             "actioned_count": len([item for item in items if item["state"] != "open"]),
             "live_trading_enabled": settings.enable_live_trading,
         }
+
+    def _sync_action_to_candidate_lifecycle(
+        self,
+        alert: dict[str, Any],
+        action_id: int,
+        action_type: str,
+        note: str | None,
+        created_by: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        state_by_action = {
+            "add_to_review": "pending_review",
+            "simulate_buy_plan": "focus_watch",
+            "simulate_sell_plan": "phase_guarded",
+        }
+        state = state_by_action.get(action_type)
+        if not state:
+            return None
+        lifecycle_payload = {
+            **payload,
+            "monitoring_alert_id": alert["id"],
+            "monitoring_action_id": action_id,
+            "action_type": action_type,
+            "note": note,
+            "created_by": created_by,
+        }
+        return CandidateLifecycleService().upsert_state(
+            symbol=alert["symbol"],
+            name=None,
+            state=state,
+            source=f"monitoring_alert_action:{action_id}",
+            score=None,
+            rating="monitoring_action",
+            risk_level=alert["severity"],
+            reason=f"{action_type}: {alert['message']}",
+            payload=lifecycle_payload,
+            event_type="monitoring_alert_action",
+        )
 
     def _resolve_symbols(
         self,

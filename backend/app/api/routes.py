@@ -979,6 +979,7 @@ class BacktestRunInput(BaseModel):
     initial_cash: float = 100_000.0
     max_positions: int = 5
     per_symbol_cap: float = 0.2
+    benchmark_symbol: str = "SH000300"
 
 
 @router.post("/backtest/runs")
@@ -992,6 +993,7 @@ def run_historical_backtest(input_data: BacktestRunInput) -> dict:
         initial_cash=input_data.initial_cash,
         max_positions=input_data.max_positions,
         per_symbol_cap=input_data.per_symbol_cap,
+        benchmark_symbol=input_data.benchmark_symbol,
     )
 
 
@@ -1008,6 +1010,8 @@ def list_backtest_runs(limit: int = 20) -> list[dict]:
     for row in rows:
         item = dict(row)
         item["metrics"] = json.loads(item.pop("metrics_json") or "{}")
+        item["benchmark"] = json.loads(item.pop("benchmark_json", "{}") or "{}")
+        item["execution_warnings"] = json.loads(item.pop("execution_warnings_json", "[]") or "[]")
         results.append(item)
     return results
 
@@ -1028,12 +1032,21 @@ def get_backtest_run(run_id: int) -> dict:
         "SELECT * FROM historical_backtest_daily_equity WHERE run_id = ? ORDER BY trade_date ASC",
         (run_id,),
     )
+    closed_trades = store.fetch_all(
+        "SELECT * FROM historical_backtest_closed_trades WHERE run_id = ? ORDER BY exit_date ASC, id ASC",
+        (run_id,),
+    )
     run_dict = dict(run)
     run_dict["metrics"] = json.loads(run_dict.pop("metrics_json") or "{}")
+    benchmark = json.loads(run_dict.pop("benchmark_json", "{}") or "{}")
+    execution_warnings = json.loads(run_dict.pop("execution_warnings_json", "[]") or "[]")
     return {
         "run": run_dict,
         "trades": [dict(row) for row in trades],
+        "closed_trades": [dict(row) for row in closed_trades],
         "daily_equity": [dict(row) for row in equity],
+        "benchmark": benchmark,
+        "execution_warnings": execution_warnings,
     }
 
 

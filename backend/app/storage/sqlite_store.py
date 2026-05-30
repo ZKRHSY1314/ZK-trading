@@ -728,9 +728,12 @@ CREATE TABLE IF NOT EXISTS historical_backtest_runs (
     start_date TEXT,
     end_date TEXT,
     status TEXT NOT NULL,
+    benchmark_symbol TEXT,
     initial_cash REAL,
     final_cash REAL,
     metrics_json TEXT NOT NULL DEFAULT '{}',
+    benchmark_json TEXT NOT NULL DEFAULT '{}',
+    execution_warnings_json TEXT NOT NULL DEFAULT '[]',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
 );
@@ -745,6 +748,31 @@ CREATE TABLE IF NOT EXISTS historical_backtest_trades (
     fee REAL NOT NULL,
     stamp_tax REAL NOT NULL,
     trade_date TEXT NOT NULL,
+    reason TEXT,
+    fill_status TEXT NOT NULL DEFAULT 'full',
+    reject_reason TEXT,
+    requested_quantity INTEGER,
+    filled_quantity INTEGER,
+    liquidity_cap_amount REAL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS historical_backtest_closed_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES historical_backtest_runs(id) ON DELETE CASCADE,
+    symbol TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    entry_date TEXT NOT NULL,
+    exit_date TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    exit_price REAL NOT NULL,
+    realized_pnl REAL NOT NULL,
+    realized_pnl_pct REAL NOT NULL,
+    holding_days INTEGER NOT NULL,
+    fees REAL NOT NULL,
+    stamp_tax REAL NOT NULL,
+    slippage_cost REAL NOT NULL DEFAULT 0,
+    exit_reason TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -761,6 +789,7 @@ CREATE TABLE IF NOT EXISTS historical_backtest_daily_equity (
 
 CREATE INDEX IF NOT EXISTS idx_historical_backtest_runs_status ON historical_backtest_runs(status);
 CREATE INDEX IF NOT EXISTS idx_historical_backtest_trades_run ON historical_backtest_trades(run_id);
+CREATE INDEX IF NOT EXISTS idx_historical_backtest_closed_run ON historical_backtest_closed_trades(run_id);
 CREATE INDEX IF NOT EXISTS idx_historical_backtest_daily_equity_run ON historical_backtest_daily_equity(run_id);
 
 CREATE TABLE IF NOT EXISTS market_regime_snapshots (
@@ -805,6 +834,19 @@ CREATE TABLE IF NOT EXISTS ai_parameter_proposals (
 
 CREATE INDEX IF NOT EXISTS idx_ai_parameter_proposals_created ON ai_parameter_proposals(created_at);
 CREATE INDEX IF NOT EXISTS idx_ai_parameter_proposals_status ON ai_parameter_proposals(status);
+
+CREATE TABLE IF NOT EXISTS ai_model_audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    prompt_json TEXT NOT NULL DEFAULT '{}',
+    response_json TEXT NOT NULL DEFAULT '{}',
+    safety_json TEXT NOT NULL DEFAULT '{}',
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_model_audit_logs_operation ON ai_model_audit_logs(operation);
 """
 
 
@@ -848,10 +890,12 @@ KNOWLEDGE_TABLES = [
     "daily_bar_cache",
     "historical_backtest_runs",
     "historical_backtest_trades",
+    "historical_backtest_closed_trades",
     "historical_backtest_daily_equity",
     "market_regime_snapshots",
     "monitoring_alert_actions",
     "ai_parameter_proposals",
+    "ai_model_audit_logs",
 ]
 
 
@@ -881,6 +925,22 @@ class SQLiteStore:
                 "ALTER TABLE ai_parameter_proposals ADD COLUMN reviewed_by TEXT",
                 "ALTER TABLE ai_parameter_proposals ADD COLUMN review_note TEXT",
                 "ALTER TABLE ai_parameter_proposals ADD COLUMN reviewed_at TEXT",
+            ]:
+                try:
+                    conn.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass
+
+            for stmt in [
+                "ALTER TABLE historical_backtest_runs ADD COLUMN benchmark_symbol TEXT",
+                "ALTER TABLE historical_backtest_runs ADD COLUMN benchmark_json TEXT NOT NULL DEFAULT '{}'",
+                "ALTER TABLE historical_backtest_runs ADD COLUMN execution_warnings_json TEXT NOT NULL DEFAULT '[]'",
+                "ALTER TABLE historical_backtest_trades ADD COLUMN reason TEXT",
+                "ALTER TABLE historical_backtest_trades ADD COLUMN fill_status TEXT NOT NULL DEFAULT 'full'",
+                "ALTER TABLE historical_backtest_trades ADD COLUMN reject_reason TEXT",
+                "ALTER TABLE historical_backtest_trades ADD COLUMN requested_quantity INTEGER",
+                "ALTER TABLE historical_backtest_trades ADD COLUMN filled_quantity INTEGER",
+                "ALTER TABLE historical_backtest_trades ADD COLUMN liquidity_cap_amount REAL",
             ]:
                 try:
                     conn.execute(stmt)
