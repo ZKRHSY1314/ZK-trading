@@ -46,7 +46,16 @@
 - [ ] Monitoring review/simulation actions update candidate lifecycle state.
 - [ ] AI model outputs are audit logged and remain review-only.
 
-## 8. Desired Workday Schedule Cadence
+## 8. V2.5 Experience Memory Milestone
+- [ ] `experience_events` captures candidate lifecycle, monitoring alerts/actions, simulation fills, closed trades, AI proposals/audit logs, and price readiness evidence with idempotent `source_key`.
+- [ ] `experience_reviews` writes a review-only daily memory with candidate, monitoring, backtest, benchmark, portfolio-risk, classification, and next-action evidence.
+- [ ] `strategy_performance_snapshots` stores strategy metrics, benchmark context, warnings, and risk gate posture for later regression comparison.
+- [ ] API smoke covers `/api/experience/summary`, `/api/experience/events`, `/api/experience/reviews`, and `/api/experience/strategy-performance`.
+- [ ] Automation loop supports `--mode experience-review` and remains local API only.
+- [ ] Dashboard V2.5 panel renders event counts, daily reviews, strategy snapshots, recent events, and code evolution audit records.
+- [ ] `/health.live_trading_enabled=false` remains unchanged; no broker adapter, credential, live order endpoint, or real trading control is added.
+
+## 9. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
 - **10:00 AM:** First cycle (Candidate scan, morning momentum check).
 - **1:00 PM (13:00):** Mid-day cycle (Trend persistence, early reversals).

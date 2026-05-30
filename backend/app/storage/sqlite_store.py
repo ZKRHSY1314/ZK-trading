@@ -847,6 +847,73 @@ CREATE TABLE IF NOT EXISTS ai_model_audit_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_model_audit_logs_operation ON ai_model_audit_logs(operation);
+
+CREATE TABLE IF NOT EXISTS experience_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_key TEXT NOT NULL UNIQUE,
+    event_date TEXT,
+    event_type TEXT NOT NULL,
+    category TEXT NOT NULL,
+    source_table TEXT NOT NULL,
+    source_id TEXT,
+    symbol TEXT,
+    name TEXT,
+    outcome_label TEXT,
+    confidence REAL NOT NULL DEFAULT 0,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    embedding_ref TEXT,
+    external_ref TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS experience_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_type TEXT NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    classification_json TEXT NOT NULL DEFAULT '{}',
+    next_actions_json TEXT NOT NULL DEFAULT '[]',
+    source_report_id INTEGER,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(period_type, period_start, period_end)
+);
+
+CREATE TABLE IF NOT EXISTS strategy_performance_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_name TEXT NOT NULL,
+    period_start TEXT,
+    period_end TEXT,
+    market_regime TEXT,
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    source_run_id INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(strategy_name, period_start, period_end, source_run_id)
+);
+
+CREATE TABLE IF NOT EXISTS code_evolution_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    record_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    title TEXT NOT NULL,
+    rationale_json TEXT NOT NULL DEFAULT '{}',
+    plan_json TEXT NOT NULL DEFAULT '{}',
+    validation_json TEXT NOT NULL DEFAULT '{}',
+    reviewed_by TEXT,
+    review_note TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_experience_events_date ON experience_events(event_date);
+CREATE INDEX IF NOT EXISTS idx_experience_events_symbol ON experience_events(symbol);
+CREATE INDEX IF NOT EXISTS idx_experience_events_category ON experience_events(category);
+CREATE INDEX IF NOT EXISTS idx_experience_reviews_period ON experience_reviews(period_type, period_start, period_end);
+CREATE INDEX IF NOT EXISTS idx_strategy_perf_strategy ON strategy_performance_snapshots(strategy_name);
+CREATE INDEX IF NOT EXISTS idx_code_evolution_status ON code_evolution_records(status);
 """
 
 
@@ -896,6 +963,10 @@ KNOWLEDGE_TABLES = [
     "monitoring_alert_actions",
     "ai_parameter_proposals",
     "ai_model_audit_logs",
+    "experience_events",
+    "experience_reviews",
+    "strategy_performance_snapshots",
+    "code_evolution_records",
 ]
 
 

@@ -11,6 +11,7 @@ from app.candidates.scoring import CandidateScoringService
 from app.config import settings
 from app.data.snapshot_builder import MarketDataError, MarketSnapshotBuilder
 from app.decision import DecisionAnalyzer
+from app.experience.memory import ExperienceMemoryService
 from app.knowledge.repository import KnowledgeRepository
 from app.learning.phase_matcher import PhaseSimilarityService
 from app.learning.phase_replay import MainForcePhaseReplayService, PhaseReplayError
@@ -251,6 +252,45 @@ def run_learning_backtest(strategy_name: str = "local_rule_v1") -> LearningBackt
 @router.post("/learning/reports/daily", response_model=LearningReport)
 def create_learning_report(automation_run_id: int | None = None) -> LearningReport:
     return LearningService().generate_review_report(automation_run_id=automation_run_id)
+
+
+@router.post("/experience/capture")
+def capture_experience_events(limit: int = 300) -> dict:
+    return ExperienceMemoryService().capture_recent_events(limit=limit)
+
+
+@router.post("/experience/reviews/daily")
+def create_experience_daily_review(review_date: str | None = None) -> dict:
+    return ExperienceMemoryService().create_daily_review(review_date=review_date)
+
+
+@router.get("/experience/summary")
+def experience_summary() -> dict:
+    return ExperienceMemoryService().summary()
+
+
+@router.get("/experience/events")
+def experience_events(
+    category: str | None = None,
+    symbol: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    return ExperienceMemoryService().events(category=category, symbol=symbol, limit=limit)
+
+
+@router.get("/experience/reviews")
+def experience_reviews(limit: int = 20) -> list[dict]:
+    return ExperienceMemoryService().latest_reviews(limit=limit)
+
+
+@router.get("/experience/strategy-performance")
+def experience_strategy_performance(limit: int = 20) -> list[dict]:
+    return ExperienceMemoryService().strategy_performance(limit=limit)
+
+
+@router.get("/experience/code-evolution")
+def experience_code_evolution(limit: int = 20) -> list[dict]:
+    return ExperienceMemoryService().code_evolution_records(limit=limit)
 
 
 @router.get("/learning/reports/latest", response_model=LearningReport)

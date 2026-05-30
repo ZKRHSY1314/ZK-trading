@@ -197,6 +197,7 @@ class LearningService:
         automation = None
         from app.automation.supervisor import AutomationSupervisor
         from app.monitoring.service import MonitoringService
+        from app.risk.portfolio import PortfolioRiskService
 
         supervisor = AutomationSupervisor()
         if automation_run_id is not None:
@@ -205,6 +206,9 @@ class LearningService:
             automation = supervisor.latest_run()
 
         monitoring = MonitoringService().summary()
+        portfolio_risk = PortfolioRiskService().state()
+        latest_historical_backtest = self._latest_historical_backtest()
+        ai_proposal_summary = self._ai_proposal_summary()
 
         strong = latest_scan["buckets"]["strong"] if latest_scan else []
         watch = latest_scan["buckets"]["watch"] if latest_scan else []
@@ -259,6 +263,16 @@ class LearningService:
                     "backtest": backtest.model_dump(mode="json"),
                     "skipped": skipped,
                 },
+                "v2_credibility": {
+                    "latest_historical_backtest": latest_historical_backtest,
+                    "portfolio_risk": {
+                        "posture": portfolio_risk.get("posture"),
+                        "gates": portfolio_risk.get("gates", []),
+                    },
+                    "ai_proposals": ai_proposal_summary,
+                    "review_only": True,
+                    "simulation_only": True,
+                },
                 "main_force_patterns": self.main_force_pattern_summary(),
                 "phase_matches": self.phase_match_summary(),
                 "next_actions": self._next_actions(backtest, skipped, focus_symbols),
@@ -270,6 +284,57 @@ class LearningService:
         )
         report.id = self._persist_report(report)
         return report
+
+    def _latest_historical_backtest(self) -> dict[str, Any] | None:
+        row = self.store.fetch_one(
+            """
+            SELECT *
+            FROM historical_backtest_runs
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "status": row["status"],
+            "start_date": row.get("start_date"),
+            "end_date": row.get("end_date"),
+            "benchmark_symbol": row.get("benchmark_symbol"),
+            "metrics": json.loads(row.get("metrics_json") or "{}"),
+            "benchmark": json.loads(row.get("benchmark_json") or "{}"),
+            "execution_warnings": json.loads(row.get("execution_warnings_json") or "[]"),
+        }
+
+    def _ai_proposal_summary(self) -> dict[str, Any]:
+        rows = self.store.fetch_all(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM ai_parameter_proposals
+            GROUP BY status
+            """
+        )
+        latest = self.store.fetch_all(
+            """
+            SELECT id, status, validation_json, created_at
+            FROM ai_parameter_proposals
+            ORDER BY id DESC
+            LIMIT 5
+            """
+        )
+        return {
+            "by_status": {row["status"]: int(row["count"]) for row in rows},
+            "latest": [
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "validation": json.loads(row.get("validation_json") or "{}"),
+                    "created_at": row.get("created_at"),
+                }
+                for row in latest
+            ],
+        }
 
     def latest_report(self) -> LearningReport | None:
         row = self.store.fetch_one(

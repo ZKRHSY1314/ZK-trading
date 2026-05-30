@@ -135,6 +135,61 @@
           </div>
         </div>
       </article>
+<article class="panel wide">
+        <h2>V2.5 交易经验记忆库</h2>
+        <p class="review-only-banner">记忆库只汇总候选生命周期、监控告警、模拟成交、可信回测和 AI 提案审计；保持 review-only，不产生实盘动作。</p>
+        <div class="actions">
+          <button data-testid="run-experience-review-button" @click="runExperienceReview" :disabled="experienceLoading">
+            {{ experienceLoading ? "复盘中" : "生成每日经验复盘" }}
+          </button>
+          <button @click="loadExperienceMemory" :disabled="experienceLoading">刷新记忆库</button>
+        </div>
+        <div class="metrics">
+          <span>复盘 {{ experienceSummary?.review_count ?? 0 }}</span>
+          <span>策略快照 {{ experienceSummary?.strategy_snapshot_count ?? 0 }}</span>
+          <span>代码演进 {{ experienceSummary?.code_evolution_count ?? 0 }}</span>
+          <span>实盘 {{ experienceSummary?.live_trading_enabled ? "开启" : "关闭" }}</span>
+        </div>
+        <div v-if="experienceEventCounts.length" class="lifecycle">
+          <span v-for="item in experienceEventCounts.slice(0, 8)" :key="item.category">
+            {{ item.category }} {{ item.count }}
+          </span>
+        </div>
+        <div v-if="experienceReviews.length" class="score-list">
+          <div v-for="review in experienceReviews.slice(0, 3)" :key="review.id" class="score-item">
+            <strong>{{ review.period_start }} / {{ review.title }}</strong>
+            <span>
+              回测平仓 {{ review.summary?.backtest_metrics?.closed_trade_count ?? 0 }} /
+              风控 {{ review.summary?.portfolio_risk?.posture ?? "unknown" }}
+            </span>
+            <small>{{ (review.next_actions ?? []).slice(0, 2).join("；") || "暂无下一步动作" }}</small>
+          </div>
+        </div>
+        <div v-if="experienceStrategyPerformance.length" class="score-list">
+          <div v-for="snapshot in experienceStrategyPerformance.slice(0, 3)" :key="snapshot.id" class="score-item">
+            <strong>{{ snapshot.strategy_name }} / {{ snapshot.period_start }} → {{ snapshot.period_end }}</strong>
+            <span>
+              收益 {{ ((snapshot.metrics?.total_return ?? 0) * 100).toFixed(2) }}% /
+              回撤 {{ ((snapshot.metrics?.max_drawdown ?? 0) * 100).toFixed(2) }}%
+            </span>
+            <small>benchmark {{ snapshot.metrics?.benchmark?.symbol ?? "unknown" }} / posture {{ snapshot.metrics?.portfolio_posture ?? "unknown" }}</small>
+          </div>
+        </div>
+        <div v-if="experienceEvents.length" class="score-list">
+          <div v-for="event in experienceEvents.slice(0, 5)" :key="event.id" class="score-item">
+            <strong>{{ event.category }} / {{ event.event_type }}</strong>
+            <span>{{ event.symbol ?? "system" }} {{ event.name ?? "" }} / {{ event.outcome_label ?? "unknown" }}</span>
+            <small>{{ event.event_date ?? event.created_at }}</small>
+          </div>
+        </div>
+        <div v-if="experienceCodeEvolution.length" class="score-list">
+          <div v-for="record in experienceCodeEvolution.slice(0, 3)" :key="record.id" class="score-item">
+            <strong>{{ record.record_type }} / {{ record.status }}</strong>
+            <span>{{ record.title }}</span>
+            <small>{{ record.created_at }}</small>
+          </div>
+        </div>
+      </article>
 <article class="panel">
         <h2>候选池</h2>
         <div class="metrics">
@@ -1177,6 +1232,54 @@ type AIProposalItem = {
   validation?: Record<string, any>;
 };
 
+type ExperienceSummaryData = {
+  event_counts: Record<string, number>;
+  review_count: number;
+  strategy_snapshot_count: number;
+  code_evolution_count: number;
+  latest_review?: ExperienceReviewItem | null;
+  live_trading_enabled: boolean;
+};
+
+type ExperienceReviewItem = {
+  id: number;
+  period_type: string;
+  period_start: string;
+  period_end: string;
+  title: string;
+  summary?: Record<string, any>;
+  classification?: Record<string, any>;
+  next_actions?: string[];
+  live_trading_enabled?: number | boolean;
+  created_at?: string;
+};
+
+type ExperienceEventItem = {
+  id: number;
+  event_date?: string;
+  event_type: string;
+  category: string;
+  source_table: string;
+  source_id?: string;
+  symbol?: string;
+  name?: string;
+  outcome_label?: string;
+  confidence?: number;
+  payload?: Record<string, any>;
+  created_at?: string;
+};
+
+type StrategyPerformanceSnapshot = {
+  id: number;
+  strategy_name: string;
+  period_start?: string;
+  period_end?: string;
+  market_regime?: string;
+  metrics?: Record<string, any>;
+  source_run_id?: number;
+  created_at?: string;
+};
+
 const summary = ref<KnowledgeSummary | null>(null);
 const latestScan = ref<CandidateScan | null>(null);
 const discovery = ref<AutoDiscoveryResult | null>(null);
@@ -1236,6 +1339,12 @@ const marketRegime = ref<MarketRegimeData | null>(null);
 const portfolioRisk = ref<PortfolioRiskData | null>(null);
 const monitoringLifecycle = ref<MonitoringLifecycleData | null>(null);
 const aiProposals = ref<AIProposalItem[]>([]);
+const experienceSummary = ref<ExperienceSummaryData | null>(null);
+const experienceReviews = ref<ExperienceReviewItem[]>([]);
+const experienceEvents = ref<ExperienceEventItem[]>([]);
+const experienceStrategyPerformance = ref<StrategyPerformanceSnapshot[]>([]);
+const experienceCodeEvolution = ref<any[]>([]);
+const experienceLoading = ref(false);
 const v15Loading = ref(false);
 const smallSampleThreshold = 10;
 const error = ref("");
@@ -1251,6 +1360,13 @@ const topCandidates = computed(() => {
   if (!buckets) return [];
   return [...buckets.strong, ...buckets.watch, ...buckets.rejected].slice(0, 8);
 });
+
+const experienceEventCounts = computed(() =>
+  Object.entries(experienceSummary.value?.event_counts ?? {}).map(([category, count]) => ({
+    category,
+    count
+  }))
+);
 
 const reviewText = computed(() => {
   if (!latestScan.value) return "AI可以提出权重调整，但必须经过收益、最大回撤、胜率、盈亏比验证。";
@@ -2128,6 +2244,43 @@ async function rejectAiProposal(id: number) {
   }
 }
 
+async function loadExperienceMemory() {
+  try {
+    const [summaryData, reviewsData, eventsData, strategyData, codeEvolutionData] = await Promise.all([
+      fetchJson<ExperienceSummaryData>("/api/experience/summary"),
+      fetchJson<ExperienceReviewItem[]>("/api/experience/reviews?limit=10"),
+      fetchJson<ExperienceEventItem[]>("/api/experience/events?limit=30"),
+      fetchJson<StrategyPerformanceSnapshot[]>("/api/experience/strategy-performance?limit=10"),
+      fetchJson<any[]>("/api/experience/code-evolution?limit=10")
+    ]);
+    experienceSummary.value = summaryData;
+    experienceReviews.value = reviewsData;
+    experienceEvents.value = eventsData;
+    experienceStrategyPerformance.value = strategyData;
+    experienceCodeEvolution.value = codeEvolutionData;
+  } catch {
+    experienceSummary.value = null;
+    experienceReviews.value = [];
+    experienceEvents.value = [];
+    experienceStrategyPerformance.value = [];
+    experienceCodeEvolution.value = [];
+  }
+}
+
+async function runExperienceReview() {
+  experienceLoading.value = true;
+  error.value = "";
+  try {
+    await fetchJson("/api/experience/reviews/daily", { method: "POST" });
+    await loadExperienceMemory();
+    await loadLearningReport();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "经验复盘生成失败";
+  } finally {
+    experienceLoading.value = false;
+  }
+}
+
 onMounted(async () => {
   const results = await Promise.allSettled([
     loadSummary(),
@@ -2165,7 +2318,8 @@ onMounted(async () => {
     loadMarketRegime(),
     loadPortfolioRisk(),
     loadMonitoringLifecycle(),
-    loadAiProposals()
+    loadAiProposals(),
+    loadExperienceMemory()
   ]);
   const firstError = results.find((item) => item.status === "rejected");
   if (firstError && firstError.status === "rejected") {

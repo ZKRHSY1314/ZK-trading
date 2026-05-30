@@ -149,6 +149,11 @@ def run_backtest_cycle(api_base: str, limit: int) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def run_experience_review(api_base: str) -> dict:
+    """Capture recent simulation evidence and write a review-only daily memory."""
+    return request_json("POST", f"{api_base}/api/experience/reviews/daily")
+
+
 def run_browser_cycle() -> dict:
     completed = subprocess.run(
         ["npm.cmd", "run", "automation:browser"],
@@ -175,7 +180,7 @@ def append_log(payload: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe simulation automation loop.")
     parser.add_argument("--api-base", default=DEFAULT_API_BASE)
-    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest"], default="cycle")
+    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest", "experience-review"], default="cycle")
     parser.add_argument("--task-type", default="offhour_potential_search", help="Task type for agent-task mode")
     parser.add_argument("--interval-seconds", type=int, default=60)
     parser.add_argument("--max-cycles", type=int, default=1, help="Use 0 to run forever.")
@@ -229,6 +234,8 @@ def main() -> int:
                 entry["result"] = run_daily_bar_cache(args.api_base, args.limit)
             elif args.mode == "backtest":
                 entry["result"] = run_backtest_cycle(args.api_base, args.limit)
+            elif args.mode == "experience-review":
+                entry["result"] = run_experience_review(args.api_base)
             else:
                 entry["result"] = run_api_cycle(args.api_base, args.limit)
             entry["status"] = "completed"
