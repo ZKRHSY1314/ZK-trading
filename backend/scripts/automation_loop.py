@@ -154,6 +154,12 @@ def run_experience_review(api_base: str) -> dict:
     return request_json("POST", f"{api_base}/api/experience/reviews/daily")
 
 
+def run_code_evolution_review(api_base: str, limit: int) -> dict:
+    """Generate review-only code evolution suggestions from experience memory."""
+    query = urllib.parse.urlencode({"limit": limit})
+    return request_json("POST", f"{api_base}/api/experience/code-evolution/generate?{query}")
+
+
 def run_browser_cycle() -> dict:
     completed = subprocess.run(
         ["npm.cmd", "run", "automation:browser"],
@@ -180,7 +186,7 @@ def append_log(payload: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe simulation automation loop.")
     parser.add_argument("--api-base", default=DEFAULT_API_BASE)
-    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest", "experience-review"], default="cycle")
+    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest", "experience-review", "code-evolution-review"], default="cycle")
     parser.add_argument("--task-type", default="offhour_potential_search", help="Task type for agent-task mode")
     parser.add_argument("--interval-seconds", type=int, default=60)
     parser.add_argument("--max-cycles", type=int, default=1, help="Use 0 to run forever.")
@@ -236,6 +242,8 @@ def main() -> int:
                 entry["result"] = run_backtest_cycle(args.api_base, args.limit)
             elif args.mode == "experience-review":
                 entry["result"] = run_experience_review(args.api_base)
+            elif args.mode == "code-evolution-review":
+                entry["result"] = run_code_evolution_review(args.api_base, args.limit)
             else:
                 entry["result"] = run_api_cycle(args.api_base, args.limit)
             entry["status"] = "completed"

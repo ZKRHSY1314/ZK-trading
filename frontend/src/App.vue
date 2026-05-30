@@ -190,6 +190,41 @@
           </div>
         </div>
       </article>
+<article class="panel wide">
+        <h2>V3.0 Codex代码进化审查</h2>
+        <p class="review-only-banner">Codex 只能基于复盘证据生成审查建议和验证记录；不生成可自动应用的 patch，不创建实盘接口，不修改交易权限。</p>
+        <div class="actions">
+          <button data-testid="generate-code-evolution-button" @click="generateCodeEvolutionReviews" :disabled="codeEvolutionLoading">
+            {{ codeEvolutionLoading ? "生成中" : "生成代码进化建议" }}
+          </button>
+          <button data-testid="refresh-code-evolution-button" @click="loadExperienceMemory" :disabled="codeEvolutionLoading">
+            刷新验证结果
+          </button>
+        </div>
+        <div class="metrics">
+          <span>总数 {{ experienceCodeEvolution.length }}</span>
+          <span>待验证 {{ codeEvolutionStatusCount.pending_validation + codeEvolutionStatusCount.draft }}</span>
+          <span>验证通过 {{ codeEvolutionStatusCount.validation_passed }}</span>
+          <span>已接受 {{ codeEvolutionStatusCount.accepted }}</span>
+        </div>
+        <div v-if="experienceCodeEvolution.length" class="score-list">
+          <div v-for="record in experienceCodeEvolution.slice(0, 8)" :key="record.id" :class="['score-item', codeEvolutionClass(record)]">
+            <strong>#{{ record.id }} {{ record.record_type }} / {{ record.status }}</strong>
+            <span>{{ record.title }}</span>
+            <small>风险 {{ record.rationale?.severity ?? "unknown" }} / 验证 {{ record.validation?.status ?? "not_run" }}</small>
+            <small>{{ (record.plan?.actions ?? []).slice(0, 2).join("；") }}</small>
+            <div class="actions">
+              <button @click="approveCodeEvolution(record.id)" :disabled="record.status !== 'validation_passed' || codeEvolutionLoading">
+                接受
+              </button>
+              <button class="disabled-live" @click="rejectCodeEvolution(record.id)" :disabled="codeEvolutionLoading">
+                拒绝
+              </button>
+            </div>
+          </div>
+        </div>
+        <p v-else>暂无代码进化建议。先生成每日经验复盘，再生成审查建议。</p>
+      </article>
 <article class="panel">
         <h2>候选池</h2>
         <div class="metrics">
@@ -1280,6 +1315,25 @@ type StrategyPerformanceSnapshot = {
   created_at?: string;
 };
 
+type CodeEvolutionRecord = {
+  id: number;
+  record_type: string;
+  status: string;
+  title: string;
+  rationale?: Record<string, any>;
+  plan?: {
+    actions?: string[];
+    acceptance_criteria?: string[];
+    allowed_output?: string;
+  };
+  validation?: Record<string, any>;
+  reviewed_by?: string;
+  review_note?: string;
+  created_at?: string;
+  updated_at?: string;
+  reviewed_at?: string;
+};
+
 const summary = ref<KnowledgeSummary | null>(null);
 const latestScan = ref<CandidateScan | null>(null);
 const discovery = ref<AutoDiscoveryResult | null>(null);
@@ -1343,8 +1397,9 @@ const experienceSummary = ref<ExperienceSummaryData | null>(null);
 const experienceReviews = ref<ExperienceReviewItem[]>([]);
 const experienceEvents = ref<ExperienceEventItem[]>([]);
 const experienceStrategyPerformance = ref<StrategyPerformanceSnapshot[]>([]);
-const experienceCodeEvolution = ref<any[]>([]);
+const experienceCodeEvolution = ref<CodeEvolutionRecord[]>([]);
 const experienceLoading = ref(false);
+const codeEvolutionLoading = ref(false);
 const v15Loading = ref(false);
 const smallSampleThreshold = 10;
 const error = ref("");
@@ -1367,6 +1422,21 @@ const experienceEventCounts = computed(() =>
     count
   }))
 );
+
+const codeEvolutionStatusCount = computed(() => {
+  const counts: Record<string, number> = {
+    draft: 0,
+    pending_validation: 0,
+    validation_passed: 0,
+    validation_failed: 0,
+    accepted: 0,
+    rejected: 0
+  };
+  for (const record of experienceCodeEvolution.value) {
+    counts[record.status] = (counts[record.status] ?? 0) + 1;
+  }
+  return counts;
+});
 
 const reviewText = computed(() => {
   if (!latestScan.value) return "AI可以提出权重调整，但必须经过收益、最大回撤、胜率、盈亏比验证。";
@@ -1842,6 +1912,12 @@ function proposalBorderClass(p: CalibrationProposalItem) {
   return "";
 }
 
+function codeEvolutionClass(record: CodeEvolutionRecord) {
+  if (record.status === "accepted" || record.status === "validation_passed") return "proposal-strong";
+  if (record.status === "rejected" || record.status === "validation_failed") return "proposal-weak";
+  return "proposal-wait";
+}
+
 async function loadSignalPerformanceSummary() {
   try {
     signalPerformanceSummary.value = await fetchJson<SignalPerformanceSummaryData>("/api/learning/signal-performance/summary");
@@ -2251,7 +2327,7 @@ async function loadExperienceMemory() {
       fetchJson<ExperienceReviewItem[]>("/api/experience/reviews?limit=10"),
       fetchJson<ExperienceEventItem[]>("/api/experience/events?limit=30"),
       fetchJson<StrategyPerformanceSnapshot[]>("/api/experience/strategy-performance?limit=10"),
-      fetchJson<any[]>("/api/experience/code-evolution?limit=10")
+      fetchJson<CodeEvolutionRecord[]>("/api/experience/code-evolution?limit=20")
     ]);
     experienceSummary.value = summaryData;
     experienceReviews.value = reviewsData;
@@ -2264,6 +2340,53 @@ async function loadExperienceMemory() {
     experienceEvents.value = [];
     experienceStrategyPerformance.value = [];
     experienceCodeEvolution.value = [];
+  }
+}
+
+async function generateCodeEvolutionReviews() {
+  codeEvolutionLoading.value = true;
+  error.value = "";
+  try {
+    await fetchJson("/api/experience/code-evolution/generate?limit=5", { method: "POST" });
+    await loadExperienceMemory();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "代码进化建议生成失败";
+  } finally {
+    codeEvolutionLoading.value = false;
+  }
+}
+
+async function approveCodeEvolution(id: number) {
+  codeEvolutionLoading.value = true;
+  error.value = "";
+  try {
+    await fetchJson(`/api/experience/code-evolution/${id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewed_by: "user", note: "accepted from dashboard" })
+    });
+    await loadExperienceMemory();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "代码进化建议接受失败";
+  } finally {
+    codeEvolutionLoading.value = false;
+  }
+}
+
+async function rejectCodeEvolution(id: number) {
+  codeEvolutionLoading.value = true;
+  error.value = "";
+  try {
+    await fetchJson(`/api/experience/code-evolution/${id}/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewed_by: "user", note: "rejected from dashboard" })
+    });
+    await loadExperienceMemory();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "代码进化建议拒绝失败";
+  } finally {
+    codeEvolutionLoading.value = false;
   }
 }
 

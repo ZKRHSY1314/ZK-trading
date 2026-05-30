@@ -55,7 +55,17 @@
 - [ ] Dashboard V2.5 panel renders event counts, daily reviews, strategy snapshots, recent events, and code evolution audit records.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker adapter, credential, live order endpoint, or real trading control is added.
 
-## 9. Desired Workday Schedule Cadence
+## 9. V3.0 Controlled Code Evolution Milestone
+- [ ] `codegraph init -i` succeeds and `codegraph status` reports indexed files/nodes/edges.
+- [ ] `.codegraph/` is ignored and not tracked by Git.
+- [ ] Code evolution generation reads experience memory and creates review-only `code_evolution_records`.
+- [ ] Duplicate active review records are skipped instead of regenerated indefinitely.
+- [ ] API smoke covers generate/list/detail/validation/approve/reject under `/api/experience/code-evolution`.
+- [ ] CLI validation runs backend compile/tests/pip check, frontend type/build/audit, repo diff check, and forbidden tracked-file scan.
+- [ ] Dashboard V3.0 panel shows proposal type, evidence summary, risk, validation status, accept, and reject actions.
+- [ ] No API executes shell commands, applies patches, creates PRs, or changes live trading/broker/credential/order capabilities.
+
+## 10. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
 - **10:00 AM:** First cycle (Candidate scan, morning momentum check).
 - **1:00 PM (13:00):** Mid-day cycle (Trend persistence, early reversals).

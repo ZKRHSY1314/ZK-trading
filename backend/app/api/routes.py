@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from app.agent_control.service import AgentControlService
 from app.ai.weight_optimizer import WeightOptimizer
@@ -11,6 +12,7 @@ from app.candidates.scoring import CandidateScoringService
 from app.config import settings
 from app.data.snapshot_builder import MarketDataError, MarketSnapshotBuilder
 from app.decision import DecisionAnalyzer
+from app.experience.code_evolution import CodeEvolutionService
 from app.experience.memory import ExperienceMemoryService
 from app.knowledge.repository import KnowledgeRepository
 from app.learning.phase_matcher import PhaseSimilarityService
@@ -42,6 +44,16 @@ from app.simulation.planner import SimulationPlanner
 from app.storage.sqlite_store import SQLiteStore
 
 router = APIRouter(prefix="/api")
+
+
+class CodeEvolutionValidationInput(BaseModel):
+    validation: dict = Field(default_factory=dict)
+    status: str | None = None
+
+
+class CodeEvolutionReviewInput(BaseModel):
+    reviewed_by: str = "user"
+    note: str | None = None
 
 
 @router.get("/system/capabilities")
@@ -288,9 +300,61 @@ def experience_strategy_performance(limit: int = 20) -> list[dict]:
     return ExperienceMemoryService().strategy_performance(limit=limit)
 
 
+@router.post("/experience/code-evolution/generate")
+def generate_code_evolution_reviews(limit: int = 5) -> dict:
+    return CodeEvolutionService().generate_review_items(limit=limit)
+
+
 @router.get("/experience/code-evolution")
-def experience_code_evolution(limit: int = 20) -> list[dict]:
-    return ExperienceMemoryService().code_evolution_records(limit=limit)
+def experience_code_evolution(status: str | None = None, limit: int = 20) -> list[dict]:
+    return CodeEvolutionService().list_records(status=status, limit=limit)
+
+
+@router.get("/experience/code-evolution/{record_id}")
+def experience_code_evolution_detail(record_id: int) -> dict:
+    try:
+        return CodeEvolutionService().get_record(record_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/experience/code-evolution/{record_id}/validation")
+def record_code_evolution_validation(
+    record_id: int,
+    input_data: CodeEvolutionValidationInput,
+) -> dict:
+    try:
+        return CodeEvolutionService().record_validation(
+            record_id,
+            input_data.validation,
+            status=input_data.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/experience/code-evolution/{record_id}/approve")
+def approve_code_evolution_record(record_id: int, input_data: CodeEvolutionReviewInput) -> dict:
+    try:
+        return CodeEvolutionService().approve(
+            record_id,
+            reviewed_by=input_data.reviewed_by,
+            note=input_data.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/experience/code-evolution/{record_id}/reject")
+def reject_code_evolution_record(record_id: int, input_data: CodeEvolutionReviewInput) -> dict:
+    try:
+        return CodeEvolutionService().reject(
+            record_id,
+            reviewed_by=input_data.reviewed_by,
+            note=input_data.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/learning/reports/latest", response_model=LearningReport)
@@ -1008,9 +1072,6 @@ def portfolio_risk_state() -> dict:
 # ------------------------------------------------------------------
 # Event-Driven Historical Backtesting
 # ------------------------------------------------------------------
-
-from pydantic import BaseModel, Field
-
 
 class BacktestRunInput(BaseModel):
     start_date: str
