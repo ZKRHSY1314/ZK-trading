@@ -539,6 +539,41 @@ def market_snapshot(symbol: str, name: str | None = None) -> MarketSnapshot:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/realtime/capabilities")
+def realtime_capabilities() -> dict:
+    from app.realtime.service import RealtimeMarketService
+
+    return RealtimeMarketService().capabilities()
+
+
+@router.get("/realtime/provider-health")
+def realtime_provider_health() -> list[dict]:
+    from app.realtime.service import RealtimeMarketService
+
+    return RealtimeMarketService().provider_health()
+
+
+@router.get("/realtime/snapshot/{symbol}")
+def realtime_snapshot(symbol: str) -> dict:
+    from app.realtime.service import RealtimeMarketService
+
+    return RealtimeMarketService().latest_snapshot(symbol)
+
+
+@router.get("/realtime/events")
+def realtime_events(symbol: str | None = None, limit: int = 50) -> list[dict]:
+    from app.realtime.service import RealtimeMarketService
+
+    return RealtimeMarketService().list_events(symbol=symbol, limit=limit)
+
+
+@router.post("/realtime/replay")
+def realtime_replay(symbol: str | None = None, limit: int = 100) -> dict:
+    from app.realtime.service import RealtimeMarketService
+
+    return RealtimeMarketService().replay(symbol=symbol, limit=limit)
+
+
 @router.post("/data/daily-bars/refresh")
 def refresh_daily_bars(limit: int = 50, days: int = 120) -> dict:
     from app.data.daily_bar_cache import DailyBarCacheService

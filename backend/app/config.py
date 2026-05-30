@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     backtest_max_participation_rate: float = 0.005
     backtest_default_partial_fill_ratio: float = 0.5
     backtest_default_benchmark_symbol: str = "SH000300"
+    realtime_provider: str = "disabled"
+    asharehub_api_key: str | None = None
+    asharehub_base_url: str = "https://asharehub.com/api"
+    realtime_request_timeout_seconds: float = 5.0
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

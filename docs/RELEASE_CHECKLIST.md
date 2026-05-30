@@ -75,7 +75,18 @@
 - [ ] Dashboard V3.5 area shows provider, explanation summary, attribution tags, similar-case count, safety blocks, and audit logs.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker adapter, credential, live order endpoint, shell execution, patch application, or PR automation is added.
 
-## 11. Desired Workday Schedule Cadence
+## 11. V4.0 High-Timeliness Data and Event-Driven Milestone
+- [ ] `a-share-trading-cockpit` skill is readable UTF-8 and documents V3.5/V4.0 safety boundaries.
+- [ ] Realtime provider abstraction supports disabled-by-default external sources and AKShare fallback labeling without pretending delayed data is reliable realtime.
+- [ ] `realtime_market_events` records symbol, price, source, event/received timestamps, latency, quality, fallback, payload, and dedupe key.
+- [ ] `realtime_provider_health` records provider configuration, health, fallback state, latency, and quality status.
+- [ ] Realtime event ingestion dedupes same-source same-symbol same-second events.
+- [ ] Replay returns ordered simulation-only signals from stored events.
+- [ ] API smoke covers `/api/realtime/capabilities`, `/api/realtime/provider-health`, `/api/realtime/snapshot/{symbol}`, `/api/realtime/events`, and `/api/realtime/replay`.
+- [ ] Dashboard V4.0 area shows provider state, latency, recent events, quality, fallback/degraded state, and replay results.
+- [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
+
+## 12. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
 - **10:00 AM:** First cycle (Candidate scan, morning momentum check).
 - **1:00 PM (13:00):** Mid-day cycle (Trend persistence, early reversals).

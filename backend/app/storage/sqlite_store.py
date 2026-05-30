@@ -721,6 +721,42 @@ CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_symbol ON daily_bar_cache(symbol)
 CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_trade_date ON daily_bar_cache(trade_date);
 CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_status ON daily_bar_cache(quality_status);
 
+CREATE TABLE IF NOT EXISTS realtime_market_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    name TEXT,
+    price REAL NOT NULL,
+    volume REAL,
+    amount REAL,
+    source TEXT NOT NULL,
+    provider_status TEXT NOT NULL DEFAULT 'ok',
+    event_ts TEXT NOT NULL,
+    received_ts TEXT NOT NULL,
+    latency_ms REAL,
+    quality_status TEXT NOT NULL,
+    fallback_used INTEGER NOT NULL DEFAULT 0,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    dedupe_key TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_events_symbol ON realtime_market_events(symbol);
+CREATE INDEX IF NOT EXISTS idx_realtime_events_event_ts ON realtime_market_events(event_ts);
+CREATE INDEX IF NOT EXISTS idx_realtime_events_quality ON realtime_market_events(quality_status);
+CREATE INDEX IF NOT EXISTS idx_realtime_events_source ON realtime_market_events(source);
+
+CREATE TABLE IF NOT EXISTS realtime_provider_health (
+    provider TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    configured INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    last_event_ts TEXT,
+    latency_ms REAL,
+    quality_status TEXT NOT NULL DEFAULT 'unknown',
+    details_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS historical_backtest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     config_json TEXT NOT NULL,
@@ -955,6 +991,8 @@ KNOWLEDGE_TABLES = [
     "agent_paper_simulation_evaluations",
     "price_readiness_reports",
     "daily_bar_cache",
+    "realtime_market_events",
+    "realtime_provider_health",
     "historical_backtest_runs",
     "historical_backtest_trades",
     "historical_backtest_closed_trades",

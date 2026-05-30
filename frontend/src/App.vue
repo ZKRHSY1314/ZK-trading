@@ -72,6 +72,58 @@
         <p v-else>暂无价格就绪报告。点击上方按钮进行检查。</p>
       </article>
 <article class="panel wide">
+        <h2>V4.0 高时效数据与事件驱动</h2>
+        <p class="review-only-banner">只做秒级监控、提醒、模拟和 replay；不连接券商，不点击交易软件，不产生实盘订单。</p>
+        <div class="actions">
+          <button data-testid="refresh-realtime-button" @click="loadRealtimeData" :disabled="realtimeLoading">
+            {{ realtimeLoading ? "刷新中" : "刷新实时状态" }}
+          </button>
+          <button data-testid="run-realtime-replay-button" @click="runRealtimeReplay" :disabled="realtimeLoading">
+            运行信号 Replay
+          </button>
+        </div>
+        <div class="metrics">
+          <span>Provider {{ realtimeCapabilities?.active_provider ?? "disabled" }}</span>
+          <span>状态 {{ realtimeCapabilities?.provider_status ?? "未加载" }}</span>
+          <span>事件 {{ realtimeEvents.length }}</span>
+          <span>实盘 {{ realtimeCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
+        </div>
+        <div v-if="realtimeHealth.length" class="score-list">
+          <div v-for="item in realtimeHealth.slice(0, 4)" :key="item.provider" class="score-item">
+            <strong>{{ item.provider }} / {{ item.status }}</strong>
+            <span>配置 {{ item.configured ? "已配置" : "未配置" }} / 质量 {{ item.quality_status }}</span>
+            <small>延迟 {{ item.latency_ms ?? "N/A" }} ms / {{ item.last_error ?? "暂无错误" }}</small>
+          </div>
+        </div>
+        <div v-if="realtimeSnapshot?.event" class="score-list">
+          <div class="score-item">
+            <strong>{{ realtimeSnapshot.event.symbol }} 最新事件 / {{ realtimeSnapshot.status }}</strong>
+            <span>价格 {{ realtimeSnapshot.event.price }} / 来源 {{ realtimeSnapshot.event.source }}</span>
+            <small>延迟 {{ realtimeSnapshot.event.latency_ms?.toFixed?.(0) ?? realtimeSnapshot.event.latency_ms ?? "N/A" }} ms / 质量 {{ realtimeSnapshot.event.quality_status }}</small>
+          </div>
+        </div>
+        <p v-else>暂无实时事件缓存。外部源未配置时系统保持 disabled/needs_config，不伪装为实时行情。</p>
+        <div v-if="realtimeEvents.length" class="score-list">
+          <div v-for="event in realtimeEvents.slice(0, 5)" :key="event.id" class="score-item">
+            <strong>{{ event.symbol }} / {{ event.quality_status }}</strong>
+            <span>{{ event.price }} / {{ event.source }}</span>
+            <small>{{ event.event_ts }} / dedupe {{ event.dedupe_key }}</small>
+          </div>
+        </div>
+        <div v-if="realtimeReplay" class="score-list">
+          <div class="score-item">
+            <strong>Replay / {{ realtimeReplay.status }}</strong>
+            <span>事件 {{ realtimeReplay.event_count }} / 信号 {{ realtimeReplay.signals.length }}</span>
+            <small>simulation-only / live trading disabled</small>
+          </div>
+          <div v-for="signal in realtimeReplay.signals.slice(0, 5)" :key="`${signal.symbol}-${signal.event_ts}-${signal.signal_type}`" class="score-item">
+            <strong>{{ signal.symbol }} / {{ signal.signal_type }}</strong>
+            <span>强度 {{ signal.strength }} / 质量 {{ signal.quality_status }}</span>
+            <small>{{ signal.event_ts }} / {{ signal.reason }}</small>
+          </div>
+        </div>
+      </article>
+<article class="panel wide">
         <h2>V2.0 可信度证据面板</h2>
         <p class="review-only-banner">所有内容仅用于历史回测、模拟风控、告警复核和 AI 参数提案审查，不连接券商，不产生实盘订单。</p>
         <div class="actions">
@@ -1232,6 +1284,75 @@ type PriceReadinessReport = {
 
 type PriceReadinessSummary = Record<string, number>;
 
+type RealtimeCapabilities = {
+  status: string;
+  active_provider: string;
+  provider_status: string;
+  allowed_modes: string[];
+  forbidden_modes: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type RealtimeProviderHealth = {
+  provider: string;
+  status: string;
+  configured: boolean;
+  quality_status: string;
+  last_error?: string | null;
+  last_event_ts?: string | null;
+  latency_ms?: number | null;
+  details?: Record<string, any>;
+};
+
+type RealtimeEvent = {
+  id: number;
+  symbol: string;
+  name?: string;
+  price: number;
+  volume?: number;
+  amount?: number;
+  source: string;
+  provider_status: string;
+  event_ts: string;
+  received_ts: string;
+  latency_ms?: number;
+  quality_status: string;
+  fallback_used: boolean;
+  dedupe_key: string;
+  payload?: Record<string, any>;
+};
+
+type RealtimeSnapshot = {
+  status: string;
+  quality_status?: string;
+  fallback_status?: string;
+  event?: RealtimeEvent;
+  provider_health?: RealtimeProviderHealth[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type RealtimeReplay = {
+  status: string;
+  event_count: number;
+  signals: Array<{
+    symbol: string;
+    event_ts: string;
+    signal_type: string;
+    strength: number;
+    price?: number;
+    previous_price?: number;
+    quality_status: string;
+    reason: string;
+  }>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -1440,6 +1561,12 @@ const priceReadinessSummary = ref<PriceReadinessSummary | null>(null);
 const priceReadinessLoading = ref(false);
 const dailyBarCoverage = ref<any[]>([]);
 const dailyBarRefreshLoading = ref(false);
+const realtimeCapabilities = ref<RealtimeCapabilities | null>(null);
+const realtimeHealth = ref<RealtimeProviderHealth[]>([]);
+const realtimeSnapshot = ref<RealtimeSnapshot | null>(null);
+const realtimeEvents = ref<RealtimeEvent[]>([]);
+const realtimeReplay = ref<RealtimeReplay | null>(null);
+const realtimeLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
 const marketRegime = ref<MarketRegimeData | null>(null);
@@ -2269,6 +2396,43 @@ async function runDailyBarRefresh() {
   }
 }
 
+async function loadRealtimeData() {
+  realtimeLoading.value = true;
+  try {
+    const [capabilitiesData, healthData, snapshotData, eventsData] = await Promise.all([
+      fetchJson<RealtimeCapabilities>("/api/realtime/capabilities"),
+      fetchJson<RealtimeProviderHealth[]>("/api/realtime/provider-health"),
+      fetchJson<RealtimeSnapshot>("/api/realtime/snapshot/SZ002081"),
+      fetchJson<RealtimeEvent[]>("/api/realtime/events?limit=20")
+    ]);
+    realtimeCapabilities.value = capabilitiesData;
+    realtimeHealth.value = healthData;
+    realtimeSnapshot.value = snapshotData;
+    realtimeEvents.value = eventsData;
+  } catch (err) {
+    realtimeCapabilities.value = null;
+    realtimeHealth.value = [];
+    realtimeSnapshot.value = null;
+    realtimeEvents.value = [];
+    error.value = err instanceof Error ? err.message : "实时行情状态加载失败";
+  } finally {
+    realtimeLoading.value = false;
+  }
+}
+
+async function runRealtimeReplay() {
+  realtimeLoading.value = true;
+  error.value = "";
+  try {
+    realtimeReplay.value = await fetchJson<RealtimeReplay>("/api/realtime/replay?limit=100", { method: "POST" });
+    await loadRealtimeData();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "实时信号 Replay 失败";
+  } finally {
+    realtimeLoading.value = false;
+  }
+}
+
 async function loadBacktestRuns() {
   try {
     backtestRuns.value = await fetchJson<BacktestRunItem[]>("/api/backtest/runs?limit=10");
@@ -2551,6 +2715,7 @@ onMounted(async () => {
     loadPaperSimEvalPolicies(),
     loadPriceReadinessReports(),
     loadPriceReadinessSummary(),
+    loadRealtimeData(),
     loadBacktestRuns(),
     loadMarketRegime(),
     loadPortfolioRisk(),
