@@ -207,13 +207,35 @@
           <span>验证通过 {{ codeEvolutionStatusCount.validation_passed }}</span>
           <span>已接受 {{ codeEvolutionStatusCount.accepted }}</span>
         </div>
+        <div class="v35-model-review">
+          <div class="actions">
+            <button data-testid="refresh-ai-model-audit-button" @click="loadAIModelAuditLogs" :disabled="aiModelLoading">
+              刷新审计日志
+            </button>
+          </div>
+          <div class="metrics">
+            <span>V3.5 Provider {{ aiModelCapabilities?.provider ?? "mock_local_rule" }}</span>
+            <span>允许输出 {{ aiModelCapabilities?.allowed_outputs?.length ?? 4 }}</span>
+            <span>审计 {{ aiModelAuditLogs.length }}</span>
+            <span>实盘 {{ aiModelCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
+          </div>
+        </div>
         <div v-if="experienceCodeEvolution.length" class="score-list">
           <div v-for="record in experienceCodeEvolution.slice(0, 8)" :key="record.id" :class="['score-item', codeEvolutionClass(record)]">
             <strong>#{{ record.id }} {{ record.record_type }} / {{ record.status }}</strong>
             <span>{{ record.title }}</span>
             <small>风险 {{ record.rationale?.severity ?? "unknown" }} / 验证 {{ record.validation?.status ?? "not_run" }}</small>
             <small>{{ (record.plan?.actions ?? []).slice(0, 2).join("；") }}</small>
+            <template v-if="modelReview(record)">
+              <small>AI解释 {{ modelReviewSummary(record) }}</small>
+              <small>归因 {{ modelReviewTags(record).join(" / ") || "none" }} / 相似案例 {{ modelReviewSimilarCount(record) }}</small>
+              <small>安全拦截 {{ modelReviewSafetyBlocks(record).length }}</small>
+            </template>
+            <small v-else>AI解释 未生成</small>
             <div class="actions">
+              <button @click="explainCodeEvolutionWithModel(record.id)" :disabled="aiModelLoading || codeEvolutionLoading">
+                生成AI解释
+              </button>
               <button @click="approveCodeEvolution(record.id)" :disabled="record.status !== 'validation_passed' || codeEvolutionLoading">
                 接受
               </button>
@@ -223,7 +245,14 @@
             </div>
           </div>
         </div>
-        <p v-else>暂无代码进化建议。先生成每日经验复盘，再生成审查建议。</p>
+        <div v-if="aiModelAuditLogs.length" class="score-list">
+          <div v-for="log in aiModelAuditLogs.slice(0, 4)" :key="log.id" class="score-item">
+            <strong>模型审计 #{{ log.id }} / {{ log.operation }}</strong>
+            <span>{{ log.provider }} / safety {{ log.safety?.safety_blocks_applied?.length ?? 0 }}</span>
+            <small>{{ log.created_at }}</small>
+          </div>
+        </div>
+        <p v-if="!experienceCodeEvolution.length">暂无代码进化建议。先生成每日经验复盘，再生成审查建议。</p>
       </article>
 <article class="panel">
         <h2>候选池</h2>
@@ -1334,6 +1363,30 @@ type CodeEvolutionRecord = {
   reviewed_at?: string;
 };
 
+type AIModelCapabilities = {
+  provider: string;
+  default_provider?: string;
+  external_network: boolean;
+  api_key_required: boolean;
+  operations: string[];
+  allowed_outputs: string[];
+  forbidden_outputs: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type AIModelAuditLog = {
+  id: number;
+  provider: string;
+  operation: string;
+  prompt?: Record<string, any>;
+  response?: Record<string, any>;
+  safety?: Record<string, any>;
+  simulation_only?: boolean;
+  created_at?: string;
+};
+
 const summary = ref<KnowledgeSummary | null>(null);
 const latestScan = ref<CandidateScan | null>(null);
 const discovery = ref<AutoDiscoveryResult | null>(null);
@@ -1398,8 +1451,11 @@ const experienceReviews = ref<ExperienceReviewItem[]>([]);
 const experienceEvents = ref<ExperienceEventItem[]>([]);
 const experienceStrategyPerformance = ref<StrategyPerformanceSnapshot[]>([]);
 const experienceCodeEvolution = ref<CodeEvolutionRecord[]>([]);
+const aiModelCapabilities = ref<AIModelCapabilities | null>(null);
+const aiModelAuditLogs = ref<AIModelAuditLog[]>([]);
 const experienceLoading = ref(false);
 const codeEvolutionLoading = ref(false);
+const aiModelLoading = ref(false);
 const v15Loading = ref(false);
 const smallSampleThreshold = 10;
 const error = ref("");
@@ -1918,6 +1974,30 @@ function codeEvolutionClass(record: CodeEvolutionRecord) {
   return "proposal-wait";
 }
 
+function modelReview(record: CodeEvolutionRecord): Record<string, any> | null {
+  return (record.rationale?.model_review as Record<string, any> | undefined) ?? null;
+}
+
+function modelReviewSummary(record: CodeEvolutionRecord) {
+  return String(modelReview(record)?.response?.explanation?.summary ?? "暂无摘要");
+}
+
+function modelReviewTags(record: CodeEvolutionRecord): string[] {
+  const tags = modelReview(record)?.response?.attribution?.tags;
+  return Array.isArray(tags) ? tags.map((tag) => String(tag)).slice(0, 6) : [];
+}
+
+function modelReviewSimilarCount(record: CodeEvolutionRecord) {
+  const groups = modelReview(record)?.response?.similar_groups;
+  if (!Array.isArray(groups)) return 0;
+  return groups.reduce((total, group) => total + Number(group?.count ?? 0), 0);
+}
+
+function modelReviewSafetyBlocks(record: CodeEvolutionRecord): string[] {
+  const blocks = modelReview(record)?.safety?.safety_blocks_applied;
+  return Array.isArray(blocks) ? blocks.map((block) => String(block)) : [];
+}
+
 async function loadSignalPerformanceSummary() {
   try {
     signalPerformanceSummary.value = await fetchJson<SignalPerformanceSummaryData>("/api/learning/signal-performance/summary");
@@ -2343,6 +2423,40 @@ async function loadExperienceMemory() {
   }
 }
 
+async function loadAIModelCapabilities() {
+  try {
+    aiModelCapabilities.value = await fetchJson<AIModelCapabilities>("/api/ai/model/capabilities");
+  } catch {
+    aiModelCapabilities.value = null;
+  }
+}
+
+async function loadAIModelAuditLogs() {
+  aiModelLoading.value = true;
+  try {
+    aiModelAuditLogs.value = await fetchJson<AIModelAuditLog[]>(
+      "/api/ai/model/audit-logs?operation=code_evolution_explanation&limit=20"
+    );
+  } catch {
+    aiModelAuditLogs.value = [];
+  } finally {
+    aiModelLoading.value = false;
+  }
+}
+
+async function explainCodeEvolutionWithModel(id: number) {
+  aiModelLoading.value = true;
+  error.value = "";
+  try {
+    await fetchJson(`/api/ai/model/explain-code-evolution/${id}`, { method: "POST" });
+    await Promise.all([loadExperienceMemory(), loadAIModelAuditLogs()]);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "AI解释生成失败";
+  } finally {
+    aiModelLoading.value = false;
+  }
+}
+
 async function generateCodeEvolutionReviews() {
   codeEvolutionLoading.value = true;
   error.value = "";
@@ -2442,7 +2556,9 @@ onMounted(async () => {
     loadPortfolioRisk(),
     loadMonitoringLifecycle(),
     loadAiProposals(),
-    loadExperienceMemory()
+    loadExperienceMemory(),
+    loadAIModelCapabilities(),
+    loadAIModelAuditLogs()
   ]);
   const firstError = results.find((item) => item.status === "rejected");
   if (firstError && firstError.status === "rejected") {

@@ -65,7 +65,17 @@
 - [ ] Dashboard V3.0 panel shows proposal type, evidence summary, risk, validation status, accept, and reject actions.
 - [ ] No API executes shell commands, applies patches, creates PRs, or changes live trading/broker/credential/order capabilities.
 
-## 10. Desired Workday Schedule Cadence
+## 10. V3.5 Model Gateway Explanation Milestone
+- [ ] Default model provider is `mock_local_rule`; no API key, external network, Ollama, or LM Studio dependency is required.
+- [ ] Model gateway can explain code evolution records with explanation, attribution, similar groups, and validation request only.
+- [ ] Every model call writes an `ai_model_audit_logs` entry with provider, operation, prompt, response, safety, and `simulation_only=true`.
+- [ ] Dangerous model output terms such as broker/order/credential/live_trading/shell/apply_patch/git push are safety-blocked and not exposed as executable plans.
+- [ ] Code evolution model explanations write to `rationale.model_review` without changing review status.
+- [ ] API smoke covers `/api/ai/model/capabilities`, `/api/ai/model/explain-code-evolution/{record_id}`, and `/api/ai/model/audit-logs`.
+- [ ] Dashboard V3.5 area shows provider, explanation summary, attribution tags, similar-case count, safety blocks, and audit logs.
+- [ ] `/health.live_trading_enabled=false` remains unchanged; no broker adapter, credential, live order endpoint, shell execution, patch application, or PR automation is added.
+
+## 11. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
 - **10:00 AM:** First cycle (Candidate scan, morning momentum check).
 - **1:00 PM (13:00):** Mid-day cycle (Trend persistence, early reversals).

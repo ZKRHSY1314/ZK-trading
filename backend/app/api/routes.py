@@ -1156,6 +1156,30 @@ def get_backtest_run(run_id: int) -> dict:
 # ------------------------------------------------------------------
 
 
+@router.get("/ai/model/capabilities")
+def ai_model_capabilities() -> dict:
+    from app.ai.model_service import AIModelGatewayService
+
+    return AIModelGatewayService().capabilities()
+
+
+@router.post("/ai/model/explain-code-evolution/{record_id}")
+def explain_code_evolution_with_model(record_id: int) -> dict:
+    from app.ai.model_service import AIModelGatewayService
+
+    try:
+        return AIModelGatewayService().explain_code_evolution(record_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/ai/model/audit-logs")
+def ai_model_audit_logs(operation: str | None = None, limit: int = 50) -> list[dict]:
+    from app.ai.model_service import AIModelGatewayService
+
+    return AIModelGatewayService().audit_logs(operation=operation, limit=limit)
+
+
 @router.post("/ai/review/run")
 def run_ai_review() -> dict:
     from app.ai.review_worker import AIReviewWorker
