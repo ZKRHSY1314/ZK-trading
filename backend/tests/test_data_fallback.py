@@ -20,3 +20,7 @@ def test_successful_data_fetch(mock_provider):
     # Using our mock data
     assert snapshot.price == 10.5
     assert snapshot.metadata["data_quality"] == "daily_bar"
+    assert snapshot.metadata["adjust_mode"] == "qfq"
+    assert snapshot.metadata["rolling_high_250"] == 10.6
+    assert snapshot.metadata["high_window_used"] == 250
+    assert snapshot.metadata["limit_up_threshold"] == 9.8

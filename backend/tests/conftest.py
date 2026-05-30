@@ -21,7 +21,7 @@ class MockProvider(MarketDataProvider):
     def get_minute_bars(self, symbol: str, period: str = "1") -> pd.DataFrame:
         return pd.DataFrame()
 
-    def get_daily_bars(self, symbol: str) -> pd.DataFrame:
+    def get_daily_bars(self, symbol: str, adjust: str = "qfq") -> pd.DataFrame:
         if symbol == "000000":
             raise Exception("Mock error for testing fallback")
         return pd.DataFrame({

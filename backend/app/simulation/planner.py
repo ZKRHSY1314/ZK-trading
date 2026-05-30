@@ -79,25 +79,37 @@ class SimulationPlanner:
                 live_trading_enabled=settings.enable_live_trading,
             )
 
-        position_ratio = self._position_ratio(decision.tier, metadata.get("profile_risk_level"))
+        tier = decision.tier
+        data_quality = metadata.get("data_quality")
+        downgraded_data_quality = data_quality in {"fallback_profile", "realtime_quote_fallback"}
+        if downgraded_data_quality:
+            if tier == CandidateTier.strong:
+                tier = CandidateTier.watch
+
+        position_ratio = self._position_ratio(tier, metadata.get("profile_risk_level"))
         quantity = self._quantity(reference_price, position_ratio)
         allowed = quantity >= settings.min_order_lot
         action = "buy" if allowed else "observe"
+        if downgraded_data_quality:
+            position_ratio = 0
+            quantity = 0
+            allowed = False
+            action = "observe"
 
         reasons = [
-            f"候选层级: {decision.tier.value}",
+            f"候选层级: {tier.value}",
             f"规则评分: {decision.score:g}",
             f"建议仓位: {position_ratio:.1%}",
         ]
-        if metadata.get("data_quality") == "fallback_profile":
-            reasons.append("当前使用本地档案兜底行情，需等待实时行情确认")
+        if data_quality in {"fallback_profile", "realtime_quote_fallback"}:
+            reasons.append("当前使用降级报价或兜底行情，强候选已降级并需等待实时行情确认")
 
         return SimulationPlan(
             symbol=snapshot.symbol,
             name=snapshot.name,
             action=action,
             allowed=allowed,
-            tier=decision.tier,
+            tier=tier,
             reference_price=reference_price,
             quantity=quantity,
             position_ratio=position_ratio,

@@ -8,6 +8,7 @@ import pandas as pd
 
 from app.config import settings
 from app.data.akshare_provider import AkshareProvider, MarketDataProvider
+from app.data.price_limits import infer_board_type, limit_up_threshold
 from app.data.symbols import normalize_a_share_code, with_exchange_prefix
 from app.knowledge.repository import KnowledgeRepository
 from app.models import MarketSnapshot
@@ -59,6 +60,20 @@ class MarketSnapshotBuilder:
         current_name = name or (profile or {}).get("name")
         volume_ratio = self._volume_ratio(hist)
 
+        rolling_high_120 = self._float(hist["最高"].tail(120).max()) if len(hist) > 0 else None
+        rolling_high_250 = self._float(hist["最高"].tail(250).max()) if len(hist) > 0 else None
+        rolling_high_500 = self._float(hist["最高"].tail(500).max()) if len(hist) > 0 else None
+
+        board_type = infer_board_type(code, current_name)
+        limit_up_pct = limit_up_threshold(board_type)
+
+        market_cap_b = self._float((profile or {}).get("market_cap_billion"))
+        if market_cap_b is None and profile and profile.get("market_cap"):
+            try:
+                market_cap_b = round(float(profile["market_cap"]) / 1e8, 2)
+            except (ValueError, TypeError):
+                pass
+
         return MarketSnapshot(
             symbol=prefixed,
             name=current_name,
@@ -72,10 +87,20 @@ class MarketSnapshotBuilder:
             volume=self._float(latest.get("成交量")),
             amount=self._float(latest.get("成交额")),
             pb=self._float((profile or {}).get("pb")),
+            market_cap_billion=market_cap_b,
             historical_high=self._float(hist["最高"].max()),
             metadata={
                 "source": "akshare.stock_zh_a_hist",
                 "data_quality": "daily_bar",
+                "adjust_mode": "qfq",
+                "board_type": board_type,
+                "limit_up_threshold": limit_up_pct,
+                "rolling_high_120": rolling_high_120,
+                "rolling_high_250": rolling_high_250,
+                "rolling_high_500": rolling_high_500,
+                "high_250": rolling_high_250,
+                "high_500": rolling_high_500,
+                "high_window_used": 250,
                 "raw_symbol": symbol,
                 "code": code,
                 "prefixed_symbol": prefixed,
@@ -115,9 +140,20 @@ class MarketSnapshotBuilder:
         recent_high = self._float(profile.get("recent_high"))
         historical_high = recent_high or current_price
 
+        current_name = name or profile.get("name")
+        board_type = infer_board_type(raw_symbol[-6:], current_name)
+        limit_up_pct = limit_up_threshold(board_type)
+
+        market_cap_b = self._float(profile.get("market_cap_billion"))
+        if market_cap_b is None and profile.get("market_cap"):
+            try:
+                market_cap_b = round(float(profile["market_cap"]) / 1e8, 2)
+            except (ValueError, TypeError):
+                pass
+
         return MarketSnapshot(
             symbol=prefixed,
-            name=name or profile.get("name"),
+            name=current_name,
             trade_date=None,
             price=current_price,
             pct_change=self._profile_pct(profile.get("pct_change")),
@@ -128,11 +164,14 @@ class MarketSnapshotBuilder:
             volume=None,
             amount=None,
             pb=self._float(profile.get("pb")),
+            market_cap_billion=market_cap_b,
             historical_high=historical_high,
             metadata={
                 "source": "local_stock_profile",
                 "data_quality": "fallback_profile",
                 "fallback_reason": reason,
+                "board_type": board_type,
+                "limit_up_threshold": limit_up_pct,
                 "raw_symbol": raw_symbol,
                 "prefixed_symbol": prefixed,
                 "volume_ratio": None,
@@ -160,9 +199,21 @@ class MarketSnapshotBuilder:
         profile = profile or {}
         recent_high = self._float(profile.get("recent_high")) or self._float(quote.get("high"))
         historical_high = recent_high or price
+
+        current_name = name or profile.get("name") or quote.get("name")
+        board_type = infer_board_type(raw_symbol[-6:], current_name)
+        limit_up_pct = limit_up_threshold(board_type)
+
+        market_cap_b = self._float(profile.get("market_cap_billion"))
+        if market_cap_b is None and profile.get("market_cap"):
+            try:
+                market_cap_b = round(float(profile["market_cap"]) / 1e8, 2)
+            except (ValueError, TypeError):
+                pass
+
         return MarketSnapshot(
             symbol=prefixed,
-            name=name or profile.get("name") or quote.get("name"),
+            name=current_name,
             trade_date=self._date(quote.get("trade_date")),
             price=price,
             pct_change=self._float(quote.get("pct_change")),
@@ -173,11 +224,14 @@ class MarketSnapshotBuilder:
             volume=self._float(quote.get("volume")),
             amount=self._float(quote.get("amount")),
             pb=self._float(profile.get("pb")),
+            market_cap_billion=market_cap_b,
             historical_high=historical_high,
             metadata={
                 "source": "tencent_quote_fallback",
                 "data_quality": "realtime_quote_fallback",
                 "fallback_reason": reason,
+                "board_type": board_type,
+                "limit_up_threshold": limit_up_pct,
                 "raw_symbol": raw_symbol,
                 "prefixed_symbol": prefixed,
                 "quote_time": quote.get("quote_time"),

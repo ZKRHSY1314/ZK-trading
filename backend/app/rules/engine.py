@@ -22,6 +22,11 @@ class RuleEngine:
             blocked = blocked or (hit.hard_block and not hit.passed)
 
         tier = self._tier(score, blocked)
+        if (
+            tier == CandidateTier.strong
+            and snapshot.metadata.get("data_quality") in {"fallback_profile", "realtime_quote_fallback"}
+        ):
+            tier = CandidateTier.watch
         return CandidateDecision(
             symbol=snapshot.symbol,
             name=snapshot.name,
@@ -46,12 +51,16 @@ class RuleEngine:
         else:
             passed, reason = False, f"规则 {rule_id} 尚未实现"
 
+        score_delta = 0.0
+        if passed and rule.get("group") not in ("constitution", "risk"):
+            score_delta = float(rule.get("weight", 0))
+
         return RuleHit(
             rule_id=rule_id,
             name=rule["name"],
             group=rule["group"],
             passed=passed,
-            score_delta=float(rule.get("weight", 0)) if passed else 0,
+            score_delta=score_delta,
             hard_block=bool(rule.get("hard_block", False)),
             reason=reason,
         )

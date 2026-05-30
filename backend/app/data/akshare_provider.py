@@ -10,7 +10,7 @@ class MarketDataProvider(Protocol):
     def get_minute_bars(self, symbol: str, period: str = "1") -> pd.DataFrame:
         ...
 
-    def get_daily_bars(self, symbol: str) -> pd.DataFrame:
+    def get_daily_bars(self, symbol: str, adjust: str = "qfq") -> pd.DataFrame:
         ...
 
 
@@ -25,7 +25,7 @@ class AkshareProvider:
 
         return ak.stock_zh_a_hist_min_em(symbol=symbol, period=period, adjust="")
 
-    def get_daily_bars(self, symbol: str) -> pd.DataFrame:
+    def get_daily_bars(self, symbol: str, adjust: str = "qfq") -> pd.DataFrame:
         import akshare as ak
 
-        return ak.stock_zh_a_hist(symbol=symbol, period="daily", adjust="")
+        return ak.stock_zh_a_hist(symbol=symbol, period="daily", adjust=adjust)

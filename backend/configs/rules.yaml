@@ -15,7 +15,7 @@ rules:
     name: 不做高位股
     group: constitution
     enabled: true
-    weight: 100
+    weight: 0
     hard_block: true
     params:
       max_price_to_high_ratio: 0.5
@@ -47,7 +47,7 @@ rules:
     name: 大涨后轻仓
     group: risk
     enabled: true
-    weight: 50
+    weight: 0
     hard_block: false
     params:
       big_rise_pct: 20

@@ -19,6 +19,9 @@
 - [ ] `/health` endpoint strictly reports `live_trading_enabled=false`.
 - [ ] `broker_control_blocked` is explicitly enforced in capabilities.
 - [ ] `.gitignore` rules actively ignore `local_overrides.py` and `*.db` preventing accidental real broker commits.
+- [ ] Hard risk-control rules do not contribute positive score to candidate pools.
+- [ ] Dynamic limit-up thresholds and market cap bounds are actively enforced.
+- [ ] Fallback profiles and real-time quote fallbacks are strictly downgraded in confidence.
 
 ## 5. Automation One-Cycle Smoke
 - [ ] `python scripts/automation_loop.py --mode daily-bar-cache --max-cycles 1` runs cleanly.
