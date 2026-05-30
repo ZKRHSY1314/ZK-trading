@@ -380,6 +380,29 @@ def monitoring_alerts(
     )
 
 
+@router.post("/monitoring/alerts/{alert_id}/action")
+def monitoring_alert_action(
+    alert_id: int,
+    action_type: str,
+    note: str | None = None,
+    created_by: str = "user",
+) -> dict:
+    try:
+        return MonitoringService().record_alert_action(
+            alert_id=alert_id,
+            action_type=action_type,
+            note=note,
+            created_by=created_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/monitoring/lifecycle")
+def monitoring_lifecycle(symbol: str | None = None, limit: int = 100) -> dict:
+    return MonitoringService().alert_lifecycle(symbol=symbol, limit=limit)
+
+
 @router.get("/monitoring/replay/{symbol}")
 def monitoring_replay(symbol: str, session_id: int | None = None, limit: int = 100) -> dict:
     return MonitoringService().replay_symbol(symbol=symbol, session_id=session_id, limit=limit)
@@ -914,3 +937,162 @@ def latest_price_readiness(limit: int = 100) -> list[dict]:
 def summary_price_readiness() -> dict:
     from app.data.price_readiness import PriceReadinessService
     return PriceReadinessService().get_summary()
+
+
+# ------------------------------------------------------------------
+# Market Regime and Portfolio Risk
+# ------------------------------------------------------------------
+
+
+@router.get("/market-regime/latest")
+def latest_market_regime(as_of_date: str | None = None) -> dict:
+    from app.market_regime.service import MarketRegimeService
+
+    return MarketRegimeService().get_latest_regime(as_of_date=as_of_date)
+
+
+@router.post("/market-regime/refresh")
+def refresh_market_regime(as_of_date: str | None = None) -> dict:
+    from app.market_regime.service import MarketRegimeService
+
+    return MarketRegimeService().refresh(as_of_date=as_of_date)
+
+
+@router.get("/risk/portfolio-state")
+def portfolio_risk_state() -> dict:
+    from app.risk.portfolio import PortfolioRiskService
+
+    return PortfolioRiskService().state()
+
+
+# ------------------------------------------------------------------
+# Event-Driven Historical Backtesting
+# ------------------------------------------------------------------
+
+from pydantic import BaseModel, Field
+
+
+class BacktestRunInput(BaseModel):
+    start_date: str
+    end_date: str
+    symbols: list[str] = Field(default_factory=list)
+    initial_cash: float = 100_000.0
+    max_positions: int = 5
+    per_symbol_cap: float = 0.2
+
+
+@router.post("/backtest/runs")
+def run_historical_backtest(input_data: BacktestRunInput) -> dict:
+    from app.backtest.engine import BacktestEngine
+
+    return BacktestEngine().run(
+        start_date=input_data.start_date,
+        end_date=input_data.end_date,
+        symbols=input_data.symbols,
+        initial_cash=input_data.initial_cash,
+        max_positions=input_data.max_positions,
+        per_symbol_cap=input_data.per_symbol_cap,
+    )
+
+
+@router.get("/backtest/runs")
+def list_backtest_runs(limit: int = 20) -> list[dict]:
+    import json
+
+    limit = max(1, min(limit, 100))
+    rows = SQLiteStore(settings.database_path).fetch_all(
+        "SELECT * FROM historical_backtest_runs ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    results = []
+    for row in rows:
+        item = dict(row)
+        item["metrics"] = json.loads(item.pop("metrics_json") or "{}")
+        results.append(item)
+    return results
+
+
+@router.get("/backtest/runs/{run_id}")
+def get_backtest_run(run_id: int) -> dict:
+    import json
+
+    store = SQLiteStore(settings.database_path)
+    run = store.fetch_one("SELECT * FROM historical_backtest_runs WHERE id = ?", (run_id,))
+    if not run:
+        raise HTTPException(status_code=404, detail="Backtest run not found")
+    trades = store.fetch_all(
+        "SELECT * FROM historical_backtest_trades WHERE run_id = ? ORDER BY trade_date ASC, id ASC",
+        (run_id,),
+    )
+    equity = store.fetch_all(
+        "SELECT * FROM historical_backtest_daily_equity WHERE run_id = ? ORDER BY trade_date ASC",
+        (run_id,),
+    )
+    run_dict = dict(run)
+    run_dict["metrics"] = json.loads(run_dict.pop("metrics_json") or "{}")
+    return {
+        "run": run_dict,
+        "trades": [dict(row) for row in trades],
+        "daily_equity": [dict(row) for row in equity],
+    }
+
+
+# ------------------------------------------------------------------
+# AI Review and Proposals
+# ------------------------------------------------------------------
+
+
+@router.post("/ai/review/run")
+def run_ai_review() -> dict:
+    from app.ai.review_worker import AIReviewWorker
+
+    return AIReviewWorker().generate_review()
+
+
+@router.get("/ai/review/proposals")
+def list_ai_proposals(limit: int = 20) -> list[dict]:
+    from app.ai.review_worker import AIReviewWorker
+
+    return AIReviewWorker().list_proposals(limit=limit)
+
+
+@router.post("/ai/review/proposals/{proposal_id}/validate")
+def validate_ai_proposal(proposal_id: int) -> dict:
+    from app.ai.review_worker import AIReviewWorker
+
+    try:
+        return AIReviewWorker().validate_proposal(proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/ai/review/proposals/{proposal_id}/approve-for-simulation")
+def approve_ai_proposal_for_simulation(
+    proposal_id: int,
+    reviewed_by: str = "user",
+    note: str | None = None,
+) -> dict:
+    from app.ai.review_worker import AIReviewWorker
+
+    try:
+        return AIReviewWorker().approve_for_simulation(
+            proposal_id,
+            reviewed_by=reviewed_by,
+            note=note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/ai/review/proposals/{proposal_id}/reject")
+def reject_ai_proposal(
+    proposal_id: int,
+    reviewed_by: str = "user",
+    note: str | None = None,
+) -> dict:
+    from app.ai.review_worker import AIReviewWorker
+
+    try:
+        return AIReviewWorker().reject(proposal_id, reviewed_by=reviewed_by, note=note)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

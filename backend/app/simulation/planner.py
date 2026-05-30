@@ -33,16 +33,23 @@ class SimulationPlanner:
                 risk_notes=analysis.risk_notes
                 + [
                     phase_guardrail.get("diagnosis")
-                    or "阶段匹配触发保守观察，模拟盘不生成买入订单。",
+                    or "Phase similarity guardrail triggered; simulation stays observe-only.",
                 ],
                 live_trading_enabled=settings.enable_live_trading,
             )
 
+        profile_risk_level = str(metadata.get("profile_risk_level") or "")
+        profile_rating = str(metadata.get("profile_rating") or "")
+        completed_distribution_profile = (
+            "short_term_no_chase" in profile_risk_level
+            or "\u77ed\u671f\u4e0d\u8ffd\u9ad8" in profile_risk_level
+            or "completed_distribution_training_sample" in profile_rating
+            or "\u51fa\u8d27\u5b8c\u6210\u8bad\u7ec3\u6837\u672c" in profile_rating
+        )
+
         if (
             completed_distribution_note
-            or
-            metadata.get("profile_risk_level") == "短期不追高"
-            or metadata.get("profile_rating") == "出货完成训练样本"
+            or completed_distribution_profile
         ):
             return SimulationPlan(
                 symbol=snapshot.symbol,
@@ -56,8 +63,33 @@ class SimulationPlanner:
                 estimated_amount=0,
                 stop_loss=self._stop_loss(snapshot),
                 target_price=self._target_price(snapshot),
-                reasons=["主力拉升出货完成训练样本，短期只复盘不追高"],
-                risk_notes=analysis.risk_notes + ["当前样本用于学习吸筹、试盘、拉升、出货阶段，不生成买入订单。"],
+                reasons=["Completed distribution training sample; observe only."],
+                risk_notes=analysis.risk_notes
+                + [
+                    "This sample is used for phase learning and does not generate a buy order.",
+                ],
+                live_trading_enabled=settings.enable_live_trading,
+            )
+
+        from app.market_regime.service import MarketRegimeService
+
+        regime_data = MarketRegimeService().get_latest_regime()
+        regime = regime_data.get("regime", "neutral")
+        if regime == "extreme_risk":
+            return SimulationPlan(
+                symbol=snapshot.symbol,
+                name=snapshot.name,
+                action="observe",
+                allowed=False,
+                tier=CandidateTier.watch,
+                reference_price=reference_price,
+                quantity=0,
+                position_ratio=0,
+                estimated_amount=0,
+                stop_loss=self._stop_loss(snapshot),
+                target_price=self._target_price(snapshot),
+                reasons=regime_data.get("reasons", ["extreme market risk"]),
+                risk_notes=analysis.risk_notes + ["Market regime blocks new simulated entries."],
                 live_trading_enabled=settings.enable_live_trading,
             )
 
@@ -74,7 +106,7 @@ class SimulationPlanner:
                 estimated_amount=0,
                 stop_loss=self._stop_loss(snapshot),
                 target_price=self._target_price(snapshot),
-                reasons=["命中硬红线，模拟盘不生成买入订单"],
+                reasons=["Hard rule blocked; simulation does not create a buy order."],
                 risk_notes=analysis.risk_notes,
                 live_trading_enabled=settings.enable_live_trading,
             )
@@ -82,11 +114,10 @@ class SimulationPlanner:
         tier = decision.tier
         data_quality = metadata.get("data_quality")
         downgraded_data_quality = data_quality in {"fallback_profile", "realtime_quote_fallback"}
-        if downgraded_data_quality:
-            if tier == CandidateTier.strong:
-                tier = CandidateTier.watch
+        if downgraded_data_quality and tier == CandidateTier.strong:
+            tier = CandidateTier.watch
 
-        position_ratio = self._position_ratio(tier, metadata.get("profile_risk_level"))
+        position_ratio = self._position_ratio(tier, metadata.get("profile_risk_level"), regime=regime)
         quantity = self._quantity(reference_price, position_ratio)
         allowed = quantity >= settings.min_order_lot
         action = "buy" if allowed else "observe"
@@ -97,12 +128,12 @@ class SimulationPlanner:
             action = "observe"
 
         reasons = [
-            f"候选层级: {tier.value}",
-            f"规则评分: {decision.score:g}",
-            f"建议仓位: {position_ratio:.1%}",
+            f"candidate tier: {tier.value}",
+            f"rule score: {decision.score:g}",
+            f"suggested position: {position_ratio:.1%}",
         ]
-        if data_quality in {"fallback_profile", "realtime_quote_fallback"}:
-            reasons.append("当前使用降级报价或兜底行情，强候选已降级并需等待实时行情确认")
+        if downgraded_data_quality:
+            reasons.append("Low-quality fallback data is observe-only until confirmed by daily bars.")
 
         return SimulationPlan(
             symbol=snapshot.symbol,
@@ -121,14 +152,24 @@ class SimulationPlanner:
             live_trading_enabled=settings.enable_live_trading,
         )
 
-    def _position_ratio(self, tier: CandidateTier, risk_level: str | None) -> float:
-        if risk_level and risk_level != "小":
-            return 0.02
-        if tier == CandidateTier.strong:
-            return 0.10
-        if tier == CandidateTier.watch:
-            return 0.03
-        return 0.01
+    def _position_ratio(
+        self,
+        tier: CandidateTier,
+        risk_level: str | None,
+        regime: str = "neutral",
+    ) -> float:
+        if risk_level and risk_level not in {"low", "\u5c0f"}:
+            ratio = 0.02
+        elif tier == CandidateTier.strong:
+            ratio = 0.10
+        elif tier == CandidateTier.watch:
+            ratio = 0.03
+        else:
+            ratio = 0.01
+
+        if regime == "weak":
+            ratio *= 0.5
+        return ratio
 
     def _quantity(self, price: float, position_ratio: float) -> int:
         budget = settings.default_cash * position_ratio

@@ -124,6 +124,31 @@ def run_daily_bar_cache(api_base: str, limit: int) -> dict:
     return request_json("POST", f"{api_base}/api/data/daily-bars/refresh?{query}")
 
 
+def run_backtest_cycle(api_base: str, limit: int) -> dict:
+    """Run a safe historical backtest request through the local API."""
+    from datetime import timedelta
+
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    payload = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "symbols": [],
+        "initial_cash": 100000.0,
+        "max_positions": max(1, min(limit, 10)),
+        "per_symbol_cap": 0.2,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"{api_base}/api/backtest/runs",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=180) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def run_browser_cycle() -> dict:
     completed = subprocess.run(
         ["npm.cmd", "run", "automation:browser"],
@@ -150,7 +175,7 @@ def append_log(payload: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe simulation automation loop.")
     parser.add_argument("--api-base", default=DEFAULT_API_BASE)
-    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache"], default="cycle")
+    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest"], default="cycle")
     parser.add_argument("--task-type", default="offhour_potential_search", help="Task type for agent-task mode")
     parser.add_argument("--interval-seconds", type=int, default=60)
     parser.add_argument("--max-cycles", type=int, default=1, help="Use 0 to run forever.")
@@ -202,6 +227,8 @@ def main() -> int:
                 entry["result"] = run_price_readiness(args.api_base, args.limit)
             elif args.mode == "daily-bar-cache":
                 entry["result"] = run_daily_bar_cache(args.api_base, args.limit)
+            elif args.mode == "backtest":
+                entry["result"] = run_backtest_cycle(args.api_base, args.limit)
             else:
                 entry["result"] = run_api_cycle(args.api_base, args.limit)
             entry["status"] = "completed"

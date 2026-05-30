@@ -71,6 +71,54 @@
         </div>
         <p v-else>暂无价格就绪报告。点击上方按钮进行检查。</p>
       </article>
+<article class="panel wide">
+        <h2>V1.2-V1.5 验证面板</h2>
+        <p class="review-only-banner">所有内容仅用于历史回测、模拟风控、告警复核和 AI 参数提案审查，不连接券商，不产生实盘订单。</p>
+        <div class="actions">
+          <button @click="runBacktest" :disabled="v15Loading">{{ v15Loading ? "运行中" : "运行回测" }}</button>
+          <button @click="refreshMarketRegime" :disabled="v15Loading">刷新大盘环境</button>
+          <button @click="runAiReview" :disabled="v15Loading">生成AI提案</button>
+        </div>
+        <div class="metrics">
+          <span>大盘 {{ marketRegime?.regime ?? "未加载" }}</span>
+          <span>组合姿态 {{ portfolioRisk?.posture ?? "未加载" }}</span>
+          <span>回测数 {{ backtestRuns.length }}</span>
+          <span>AI提案 {{ aiProposals.length }}</span>
+        </div>
+        <div v-if="backtestRuns.length" class="score-list">
+          <div v-for="run in backtestRuns.slice(0, 3)" :key="run.id" class="score-item">
+            <strong>回测 #{{ run.id }} / {{ run.status }}</strong>
+            <span>收益 {{ ((run.metrics?.total_return ?? 0) * 100).toFixed(2) }}% / 回撤 {{ ((run.metrics?.max_drawdown ?? 0) * 100).toFixed(2) }}%</span>
+            <small>交易 {{ run.metrics?.trade_count ?? 0 }} / 数据源 {{ run.data_source }}</small>
+          </div>
+        </div>
+        <div v-if="portfolioRisk" class="score-list">
+          <div v-for="gate in portfolioRisk.gates" :key="gate.name" class="score-item">
+            <strong>{{ gate.name }} / {{ gate.status }}</strong>
+            <span>当前 {{ gate.value }} / 限制 {{ gate.limit }}</span>
+          </div>
+        </div>
+        <div v-if="monitoringLifecycle?.items?.length" class="score-list">
+          <div v-for="item in monitoringLifecycle.items.slice(0, 5)" :key="item.alert_id" class="score-item">
+            <strong>告警 #{{ item.alert_id }} {{ item.symbol }} / {{ item.state }}</strong>
+            <span>{{ item.alert_type }} / {{ item.severity }}</span>
+            <div class="actions" v-if="item.state === 'open'">
+              <button @click="acknowledgeAlert(item.alert_id)">确认</button>
+            </div>
+          </div>
+        </div>
+        <div v-if="aiProposals.length" class="score-list">
+          <div v-for="proposal in aiProposals.slice(0, 5)" :key="proposal.id" class="score-item">
+            <strong>AI提案 #{{ proposal.id }} / {{ proposal.status }}</strong>
+            <span>样本 {{ proposal.trades_analyzed }} / 安全拦截 {{ proposal.safety_blocks?.length ?? 0 }}</span>
+            <small>验证 {{ proposal.validation?.status ?? "未验证" }}</small>
+            <div class="actions">
+              <button @click="validateAiProposal(proposal.id)">验证</button>
+              <button class="disabled-live" @click="rejectAiProposal(proposal.id)">拒绝</button>
+            </div>
+          </div>
+        </div>
+      </article>
 <article class="panel">
         <h2>候选池</h2>
         <div class="metrics">
@@ -1049,6 +1097,46 @@ type PriceReadinessReport = {
 
 type PriceReadinessSummary = Record<string, number>;
 
+type BacktestRunItem = {
+  id: number;
+  status: string;
+  data_source: string;
+  metrics: Record<string, number>;
+};
+
+type MarketRegimeData = {
+  regime: string;
+  confidence: number;
+  reasons: string[];
+  data_quality: string;
+};
+
+type PortfolioRiskData = {
+  posture: string;
+  gates: Array<{ name: string; status: string; value: string | number; limit: string | number }>;
+};
+
+type MonitoringLifecycleData = {
+  items: Array<{
+    alert_id: number;
+    symbol: string;
+    severity: string;
+    alert_type: string;
+    state: string;
+  }>;
+  open_count: number;
+  actioned_count: number;
+};
+
+type AIProposalItem = {
+  id: number;
+  status: string;
+  trades_analyzed: number;
+  proposed_patch?: Record<string, any>;
+  safety_blocks?: string[];
+  validation?: Record<string, any>;
+};
+
 const summary = ref<KnowledgeSummary | null>(null);
 const latestScan = ref<CandidateScan | null>(null);
 const discovery = ref<AutoDiscoveryResult | null>(null);
@@ -1102,6 +1190,12 @@ const priceReadinessSummary = ref<PriceReadinessSummary | null>(null);
 const priceReadinessLoading = ref(false);
 const dailyBarCoverage = ref<any[]>([]);
 const dailyBarRefreshLoading = ref(false);
+const backtestRuns = ref<BacktestRunItem[]>([]);
+const marketRegime = ref<MarketRegimeData | null>(null);
+const portfolioRisk = ref<PortfolioRiskData | null>(null);
+const monitoringLifecycle = ref<MonitoringLifecycleData | null>(null);
+const aiProposals = ref<AIProposalItem[]>([]);
+const v15Loading = ref(false);
 const smallSampleThreshold = 10;
 const error = ref("");
 
@@ -1862,6 +1956,125 @@ async function runDailyBarRefresh() {
   }
 }
 
+async function loadBacktestRuns() {
+  try {
+    backtestRuns.value = await fetchJson<BacktestRunItem[]>("/api/backtest/runs?limit=10");
+  } catch {
+    backtestRuns.value = [];
+  }
+}
+
+async function runBacktest() {
+  v15Loading.value = true;
+  error.value = "";
+  try {
+    const end = new Date();
+    const start = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);
+    await fetchJson("/api/backtest/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_date: start.toISOString().slice(0, 10),
+        end_date: end.toISOString().slice(0, 10),
+        symbols: [],
+        initial_cash: 100000,
+        max_positions: 5,
+        per_symbol_cap: 0.2,
+      }),
+    });
+    await loadBacktestRuns();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "回测运行失败";
+  } finally {
+    v15Loading.value = false;
+  }
+}
+
+async function loadMarketRegime() {
+  try {
+    marketRegime.value = await fetchJson<MarketRegimeData>("/api/market-regime/latest");
+  } catch {
+    marketRegime.value = null;
+  }
+}
+
+async function refreshMarketRegime() {
+  v15Loading.value = true;
+  error.value = "";
+  try {
+    marketRegime.value = await fetchJson<MarketRegimeData>("/api/market-regime/refresh", { method: "POST" });
+    await loadPortfolioRisk();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "刷新大盘环境失败";
+  } finally {
+    v15Loading.value = false;
+  }
+}
+
+async function loadPortfolioRisk() {
+  try {
+    portfolioRisk.value = await fetchJson<PortfolioRiskData>("/api/risk/portfolio-state");
+  } catch {
+    portfolioRisk.value = null;
+  }
+}
+
+async function loadMonitoringLifecycle() {
+  try {
+    monitoringLifecycle.value = await fetchJson<MonitoringLifecycleData>("/api/monitoring/lifecycle?limit=20");
+  } catch {
+    monitoringLifecycle.value = null;
+  }
+}
+
+async function acknowledgeAlert(alertId: number) {
+  try {
+    await fetchJson(`/api/monitoring/alerts/${alertId}/action?action_type=acknowledge`, { method: "POST" });
+    await loadMonitoringLifecycle();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "告警确认失败";
+  }
+}
+
+async function loadAiProposals() {
+  try {
+    aiProposals.value = await fetchJson<AIProposalItem[]>("/api/ai/review/proposals?limit=20");
+  } catch {
+    aiProposals.value = [];
+  }
+}
+
+async function runAiReview() {
+  v15Loading.value = true;
+  error.value = "";
+  try {
+    await fetchJson("/api/ai/review/run", { method: "POST" });
+    await loadAiProposals();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "AI提案生成失败";
+  } finally {
+    v15Loading.value = false;
+  }
+}
+
+async function validateAiProposal(id: number) {
+  try {
+    await fetchJson(`/api/ai/review/proposals/${id}/validate`, { method: "POST" });
+    await loadAiProposals();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "AI提案验证失败";
+  }
+}
+
+async function rejectAiProposal(id: number) {
+  try {
+    await fetchJson(`/api/ai/review/proposals/${id}/reject`, { method: "POST" });
+    await loadAiProposals();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "AI提案拒绝失败";
+  }
+}
+
 onMounted(async () => {
   const results = await Promise.allSettled([
     loadSummary(),
@@ -1894,7 +2107,12 @@ onMounted(async () => {
     loadPaperSimEvalSummary(),
     loadPaperSimEvalPolicies(),
     loadPriceReadinessReports(),
-    loadPriceReadinessSummary()
+    loadPriceReadinessSummary(),
+    loadBacktestRuns(),
+    loadMarketRegime(),
+    loadPortfolioRisk(),
+    loadMonitoringLifecycle(),
+    loadAiProposals()
   ]);
   const firstError = results.find((item) => item.status === "rejected");
   if (firstError && firstError.status === "rejected") {

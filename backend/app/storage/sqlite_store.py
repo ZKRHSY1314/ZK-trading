@@ -720,6 +720,91 @@ CREATE TABLE IF NOT EXISTS daily_bar_cache (
 CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_symbol ON daily_bar_cache(symbol);
 CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_trade_date ON daily_bar_cache(trade_date);
 CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_status ON daily_bar_cache(quality_status);
+
+CREATE TABLE IF NOT EXISTS historical_backtest_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    config_json TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    start_date TEXT,
+    end_date TEXT,
+    status TEXT NOT NULL,
+    initial_cash REAL,
+    final_cash REAL,
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS historical_backtest_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES historical_backtest_runs(id) ON DELETE CASCADE,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    price REAL NOT NULL,
+    fee REAL NOT NULL,
+    stamp_tax REAL NOT NULL,
+    trade_date TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS historical_backtest_daily_equity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES historical_backtest_runs(id) ON DELETE CASCADE,
+    trade_date TEXT NOT NULL,
+    cash REAL NOT NULL,
+    positions_value REAL NOT NULL,
+    total_equity REAL NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(run_id, trade_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_historical_backtest_runs_status ON historical_backtest_runs(status);
+CREATE INDEX IF NOT EXISTS idx_historical_backtest_trades_run ON historical_backtest_trades(run_id);
+CREATE INDEX IF NOT EXISTS idx_historical_backtest_daily_equity_run ON historical_backtest_daily_equity(run_id);
+
+CREATE TABLE IF NOT EXISTS market_regime_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    as_of_date TEXT,
+    regime TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0,
+    data_quality TEXT NOT NULL,
+    reasons_json TEXT NOT NULL DEFAULT '[]',
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_regime_snapshots_date ON market_regime_snapshots(as_of_date);
+CREATE INDEX IF NOT EXISTS idx_market_regime_snapshots_regime ON market_regime_snapshots(regime);
+
+CREATE TABLE IF NOT EXISTS monitoring_alert_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_id INTEGER NOT NULL REFERENCES monitoring_alerts(id) ON DELETE CASCADE,
+    action_type TEXT NOT NULL,
+    note TEXT,
+    created_by TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_monitoring_alert_actions_alert ON monitoring_alert_actions(alert_id);
+CREATE INDEX IF NOT EXISTS idx_monitoring_alert_actions_type ON monitoring_alert_actions(action_type);
+
+CREATE TABLE IF NOT EXISTS ai_parameter_proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trades_analyzed INTEGER NOT NULL DEFAULT 0,
+    proposed_patch_json TEXT NOT NULL DEFAULT '{}',
+    safety_blocks_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'draft',
+    validation_json TEXT NOT NULL DEFAULT '{}',
+    reviewed_by TEXT,
+    review_note TEXT,
+    reviewed_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_parameter_proposals_created ON ai_parameter_proposals(created_at);
+CREATE INDEX IF NOT EXISTS idx_ai_parameter_proposals_status ON ai_parameter_proposals(status);
 """
 
 
@@ -761,6 +846,12 @@ KNOWLEDGE_TABLES = [
     "agent_paper_simulation_evaluations",
     "price_readiness_reports",
     "daily_bar_cache",
+    "historical_backtest_runs",
+    "historical_backtest_trades",
+    "historical_backtest_daily_equity",
+    "market_regime_snapshots",
+    "monitoring_alert_actions",
+    "ai_parameter_proposals",
 ]
 
 
@@ -779,6 +870,17 @@ class SQLiteStore:
                 "ALTER TABLE agent_control_tasks ADD COLUMN rejected_by TEXT",
                 "ALTER TABLE agent_control_tasks ADD COLUMN rejected_at TEXT",
                 "ALTER TABLE agent_control_tasks ADD COLUMN approval_note TEXT"
+            ]:
+                try:
+                    conn.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass
+
+            for stmt in [
+                "ALTER TABLE ai_parameter_proposals ADD COLUMN validation_json TEXT NOT NULL DEFAULT '{}'",
+                "ALTER TABLE ai_parameter_proposals ADD COLUMN reviewed_by TEXT",
+                "ALTER TABLE ai_parameter_proposals ADD COLUMN review_note TEXT",
+                "ALTER TABLE ai_parameter_proposals ADD COLUMN reviewed_at TEXT",
             ]:
                 try:
                     conn.execute(stmt)

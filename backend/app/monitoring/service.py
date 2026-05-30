@@ -4,6 +4,7 @@ from typing import Any
 from app.candidates.local_scanner import LocalCandidateScanner
 from app.config import settings
 from app.data.snapshot_builder import MarketDataError, MarketSnapshotBuilder
+from app.models import MarketSnapshot
 from app.simulation.planner import SimulationPlanner
 from app.storage.sqlite_store import SQLiteStore
 
@@ -274,6 +275,122 @@ class MonitoringService:
         )
         return [self._review_model(row) for row in rows]
 
+    def record_alert_action(
+        self,
+        alert_id: int,
+        action_type: str,
+        note: str | None = None,
+        created_by: str = "user",
+    ) -> dict[str, Any]:
+        allowed_actions = {
+            "acknowledge",
+            "ignore_today",
+            "add_to_review",
+            "simulate_buy_plan",
+            "simulate_sell_plan",
+        }
+        if action_type not in allowed_actions:
+            raise ValueError(f"Unsupported monitoring action: {action_type}")
+        alert = self.store.fetch_one("SELECT * FROM monitoring_alerts WHERE id = ?", (alert_id,))
+        if not alert:
+            raise ValueError("Monitoring alert not found")
+        payload = {
+            "symbol": alert["symbol"],
+            "alert_type": alert["alert_type"],
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO monitoring_alert_actions(
+                    alert_id, action_type, note, created_by, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    alert_id,
+                    action_type,
+                    note,
+                    created_by,
+                    json.dumps(payload, ensure_ascii=False),
+                ),
+            )
+            action_id = int(cursor.lastrowid)
+        return {
+            "id": action_id,
+            "alert_id": alert_id,
+            "action_type": action_type,
+            "note": note,
+            "created_by": created_by,
+            "payload": payload,
+        }
+
+    def alert_lifecycle(self, symbol: str | None = None, limit: int = 100) -> dict[str, Any]:
+        clauses = []
+        params: list[Any] = []
+        if symbol:
+            clauses.append("a.symbol = ?")
+            params.append(symbol)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(limit, 500)))
+        rows = self.store.fetch_all(
+            f"""
+            SELECT
+                a.id AS alert_id,
+                a.symbol,
+                a.severity,
+                a.alert_type,
+                a.message,
+                a.created_at AS alert_created_at,
+                aa.id AS action_id,
+                aa.action_type,
+                aa.note,
+                aa.created_by,
+                aa.created_at AS action_created_at
+            FROM monitoring_alerts a
+            LEFT JOIN monitoring_alert_actions aa ON aa.alert_id = a.id
+            {where}
+            ORDER BY a.id DESC, aa.id ASC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        grouped: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            alert_id = int(row["alert_id"])
+            item = grouped.setdefault(
+                alert_id,
+                {
+                    "alert_id": alert_id,
+                    "symbol": row["symbol"],
+                    "severity": row["severity"],
+                    "alert_type": row["alert_type"],
+                    "message": row["message"],
+                    "created_at": row["alert_created_at"],
+                    "state": "open",
+                    "actions": [],
+                },
+            )
+            if row["action_id"] is not None:
+                action = {
+                    "id": row["action_id"],
+                    "action_type": row["action_type"],
+                    "note": row["note"],
+                    "created_by": row["created_by"],
+                    "created_at": row["action_created_at"],
+                }
+                item["actions"].append(action)
+                if row["action_type"] in {"acknowledge", "ignore_today", "add_to_review"}:
+                    item["state"] = row["action_type"]
+        items = list(grouped.values())
+        return {
+            "items": items,
+            "open_count": len([item for item in items if item["state"] == "open"]),
+            "actioned_count": len([item for item in items if item["state"] != "open"]),
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def _resolve_symbols(
         self,
         symbols: list[str] | None,
@@ -301,7 +418,19 @@ class MonitoringService:
             plan = SimulationPlanner().create_plan(snapshot)
             price_delta = self._delta(snapshot.price, previous.get("price") if previous else None)
             pct_delta = self._delta(snapshot.pct_change, previous.get("pct_change") if previous else None)
-            signal = self._signal(snapshot.price, price_delta, pct_delta, plan.model_dump(mode="json"))
+            if previous and price_delta == 0 and previous.get("data_source") == snapshot.metadata.get("source"):
+                previous["alerts"] = []
+                previous["deduped"] = True
+                return previous
+
+            signal = self._signal(
+                snapshot.price,
+                price_delta,
+                pct_delta,
+                plan.model_dump(mode="json"),
+                snapshot,
+                previous,
+            )
             payload = {
                 "session_id": session_id,
                 "symbol": snapshot.symbol,
@@ -495,9 +624,18 @@ class MonitoringService:
         price_delta: float | None,
         pct_delta: float | None,
         plan: dict[str, Any],
+        snapshot: MarketSnapshot | None = None,
+        previous: dict[str, Any] | None = None,
     ) -> str:
         if price is None:
             return "no_price"
+        if snapshot and snapshot.pct_change is not None:
+            limit_pct = float(snapshot.metadata.get("limit_up_threshold") or 10.0)
+            if snapshot.pct_change <= -limit_pct + 1.5:
+                return "limit_down_warning"
+        if previous and price_delta is not None and pct_delta is not None:
+            if price_delta > 0 and pct_delta > 1.5:
+                return "strong_support_bounce"
         if plan.get("allowed"):
             return "sim_buy_allowed"
         if plan.get("tier") == "rejected":
@@ -549,6 +687,26 @@ class MonitoringService:
                     "severity": "high",
                     "alert_type": "sim_buy_allowed",
                     "message": f"{event['symbol']} 模拟计划允许买入，需要人工复核。",
+                }
+            )
+
+        if event.get("signal") == "limit_down_warning":
+            alerts.append(
+                {
+                    **base,
+                    "severity": "high",
+                    "alert_type": "limit_down_warning",
+                    "message": f"{event['symbol']} is near the limit-down threshold; review risk before any simulation action.",
+                }
+            )
+
+        if event.get("signal") == "strong_support_bounce":
+            alerts.append(
+                {
+                    **base,
+                    "severity": "medium",
+                    "alert_type": "strong_support_bounce",
+                    "message": f"{event['symbol']} rebounded from the previous monitoring event; review manually.",
                 }
             )
 

@@ -26,8 +26,17 @@
 ## 5. Automation One-Cycle Smoke
 - [ ] `python scripts/automation_loop.py --mode daily-bar-cache --max-cycles 1` runs cleanly.
 - [ ] `python scripts/automation_loop.py --mode paper-evaluation --max-cycles 1` runs cleanly.
+- [ ] `python scripts/automation_loop.py --mode backtest --max-cycles 1` runs safely against local API.
 
-## 6. Desired Workday Schedule Cadence
+## 6. V1.5 Simulation/Review Milestone
+- [ ] Historical backtest APIs persist run, trade, equity, and metrics records.
+- [ ] Market regime endpoints return safe `insufficient_data` when index cache is missing.
+- [ ] Portfolio risk state reports exposure gates and `live_trading_enabled=false`.
+- [ ] Monitoring alert actions are audit logged and never place real orders.
+- [ ] AI parameter proposals require validation and human review before simulation-only approval.
+- [ ] Dashboard V1.2-V1.5 panel renders without TypeScript or build errors.
+
+## 7. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
 - **10:00 AM:** First cycle (Candidate scan, morning momentum check).
 - **1:00 PM (13:00):** Mid-day cycle (Trend persistence, early reversals).
