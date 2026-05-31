@@ -122,6 +122,12 @@ class TradeAuditLedgerMigrationSpecInput(BaseModel):
     spec_text: str | None = None
 
 
+class TradeAuditLedgerMigrationSpecApprovalInput(BaseModel):
+    spec_text: str | None = None
+    approved_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -219,6 +225,23 @@ def trade_execution_gateway_audit_ledger_migration_spec_verify(
 ) -> dict:
     payload = input_data or TradeAuditLedgerMigrationSpecInput()
     return TradeExecutionGatewayService().verify_audit_ledger_migration_spec(spec_text=payload.spec_text)
+
+
+@router.post("/trade-execution-gateway/audit-ledger-migration-spec/approve")
+def trade_execution_gateway_audit_ledger_migration_spec_approve(
+    input_data: TradeAuditLedgerMigrationSpecApprovalInput | None = None,
+) -> dict:
+    payload = input_data or TradeAuditLedgerMigrationSpecApprovalInput()
+    return TradeExecutionGatewayService().approve_audit_ledger_migration_spec(
+        spec_text=payload.spec_text,
+        approved_by=payload.approved_by,
+        note=payload.note,
+    )
+
+
+@router.get("/trade-execution-gateway/audit-ledger-migration-spec/approvals")
+def trade_execution_gateway_audit_ledger_migration_spec_approvals(limit: int = 20) -> list[dict]:
+    return TradeExecutionGatewayService().list_audit_ledger_migration_spec_approvals(limit=limit)
 
 
 @router.get("/automation/capabilities")

@@ -228,6 +228,10 @@
 - [ ] V5.5-P5 verifier checks target table, guarded create-table shape, required columns, proposed indexes, hash-chain fields, safety flags, sensitive field exclusion, dangerous SQL terms, and disabled live-trading state.
 - [ ] V5.5-P5 dashboard shows migration spec status, failed check count, per-check result, target table, no-SQL, no-file, no-table, no-audit-row, and no-live-trading evidence.
 - [ ] V5.5-P5 must keep `executes_sql=false`, `can_execute_sql_now=false`, `can_create_table_now=false`, `can_write_audit_row_now=false`, `can_run_migration_now=false`, `can_write_migration_file_now=false`, `writes_database_now=false`, `records_audit_rows_now=false`, and `live_trading_enabled=false`.
+- [ ] V5.5-P6 exposes `POST /api/trade-execution-gateway/audit-ledger-migration-spec/approve` and `GET /api/trade-execution-gateway/audit-ledger-migration-spec/approvals` for operator approval metadata over verified migration specs.
+- [ ] V5.5-P6 approval writes only an existing `events` metadata record when the dry-run verifier passed; failed specs return `approval_blocked` and are not recorded.
+- [ ] V5.5-P6 dashboard shows approval metadata status/history, event id, approval effect, no-SQL, no-table, no-migration, no-file, no-audit-ledger-row, and disabled live-trading evidence.
+- [ ] V5.5-P6 must keep `migration_allowed_now=false`, `writes_audit_ledger_row_now=false`, `creates_table_now=false`, `runs_migration_now=false`, `executes_sql=false`, `writes_migration_file_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
 
 ## 15. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
