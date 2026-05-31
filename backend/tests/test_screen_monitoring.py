@@ -4,6 +4,7 @@ from app.screen_monitoring.service import ScreenMonitoringService
 
 def _reset_screen_monitoring(store) -> None:
     with store.connect() as conn:
+        conn.execute("DELETE FROM screen_artifact_reviews")
         conn.execute("DELETE FROM screen_observations")
         conn.execute("DELETE FROM screen_monitoring_sessions")
 
@@ -12,7 +13,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     _reset_screen_monitoring(test_db)
     capabilities = ScreenMonitoringService().capabilities()
 
-    assert capabilities["stage"] == "V4.5-P3"
+    assert capabilities["stage"] == "V4.5-P4"
     assert capabilities["capture_provider"] == "disabled"
     assert capabilities["provider_status"] == "disabled"
     assert capabilities["provider_configured"] is False
@@ -26,6 +27,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     assert "order_action" in capabilities["forbidden_modes"]
     assert "fixture_replay" in capabilities["allowed_modes"]
     assert "capture_artifact_stub" in capabilities["allowed_modes"]
+    assert "artifact_review_queue" in capabilities["allowed_modes"]
 
 
 def test_screen_observation_creates_session_and_summary(test_db):
@@ -212,6 +214,8 @@ def test_local_safe_capture_stub_blocks_without_preflight_pass(test_db):
     assert result["ocr_executed"] is False
     assert result["observation"]["app_status"] == "capture_artifact_stub_blocked"
     assert result["observation"]["warnings"] == ["real_capture_not_explicitly_enabled"]
+    assert result["artifact_review"]["review_status"] == "pending_review"
+    assert result["artifact_review"]["redaction"]["pixel_data_stored"] is False
 
 
 def test_local_safe_capture_stub_records_redacted_artifact_ref_after_harmless_preflight(test_db):
@@ -235,7 +239,62 @@ def test_local_safe_capture_stub_records_redacted_artifact_ref_after_harmless_pr
     assert result["redaction_applied"] is True
     assert result["observation"]["artifact_ref"] == result["artifact_ref"]
     assert result["observation"]["app_status"] == "capture_artifact_stub_ready"
+    assert result["artifact_review"]["artifact_ref"] == result["artifact_ref"]
+    assert result["artifact_review"]["review_status"] == "pending_review"
     assert latest["summary"]["status_counts"]["capture_artifact_stub_ready"] == 1
+
+
+def test_screen_artifact_retention_policy_is_metadata_only(test_db):
+    _reset_screen_monitoring(test_db)
+    policy = ScreenMonitoringService().artifact_retention_policy()
+
+    assert policy["status"] == "metadata_only_policy"
+    assert policy["retention_days"] == 7
+    assert policy["pixel_data_stored"] is False
+    assert policy["real_screen_capture"] is False
+    assert policy["ocr_executed"] is False
+    assert policy["redaction"]["store_pixel_data"] is False
+    assert policy["review_queue"]["decision_effect"] == "audit_status_only"
+    assert policy["live_trading_enabled"] is False
+
+
+def test_screen_artifact_review_queue_sync_and_decision_are_audit_only(test_db):
+    _reset_screen_monitoring(test_db)
+    service = ScreenMonitoringService()
+    observation = service.record_observation(
+        source="capture_stub:local_safe",
+        app_status="capture_artifact_stub_ready",
+        window_title="Untitled - Notepad",
+        confidence=1.0,
+        detected_items=[{"type": "capture_artifact_stub", "value": "stub_created"}],
+        raw_payload={
+            "artifact_status": "stub_created",
+            "real_screen_capture": False,
+            "pixel_data_stored": False,
+            "ocr_executed": False,
+            "redaction_applied": True,
+        },
+        artifact_ref="artifact://screen_capture_stub/test-review",
+        observed_at="2026-05-31T10:00:00",
+    )
+
+    sync = service.sync_artifact_review_queue()
+    reviews = service.list_artifact_reviews()
+    accepted = service.decide_artifact_review(reviews[0]["id"], "accepted", reviewed_by="tester", note="metadata ok")
+
+    assert observation["inserted"] is True
+    assert sync["created_review_count"] == 1
+    assert sync["policy"]["pixel_data_stored"] is False
+    assert len(reviews) == 1
+    assert reviews[0]["review_status"] == "pending_review"
+    assert reviews[0]["artifact_ref"] == "artifact://screen_capture_stub/test-review"
+    assert reviews[0]["observation"]["raw_payload"]["pixel_data_stored"] is False
+    assert accepted["review_status"] == "accepted"
+    assert accepted["reviewed_by"] == "tester"
+    assert accepted["review_note"] == "metadata ok"
+    assert accepted["review_only"] is True
+    assert accepted["simulation_only"] is True
+    assert accepted["live_trading_enabled"] is False
 
 
 def test_screen_monitoring_api_smoke(client, test_db):
@@ -261,6 +320,9 @@ def test_screen_monitoring_api_smoke(client, test_db):
         "/api/screen-monitoring/capture-stub",
         json={"target_window_title": "Mock Trading Client"},
     )
+    artifact_policy_resp = client.get("/api/screen-monitoring/artifact-policy")
+    artifact_sync_resp = client.post("/api/screen-monitoring/artifact-reviews/sync?limit=20")
+    artifact_reviews_resp = client.get("/api/screen-monitoring/artifact-reviews?limit=5")
     observations_resp = client.get("/api/screen-monitoring/observations?limit=5")
     latest_resp = client.get("/api/screen-monitoring/sessions/latest")
 
@@ -272,6 +334,9 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert fixture_resp.status_code == 200
     assert preflight_resp.status_code == 200
     assert capture_stub_resp.status_code == 200
+    assert artifact_policy_resp.status_code == 200
+    assert artifact_sync_resp.status_code == 200
+    assert artifact_reviews_resp.status_code == 200
     assert observations_resp.status_code == 200
     assert latest_resp.status_code == 200
     assert capabilities_resp.json()["live_trading_enabled"] is False
@@ -294,6 +359,25 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert capture_stub_resp.json()["pixel_data_stored"] is False
     assert capture_stub_resp.json()["ocr_executed"] is False
     assert capture_stub_resp.json()["observation"]["app_status"] == "capture_artifact_stub_blocked"
+    assert capture_stub_resp.json()["artifact_review"]["review_status"] == "pending_review"
+    assert artifact_policy_resp.json()["pixel_data_stored"] is False
+    assert artifact_policy_resp.json()["review_queue"]["decision_effect"] == "audit_status_only"
+    assert artifact_sync_resp.json()["skipped_existing_count"] >= 1
+    assert artifact_reviews_resp.json()[0]["review_status"] == "pending_review"
+    review_id = artifact_reviews_resp.json()[0]["id"]
+    approve_resp = client.post(
+        f"/api/screen-monitoring/artifact-reviews/{review_id}/approve",
+        json={"reviewed_by": "api-smoke", "note": "metadata reviewed"},
+    )
+    reject_resp = client.post(
+        f"/api/screen-monitoring/artifact-reviews/{review_id}/reject",
+        json={"reviewed_by": "api-smoke", "note": "metadata rejected"},
+    )
+    assert approve_resp.status_code == 200
+    assert reject_resp.status_code == 200
+    assert approve_resp.json()["review_status"] == "accepted"
+    assert reject_resp.json()["review_status"] == "rejected"
+    assert reject_resp.json()["live_trading_enabled"] is False
     assert observations_resp.json()
     assert latest_resp.json()["summary"]["observation_count"] == 4
     assert client.get("/health").json()["live_trading_enabled"] is False

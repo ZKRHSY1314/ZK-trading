@@ -88,6 +88,11 @@ class ScreenCaptureStubInput(BaseModel):
     target_window_title: str | None = None
 
 
+class ScreenArtifactReviewInput(BaseModel):
+    reviewed_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -705,6 +710,65 @@ def screen_monitoring_observations(limit: int = 20) -> list[dict]:
     from app.screen_monitoring.service import ScreenMonitoringService
 
     return ScreenMonitoringService().list_observations(limit=limit)
+
+
+@router.get("/screen-monitoring/artifact-policy")
+def screen_monitoring_artifact_policy() -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().artifact_retention_policy()
+
+
+@router.post("/screen-monitoring/artifact-reviews/sync")
+def screen_monitoring_artifact_reviews_sync(limit: int = 100) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().sync_artifact_review_queue(limit=limit)
+
+
+@router.get("/screen-monitoring/artifact-reviews")
+def screen_monitoring_artifact_reviews(status: str | None = None, limit: int = 20) -> list[dict]:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().list_artifact_reviews(status=status, limit=limit)
+
+
+@router.post("/screen-monitoring/artifact-reviews/{review_id}/approve")
+def screen_monitoring_artifact_review_approve(
+    review_id: int,
+    input_data: ScreenArtifactReviewInput | None = None,
+) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenArtifactReviewInput()
+    try:
+        return ScreenMonitoringService().decide_artifact_review(
+            review_id,
+            "accepted",
+            reviewed_by=payload.reviewed_by,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/screen-monitoring/artifact-reviews/{review_id}/reject")
+def screen_monitoring_artifact_review_reject(
+    review_id: int,
+    input_data: ScreenArtifactReviewInput | None = None,
+) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenArtifactReviewInput()
+    try:
+        return ScreenMonitoringService().decide_artifact_review(
+            review_id,
+            "rejected",
+            reviewed_by=payload.reviewed_by,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/screen-monitoring/observations/mock")

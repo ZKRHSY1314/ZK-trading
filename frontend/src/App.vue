@@ -201,6 +201,9 @@
           <button data-testid="screen-capture-stub-button" @click="runScreenCaptureStub" :disabled="screenMonitoringLoading">
             生成截图 Artifact Stub
           </button>
+          <button data-testid="screen-artifact-sync-button" @click="syncScreenArtifactReviews" :disabled="screenMonitoringLoading">
+            同步 Artifact 复核
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -209,6 +212,7 @@
           <span>Provider {{ screenMonitoringCapabilities?.provider_status ?? "disabled" }}</span>
           <span>OCR {{ screenMonitoringCapabilities?.ocr_provider ?? "not_configured" }}</span>
           <span>观测 {{ screenObservations.length }}</span>
+          <span>Artifact {{ screenArtifactReviews.length }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -243,6 +247,16 @@
             <span>{{ screenCaptureStubResult.artifact_status }} / {{ screenCaptureStubResult.artifact_ref ?? "未生成 artifact" }}</span>
             <small>像素保存 {{ screenCaptureStubResult.pixel_data_stored ? "是" : "否" }} / 真实截图 {{ screenCaptureStubResult.real_screen_capture ? "是" : "否" }} / OCR {{ screenCaptureStubResult.ocr_executed ? "是" : "否" }}</small>
           </div>
+          <div v-if="screenArtifactPolicy" class="score-item">
+            <strong>Retention Policy / {{ screenArtifactPolicy.status }}</strong>
+            <span>保留 {{ screenArtifactPolicy.retention_days }} 天 / 队列 {{ screenArtifactPolicy.max_review_queue_items }}</span>
+            <small>像素保存 {{ screenArtifactPolicy.pixel_data_stored ? "是" : "否" }} / OCR {{ screenArtifactPolicy.ocr_executed ? "是" : "否" }} / {{ screenArtifactPolicy.review_queue.decision_effect }}</small>
+          </div>
+          <div v-if="screenArtifactSyncResult" class="score-item">
+            <strong>Artifact Sync / {{ screenArtifactSyncResult.status }}</strong>
+            <span>新增 {{ screenArtifactSyncResult.created_review_count }} / 已存在 {{ screenArtifactSyncResult.skipped_existing_count }}</span>
+            <small>扫描 {{ screenArtifactSyncResult.scanned_observation_count }} / audit only</small>
+          </div>
           <div v-if="screenObservationResult" class="score-item">
             <strong>Latest Observation / {{ screenObservationResult.app_status }}</strong>
             <span>置信度 {{ screenObservationResult.confidence }} / 插入 {{ screenObservationResult.inserted ? "是" : "去重" }}</span>
@@ -256,7 +270,18 @@
             <small>{{ item.observed_at }} / read-only evidence</small>
           </div>
         </div>
-        <p v-else>暂无屏幕观测证据。V4.5 仅支持 mock、fixture 和截图预检证据，不控制交易软件。</p>
+        <div v-if="screenArtifactReviews.length" class="score-list">
+          <div v-for="review in screenArtifactReviews.slice(0, 5)" :key="review.id" class="score-item">
+            <strong>Artifact Review #{{ review.id }} / {{ review.review_status }}</strong>
+            <span>{{ review.artifact_status }} / {{ review.artifact_ref ?? "无 artifact" }}</span>
+            <small>{{ review.observation.window_title ?? "未记录窗口" }} / 像素保存 {{ review.redaction.pixel_data_stored ? "是" : "否" }} / live trading disabled</small>
+            <div class="actions" v-if="review.review_status === 'pending_review'">
+              <button @click="approveScreenArtifactReview(review.id)" :disabled="screenMonitoringLoading">接受</button>
+              <button @click="rejectScreenArtifactReview(review.id)" :disabled="screenMonitoringLoading">拒绝</button>
+            </div>
+          </div>
+        </div>
+        <p v-if="!screenObservations.length">暂无屏幕观测证据。V4.5 仅支持 mock、fixture、截图预检和 artifact 元数据复核，不控制交易软件。</p>
       </article>
 <article class="panel wide">
         <h2>V2.0 可信度证据面板</h2>
@@ -1761,6 +1786,55 @@ type ScreenCaptureStubResult = {
   live_trading_enabled: boolean;
 };
 
+type ScreenArtifactPolicy = {
+  status: string;
+  artifact_kind: string;
+  retention_days: number;
+  max_review_queue_items: number;
+  artifact_schemes: string[];
+  pixel_data_stored: boolean;
+  real_screen_capture: boolean;
+  ocr_executed: boolean;
+  redaction: Record<string, any>;
+  review_queue: {
+    default_status: string;
+    allowed_decisions: string[];
+    decision_effect: string;
+  };
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type ScreenArtifactReview = {
+  id: number;
+  artifact_ref?: string | null;
+  artifact_status: string;
+  review_status: string;
+  retention_policy: ScreenArtifactPolicy;
+  redaction: Record<string, any>;
+  reviewed_by?: string | null;
+  review_note?: string | null;
+  reviewed_at?: string | null;
+  observation: ScreenObservation;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type ScreenArtifactSyncResult = {
+  status: string;
+  scanned_observation_count: number;
+  created_review_count: number;
+  skipped_existing_count: number;
+  reviews: ScreenArtifactReview[];
+  policy: ScreenArtifactPolicy;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -1989,6 +2063,9 @@ const screenObservationResult = ref<ScreenObservation | null>(null);
 const screenFixtureReplayResult = ref<ScreenFixtureReplayResult | null>(null);
 const screenPreflightResult = ref<ScreenPreflightResult | null>(null);
 const screenCaptureStubResult = ref<ScreenCaptureStubResult | null>(null);
+const screenArtifactPolicy = ref<ScreenArtifactPolicy | null>(null);
+const screenArtifactReviews = ref<ScreenArtifactReview[]>([]);
+const screenArtifactSyncResult = ref<ScreenArtifactSyncResult | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -2927,21 +3004,27 @@ async function runRealtimeReplay() {
 async function loadScreenMonitoring() {
   screenMonitoringLoading.value = true;
   try {
-    const [capabilitiesData, providersData, sessionData, observationsData] = await Promise.all([
+    const [capabilitiesData, providersData, sessionData, observationsData, artifactPolicyData, artifactReviewsData] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
       fetchJson<ScreenMonitoringSession>("/api/screen-monitoring/sessions/latest"),
-      fetchJson<ScreenObservation[]>("/api/screen-monitoring/observations?limit=20")
+      fetchJson<ScreenObservation[]>("/api/screen-monitoring/observations?limit=20"),
+      fetchJson<ScreenArtifactPolicy>("/api/screen-monitoring/artifact-policy"),
+      fetchJson<ScreenArtifactReview[]>("/api/screen-monitoring/artifact-reviews?limit=20")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
     screenMonitoringSession.value = sessionData;
     screenObservations.value = observationsData;
+    screenArtifactPolicy.value = artifactPolicyData;
+    screenArtifactReviews.value = artifactReviewsData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
     screenMonitoringSession.value = null;
     screenObservations.value = [];
+    screenArtifactPolicy.value = null;
+    screenArtifactReviews.value = [];
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -3003,9 +3086,62 @@ async function runScreenCaptureStub() {
       }
     );
     screenObservationResult.value = screenCaptureStubResult.value.observation;
+    screenArtifactSyncResult.value = null;
     await loadScreenMonitoring();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "截图 artifact stub 生成失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function syncScreenArtifactReviews() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenArtifactSyncResult.value = await fetchJson<ScreenArtifactSyncResult>(
+      "/api/screen-monitoring/artifact-reviews/sync?limit=100",
+      { method: "POST" }
+    );
+    screenArtifactReviews.value = screenArtifactSyncResult.value.reviews;
+    screenArtifactPolicy.value = screenArtifactSyncResult.value.policy;
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Artifact 复核队列同步失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function approveScreenArtifactReview(id: number) {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    await fetchJson<ScreenArtifactReview>(`/api/screen-monitoring/artifact-reviews/${id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewed_by: "operator", note: "Metadata accepted from dashboard" })
+    });
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Artifact 复核接受失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function rejectScreenArtifactReview(id: number) {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    await fetchJson<ScreenArtifactReview>(`/api/screen-monitoring/artifact-reviews/${id}/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewed_by: "operator", note: "Metadata rejected from dashboard" })
+    });
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Artifact 复核拒绝失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

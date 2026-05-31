@@ -118,6 +118,9 @@
 - [ ] V4.5-P3 exposes `/api/screen-monitoring/capture-stub` for harmless-window artifact metadata after preflight.
 - [ ] V4.5-P3 records capture stub attempts as screen observations, including blocked attempts, without storing pixels or running OCR.
 - [ ] V4.5-P3 dashboard shows capture stub status, artifact reference, pixel-storage status, OCR status, and live-trading-disabled evidence.
+- [ ] V4.5-P4 exposes metadata-only artifact retention policy through `/api/screen-monitoring/artifact-policy`.
+- [ ] V4.5-P4 syncs capture stub observations into `screen_artifact_reviews` with pending/accepted/rejected audit states.
+- [ ] V4.5-P4 dashboard shows artifact review queue, metadata retention policy, and accept/reject audit actions without enabling capture, OCR, broker, order, or screen-click controls.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

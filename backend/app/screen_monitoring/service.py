@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P3",
+            "stage": "V4.5-P4",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -48,6 +48,8 @@ class ScreenMonitoringService:
                 "fixture_replay",
                 "capture_preflight",
                 "capture_artifact_stub",
+                "artifact_review_queue",
+                "artifact_retention_policy",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -60,6 +62,44 @@ class ScreenMonitoringService:
                 "live_auto_trading",
             ],
             "default_session_name": "screen_readonly_watch",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def artifact_retention_policy(self) -> dict[str, Any]:
+        return {
+            "status": "metadata_only_policy",
+            "artifact_kind": "screen_capture_stub_metadata",
+            "retention_days": 7,
+            "max_review_queue_items": 100,
+            "artifact_schemes": ["artifact://screen_capture_stub", "fixture://screen_monitoring"],
+            "pixel_data_stored": False,
+            "real_screen_capture": False,
+            "ocr_executed": False,
+            "redaction": {
+                "mode": "metadata_only_redacted",
+                "redaction_required": True,
+                "store_window_title": True,
+                "store_pixel_data": False,
+                "store_credentials": False,
+                "store_account_numbers": False,
+            },
+            "review_queue": {
+                "default_status": "pending_review",
+                "allowed_decisions": ["accepted", "rejected"],
+                "decision_effect": "audit_status_only",
+            },
+            "forbidden_actions": [
+                "screen_click",
+                "keyboard_type",
+                "broker_action",
+                "order_action",
+                "credential_access",
+                "pixel_storage",
+                "ocr_execution",
+                "live_auto_trading",
+            ],
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
@@ -198,6 +238,103 @@ class ScreenMonitoringService:
             "live_trading_enabled": False,
         }
 
+    def sync_artifact_review_queue(self, limit: int = 100) -> dict[str, Any]:
+        rows = self.store.fetch_all(
+            """
+            SELECT *
+            FROM screen_observations
+            WHERE app_status IN ('capture_artifact_stub_ready', 'capture_artifact_stub_blocked')
+               OR source LIKE 'capture_stub:%'
+            ORDER BY observed_at DESC, id DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 500)),),
+        )
+        created = 0
+        skipped = 0
+        reviews: list[dict[str, Any]] = []
+        for row in rows:
+            review = self._ensure_artifact_review(self._observation_model(row))
+            reviews.append(review)
+            created += 1 if review.get("inserted") else 0
+            skipped += 0 if review.get("inserted") else 1
+        return {
+            "status": "synced",
+            "scanned_observation_count": len(rows),
+            "created_review_count": created,
+            "skipped_existing_count": skipped,
+            "reviews": reviews,
+            "policy": self.artifact_retention_policy(),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def list_artifact_reviews(self, status: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        normalized = (status or "").strip()
+        params: tuple[Any, ...]
+        where = ""
+        if normalized:
+            where = "WHERE r.review_status = ?"
+            params = (normalized, max(1, min(limit, 200)))
+        else:
+            params = (max(1, min(limit, 200)),)
+        rows = self.store.fetch_all(
+            f"""
+            SELECT r.*, o.source, o.app_status, o.window_title, o.observed_at,
+                   o.confidence, o.detected_items_json, o.warnings_json, o.raw_payload_json,
+                   o.dedupe_key, o.created_at AS observation_created_at
+            FROM screen_artifact_reviews r
+            JOIN screen_observations o ON o.id = r.observation_id
+            {where}
+            ORDER BY r.created_at DESC, r.id DESC
+            LIMIT ?
+            """,
+            params,
+        )
+        return [self._artifact_review_model(row) for row in rows]
+
+    def decide_artifact_review(
+        self,
+        review_id: int,
+        decision: str,
+        reviewed_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        normalized = decision.strip().lower()
+        if normalized not in {"accepted", "rejected"}:
+            raise ValueError("artifact review decision must be accepted or rejected")
+        reviewed_at = datetime.now().isoformat(timespec="seconds")
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE screen_artifact_reviews
+                SET review_status = ?, reviewed_by = ?, review_note = ?,
+                    reviewed_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (normalized, reviewed_by[:80], note, reviewed_at, reviewed_at, review_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"screen artifact review {review_id} not found")
+        review = self.get_artifact_review(review_id)
+        return review or {"id": review_id, "review_status": normalized}
+
+    def get_artifact_review(self, review_id: int) -> dict[str, Any] | None:
+        rows = self.store.fetch_all(
+            """
+            SELECT r.*, o.source, o.app_status, o.window_title, o.observed_at,
+                   o.confidence, o.detected_items_json, o.warnings_json, o.raw_payload_json,
+                   o.dedupe_key, o.created_at AS observation_created_at
+            FROM screen_artifact_reviews r
+            JOIN screen_observations o ON o.id = r.observation_id
+            WHERE r.id = ?
+            LIMIT 1
+            """,
+            (review_id,),
+        )
+        return self._artifact_review_model(rows[0]) if rows else None
+
     def capture_harmless_window_stub(self, target_window_title: str | None = None) -> dict[str, Any]:
         result = self.provider.capture_harmless_window_stub(target_window_title=target_window_title)
         preflight = result.get("preflight") or {}
@@ -219,9 +356,11 @@ class ScreenMonitoringService:
             raw_payload=result,
             artifact_ref=result.get("artifact_ref"),
         )
+        review = self._ensure_artifact_review(observation)
         return {
             **result,
             "observation": observation,
+            "artifact_review": review,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
@@ -318,6 +457,59 @@ class ScreenMonitoringService:
         observation = self._observation_model(row) if row else {}
         observation["inserted"] = inserted
         return observation
+
+    def _ensure_artifact_review(self, observation: dict[str, Any]) -> dict[str, Any]:
+        observation_id = observation.get("id")
+        if not observation_id:
+            return {}
+        raw_payload = observation.get("raw_payload") or {}
+        artifact_status = str(raw_payload.get("artifact_status") or "not_created")
+        policy = self.artifact_retention_policy()
+        redaction = {
+            "mode": policy["redaction"]["mode"],
+            "redaction_applied": bool(raw_payload.get("redaction_applied")),
+            "pixel_data_stored": False,
+            "ocr_executed": False,
+            "real_screen_capture": False,
+            "operator_review_required": True,
+        }
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO screen_artifact_reviews(
+                    observation_id, artifact_ref, artifact_status, review_status,
+                    retention_policy_json, redaction_json,
+                    review_only, simulation_only, live_trading_enabled
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(observation_id),
+                    observation.get("artifact_ref"),
+                    artifact_status,
+                    "pending_review",
+                    json.dumps(policy, ensure_ascii=False, default=str),
+                    json.dumps(redaction, ensure_ascii=False, default=str),
+                    1,
+                    1,
+                    0,
+                ),
+            )
+            inserted = cursor.rowcount > 0
+        review = self.store.fetch_one(
+            """
+            SELECT r.*, o.source, o.app_status, o.window_title, o.observed_at,
+                   o.confidence, o.detected_items_json, o.warnings_json, o.raw_payload_json,
+                   o.dedupe_key, o.created_at AS observation_created_at
+            FROM screen_artifact_reviews r
+            JOIN screen_observations o ON o.id = r.observation_id
+            WHERE r.observation_id = ?
+            """,
+            (int(observation_id),),
+        )
+        item = self._artifact_review_model(review) if review else {}
+        item["inserted"] = inserted
+        return item
 
     def _refresh_session_summary(self, session_id: int) -> None:
         observations = self.store.fetch_all(
@@ -432,6 +624,35 @@ class ScreenMonitoringService:
         item["detected_items"] = self._decode_json(item.pop("detected_items_json", "[]"))
         item["warnings"] = self._decode_json(item.pop("warnings_json", "[]"))
         item["raw_payload"] = self._decode_json(item.pop("raw_payload_json", "{}"))
+        item["review_only"] = bool(item.get("review_only"))
+        item["simulation_only"] = bool(item.get("simulation_only"))
+        item["live_trading_enabled"] = bool(item.get("live_trading_enabled"))
+        return item
+
+    def _artifact_review_model(self, row: dict[str, Any] | None) -> dict[str, Any]:
+        if not row:
+            return {}
+        item = dict(row)
+        item["retention_policy"] = self._decode_json(item.pop("retention_policy_json", "{}"))
+        item["redaction"] = self._decode_json(item.pop("redaction_json", "{}"))
+        observation = {
+            "id": item.pop("observation_id"),
+            "source": item.pop("source", None),
+            "app_status": item.pop("app_status", None),
+            "window_title": item.pop("window_title", None),
+            "observed_at": item.pop("observed_at", None),
+            "confidence": item.pop("confidence", 0),
+            "detected_items": self._decode_json(item.pop("detected_items_json", "[]")),
+            "warnings": self._decode_json(item.pop("warnings_json", "[]")),
+            "raw_payload": self._decode_json(item.pop("raw_payload_json", "{}")),
+            "artifact_ref": item.get("artifact_ref"),
+            "dedupe_key": item.pop("dedupe_key", None),
+            "created_at": item.pop("observation_created_at", None),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+        item["observation"] = observation
         item["review_only"] = bool(item.get("review_only"))
         item["simulation_only"] = bool(item.get("simulation_only"))
         item["live_trading_enabled"] = bool(item.get("live_trading_enabled"))
