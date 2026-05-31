@@ -6,6 +6,11 @@ import json
 from typing import Any
 
 from app.config import settings
+from app.screen_monitoring.providers import (
+    FixtureScreenCaptureProvider,
+    ScreenCaptureProvider,
+    configured_screen_capture_provider,
+)
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -16,19 +21,25 @@ class ScreenMonitoringService:
     avoids screenshot capture, OCR, clicks, typing, broker actions, or orders.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, provider: ScreenCaptureProvider | None = None) -> None:
         self.store = SQLiteStore(settings.database_path)
         self.store.init()
+        self.provider = provider or configured_screen_capture_provider(settings.screen_capture_provider)
 
     def capabilities(self) -> dict[str, Any]:
+        provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P0",
-            "capture_provider": "manual_or_mock_only",
-            "ocr_provider": "not_configured",
+            "stage": "V4.5-P1",
+            "capture_provider": provider_capabilities["provider"],
+            "provider_status": provider_capabilities["status"],
+            "provider_configured": provider_capabilities["configured"],
+            "ocr_provider": "fixture_only" if provider_capabilities["fixture_replay_supported"] else "not_configured",
+            "provider_capabilities": provider_capabilities,
             "allowed_modes": [
                 "manual_observation",
                 "mock_observation",
+                "fixture_replay",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -45,6 +56,22 @@ class ScreenMonitoringService:
             "simulation_only": True,
             "live_trading_enabled": False,
         }
+
+    def provider_capabilities(self) -> list[dict[str, Any]]:
+        providers = [
+            self.provider.capabilities(),
+            FixtureScreenCaptureProvider().capabilities(),
+            configured_screen_capture_provider("disabled").capabilities(),
+        ]
+        deduped: dict[str, dict[str, Any]] = {}
+        for item in providers:
+            deduped[str(item["provider"])] = {
+                **item,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            }
+        return list(deduped.values())
 
     def start_session(
         self,
@@ -96,6 +123,37 @@ class ScreenMonitoringService:
                 "live_trading_enabled": False,
             }
         return self._session_model(row, include_observations=True)
+
+    def replay_fixture(
+        self,
+        fixture_name: str = "trading_client_online",
+        session_id: int | None = None,
+    ) -> dict[str, Any]:
+        provider = FixtureScreenCaptureProvider()
+        draft = provider.capture_fixture(fixture_name)
+        observation = self.record_observation(
+            session_id=session_id,
+            source=draft.source,
+            app_status=draft.app_status,
+            window_title=draft.window_title,
+            confidence=draft.confidence,
+            detected_items=draft.detected_items,
+            warnings=draft.warnings,
+            raw_payload=draft.raw_payload,
+            artifact_ref=draft.artifact_ref,
+            observed_at=draft.observed_at,
+        )
+        return {
+            "status": "replayed",
+            "provider": provider.name,
+            "fixture_name": fixture_name,
+            "observation": observation,
+            "real_screen_capture": False,
+            "ocr_executed": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
 
     def get_session(self, session_id: int) -> dict[str, Any] | None:
         row = self.store.fetch_one(

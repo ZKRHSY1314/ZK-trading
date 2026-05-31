@@ -75,6 +75,11 @@ class ScreenObservationInput(BaseModel):
     observed_at: str | None = None
 
 
+class ScreenFixtureReplayInput(BaseModel):
+    fixture_name: str = "trading_client_online"
+    session_id: int | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -661,6 +666,13 @@ def screen_monitoring_capabilities() -> dict:
     return ScreenMonitoringService().capabilities()
 
 
+@router.get("/screen-monitoring/providers")
+def screen_monitoring_providers() -> list[dict]:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().provider_capabilities()
+
+
 @router.post("/screen-monitoring/sessions")
 def start_screen_monitoring_session(input_data: ScreenMonitoringSessionInput | None = None) -> dict:
     from app.screen_monitoring.service import ScreenMonitoringService
@@ -714,6 +726,17 @@ def record_mock_screen_observation(input_data: ScreenObservationInput | None = N
         raw_payload=payload.raw_payload,
         artifact_ref=payload.artifact_ref,
         observed_at=payload.observed_at,
+    )
+
+
+@router.post("/screen-monitoring/observations/fixture-replay")
+def replay_screen_monitoring_fixture(input_data: ScreenFixtureReplayInput | None = None) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenFixtureReplayInput()
+    return ScreenMonitoringService().replay_fixture(
+        fixture_name=payload.fixture_name,
+        session_id=payload.session_id,
     )
 
 

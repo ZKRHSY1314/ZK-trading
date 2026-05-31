@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     asharehub_api_key: str | None = None
     asharehub_base_url: str = "https://asharehub.com/api"
     realtime_request_timeout_seconds: float = 5.0
+    screen_capture_provider: str = "disabled"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

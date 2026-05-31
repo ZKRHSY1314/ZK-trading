@@ -11,14 +11,18 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     _reset_screen_monitoring(test_db)
     capabilities = ScreenMonitoringService().capabilities()
 
-    assert capabilities["stage"] == "V4.5-P0"
-    assert capabilities["capture_provider"] == "manual_or_mock_only"
+    assert capabilities["stage"] == "V4.5-P1"
+    assert capabilities["capture_provider"] == "disabled"
+    assert capabilities["provider_status"] == "disabled"
+    assert capabilities["provider_configured"] is False
     assert capabilities["ocr_provider"] == "not_configured"
+    assert capabilities["provider_capabilities"]["capture_supported"] is False
     assert capabilities["review_only"] is True
     assert capabilities["simulation_only"] is True
     assert capabilities["live_trading_enabled"] is False
     assert "screen_click" in capabilities["forbidden_modes"]
     assert "order_action" in capabilities["forbidden_modes"]
+    assert "fixture_replay" in capabilities["allowed_modes"]
 
 
 def test_screen_observation_creates_session_and_summary(test_db):
@@ -90,31 +94,75 @@ def test_screen_observation_safety_blocks_dangerous_payload_terms(test_db):
     assert any("submit_order" in item for item in observation["warnings"])
 
 
+def test_screen_fixture_replay_records_observation_without_real_capture(test_db):
+    _reset_screen_monitoring(test_db)
+    service = ScreenMonitoringService()
+
+    result = service.replay_fixture("trading_client_warning_popup")
+    latest = service.latest_session()
+
+    assert result["status"] == "replayed"
+    assert result["provider"] == "fixture"
+    assert result["real_screen_capture"] is False
+    assert result["ocr_executed"] is False
+    assert result["live_trading_enabled"] is False
+    assert result["observation"]["app_status"] == "attention_required"
+    assert result["observation"]["raw_payload"]["fixture_replay"] is True
+    assert result["observation"]["raw_payload"]["ocr_executed"] is False
+    assert latest["summary"]["observation_count"] == 1
+    assert latest["summary"]["status_counts"]["attention_required"] == 1
+
+
+def test_screen_provider_capabilities_include_fixture_but_default_disabled(test_db):
+    _reset_screen_monitoring(test_db)
+    providers = ScreenMonitoringService().provider_capabilities()
+    by_provider = {item["provider"]: item for item in providers}
+
+    assert by_provider["disabled"]["configured"] is False
+    assert by_provider["disabled"]["capture_supported"] is False
+    assert by_provider["fixture"]["configured"] is True
+    assert by_provider["fixture"]["fixture_replay_supported"] is True
+    assert by_provider["fixture"]["details"]["real_screen_capture"] is False
+    assert all(item["live_trading_enabled"] is False for item in providers)
+
+
 def test_screen_monitoring_api_smoke(client, test_db):
     _reset_screen_monitoring(test_db)
 
     capabilities_resp = client.get("/api/screen-monitoring/capabilities")
+    providers_resp = client.get("/api/screen-monitoring/providers")
     empty_latest_resp = client.get("/api/screen-monitoring/sessions/latest")
     session_resp = client.post(
         "/api/screen-monitoring/sessions",
         json={"name": "test_screen_watch", "source": "mock", "window_title": "Mock Trading Client"},
     )
     observation_resp = client.post("/api/screen-monitoring/observations/mock")
+    fixture_resp = client.post(
+        "/api/screen-monitoring/observations/fixture-replay",
+        json={"fixture_name": "trading_client_online"},
+    )
     observations_resp = client.get("/api/screen-monitoring/observations?limit=5")
     latest_resp = client.get("/api/screen-monitoring/sessions/latest")
 
     assert capabilities_resp.status_code == 200
+    assert providers_resp.status_code == 200
     assert empty_latest_resp.status_code == 200
     assert session_resp.status_code == 200
     assert observation_resp.status_code == 200
+    assert fixture_resp.status_code == 200
     assert observations_resp.status_code == 200
     assert latest_resp.status_code == 200
     assert capabilities_resp.json()["live_trading_enabled"] is False
+    assert capabilities_resp.json()["provider_configured"] is False
+    assert any(item["provider"] == "fixture" for item in providers_resp.json())
     assert empty_latest_resp.json()["status"] == "empty"
     assert session_resp.json()["status"] == "running"
     assert observation_resp.json()["review_only"] is True
     assert observation_resp.json()["simulation_only"] is True
     assert observation_resp.json()["live_trading_enabled"] is False
+    assert fixture_resp.json()["real_screen_capture"] is False
+    assert fixture_resp.json()["ocr_executed"] is False
+    assert fixture_resp.json()["observation"]["raw_payload"]["fixture_replay"] is True
     assert observations_resp.json()
-    assert latest_resp.json()["summary"]["observation_count"] == 1
+    assert latest_resp.json()["summary"]["observation_count"] == 2
     assert client.get("/health").json()["live_trading_enabled"] is False

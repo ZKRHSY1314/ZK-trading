@@ -109,6 +109,9 @@
 - [ ] V4.5-P0 safety blocks any payload terms that look like click, keyboard, broker, order, credential, or live-trading action requests.
 - [ ] V4.5-P0 dashboard shows read-only guardrails, latest session summary, observations, and disabled live-trading status.
 - [ ] V4.5-P0 remains manual/mock only until a separately reviewed screenshot/OCR provider is configured.
+- [ ] V4.5-P1 exposes disabled-by-default screen capture provider capabilities plus fixture-only replay.
+- [ ] V4.5-P1 fixture replay records screen observations without real screenshot capture or OCR execution.
+- [ ] V4.5-P1 dashboard shows provider status, fixture replay status, and confirms real capture/OCR remain disabled.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

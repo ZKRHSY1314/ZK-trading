@@ -192,11 +192,15 @@
           <button data-testid="mock-screen-observation-button" @click="recordMockScreenObservation" :disabled="screenMonitoringLoading">
             {{ screenMonitoringLoading ? "记录中" : "记录只读观测样本" }}
           </button>
+          <button data-testid="fixture-screen-replay-button" @click="replayScreenFixture" :disabled="screenMonitoringLoading">
+            回放屏幕 Fixture
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ screenMonitoringCapabilities?.stage ?? "V4.5-P0" }}</span>
-          <span>采集 {{ screenMonitoringCapabilities?.capture_provider ?? "manual_or_mock_only" }}</span>
+          <span>阶段 {{ screenMonitoringCapabilities?.stage ?? "V4.5-P1" }}</span>
+          <span>采集 {{ screenMonitoringCapabilities?.capture_provider ?? "disabled" }}</span>
+          <span>Provider {{ screenMonitoringCapabilities?.provider_status ?? "disabled" }}</span>
           <span>OCR {{ screenMonitoringCapabilities?.ocr_provider ?? "not_configured" }}</span>
           <span>观测 {{ screenObservations.length }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
@@ -208,10 +212,20 @@
             <span>{{ screenMonitoringCapabilities.allowed_modes.join(" / ") }}</span>
             <small>禁止 {{ screenMonitoringCapabilities.forbidden_modes.join(" / ") }}</small>
           </div>
+          <div v-for="provider in screenMonitoringProviders" :key="provider.provider" class="score-item">
+            <strong>{{ provider.provider }} / {{ provider.status }}</strong>
+            <span>配置 {{ provider.configured ? "已配置" : "未配置" }} / fixture {{ provider.fixture_replay_supported ? "enabled" : "disabled" }}</span>
+            <small>真实截图 {{ provider.capture_supported ? "可用" : "关闭" }} / OCR {{ provider.ocr_supported ? "可用" : "关闭" }}</small>
+          </div>
           <div v-if="screenMonitoringSession && screenMonitoringSession.status !== 'empty'" class="score-item">
             <strong>Session #{{ screenMonitoringSession.id }} / {{ screenMonitoringSession.status }}</strong>
             <span>观测 {{ screenMonitoringSession.summary.observation_count }} / 警告 {{ screenMonitoringSession.summary.warning_count }}</span>
             <small>{{ screenMonitoringSession.window_title ?? "未记录窗口" }} / live trading disabled</small>
+          </div>
+          <div v-if="screenFixtureReplayResult" class="score-item">
+            <strong>Fixture Replay / {{ screenFixtureReplayResult.status }}</strong>
+            <span>{{ screenFixtureReplayResult.fixture_name }} / {{ screenFixtureReplayResult.observation.app_status }}</span>
+            <small>真实截图 {{ screenFixtureReplayResult.real_screen_capture ? "是" : "否" }} / OCR {{ screenFixtureReplayResult.ocr_executed ? "是" : "否" }}</small>
           </div>
           <div v-if="screenObservationResult" class="score-item">
             <strong>Latest Observation / {{ screenObservationResult.app_status }}</strong>
@@ -1611,10 +1625,27 @@ type ScreenMonitoringCapabilities = {
   status: string;
   stage: string;
   capture_provider: string;
+  provider_status: string;
+  provider_configured: boolean;
   ocr_provider: string;
+  provider_capabilities: ScreenProviderCapabilities;
   allowed_modes: string[];
   forbidden_modes: string[];
   default_session_name: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type ScreenProviderCapabilities = {
+  provider: string;
+  status: string;
+  configured: boolean;
+  capture_supported: boolean;
+  ocr_supported: boolean;
+  fixture_replay_supported: boolean;
+  last_error?: string | null;
+  details?: Record<string, any>;
   review_only: boolean;
   simulation_only: boolean;
   live_trading_enabled: boolean;
@@ -1657,6 +1688,18 @@ type ScreenMonitoringSession = {
     live_trading_enabled: boolean;
   };
   observations: ScreenObservation[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type ScreenFixtureReplayResult = {
+  status: string;
+  provider: string;
+  fixture_name: string;
+  observation: ScreenObservation;
+  real_screen_capture: boolean;
+  ocr_executed: boolean;
   review_only: boolean;
   simulation_only: boolean;
   live_trading_enabled: boolean;
@@ -1883,9 +1926,11 @@ const realtimeCycleResult = ref<RealtimeCycleResult | null>(null);
 const realtimeCycleRuns = ref<RealtimeCycleRun[]>([]);
 const realtimeLoading = ref(false);
 const screenMonitoringCapabilities = ref<ScreenMonitoringCapabilities | null>(null);
+const screenMonitoringProviders = ref<ScreenProviderCapabilities[]>([]);
 const screenMonitoringSession = ref<ScreenMonitoringSession | null>(null);
 const screenObservations = ref<ScreenObservation[]>([]);
 const screenObservationResult = ref<ScreenObservation | null>(null);
+const screenFixtureReplayResult = ref<ScreenFixtureReplayResult | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -2824,19 +2869,43 @@ async function runRealtimeReplay() {
 async function loadScreenMonitoring() {
   screenMonitoringLoading.value = true;
   try {
-    const [capabilitiesData, sessionData, observationsData] = await Promise.all([
+    const [capabilitiesData, providersData, sessionData, observationsData] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
+      fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
       fetchJson<ScreenMonitoringSession>("/api/screen-monitoring/sessions/latest"),
       fetchJson<ScreenObservation[]>("/api/screen-monitoring/observations?limit=20")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
+    screenMonitoringProviders.value = providersData;
     screenMonitoringSession.value = sessionData;
     screenObservations.value = observationsData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
+    screenMonitoringProviders.value = [];
     screenMonitoringSession.value = null;
     screenObservations.value = [];
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function replayScreenFixture() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenFixtureReplayResult.value = await fetchJson<ScreenFixtureReplayResult>(
+      "/api/screen-monitoring/observations/fixture-replay",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fixture_name: "trading_client_online" })
+      }
+    );
+    screenObservationResult.value = screenFixtureReplayResult.value.observation;
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "屏幕 fixture 回放失败";
   } finally {
     screenMonitoringLoading.value = false;
   }
