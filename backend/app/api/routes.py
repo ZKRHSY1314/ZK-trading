@@ -93,6 +93,10 @@ class ScreenArtifactReviewInput(BaseModel):
     note: str | None = None
 
 
+class ScreenProviderConfigProposalInput(BaseModel):
+    target_window_title: str | None = "Untitled - Notepad"
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -691,6 +695,63 @@ def screen_monitoring_provider_readiness() -> dict:
     from app.screen_monitoring.service import ScreenMonitoringService
 
     return ScreenMonitoringService().provider_readiness_runbook()
+
+
+@router.post("/screen-monitoring/provider-config-proposals")
+def screen_monitoring_provider_config_proposal(
+    input_data: ScreenProviderConfigProposalInput | None = None,
+) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenProviderConfigProposalInput()
+    return ScreenMonitoringService().generate_provider_config_proposal(
+        target_window_title=payload.target_window_title,
+    )
+
+
+@router.get("/screen-monitoring/provider-config-proposals")
+def screen_monitoring_provider_config_proposals(status: str | None = None, limit: int = 20) -> list[dict]:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().list_provider_config_proposals(status=status, limit=limit)
+
+
+@router.post("/screen-monitoring/provider-config-proposals/{proposal_id}/approve")
+def screen_monitoring_provider_config_proposal_approve(
+    proposal_id: int,
+    input_data: ScreenArtifactReviewInput | None = None,
+) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenArtifactReviewInput()
+    try:
+        return ScreenMonitoringService().decide_provider_config_proposal(
+            proposal_id,
+            "accepted",
+            reviewed_by=payload.reviewed_by,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/screen-monitoring/provider-config-proposals/{proposal_id}/reject")
+def screen_monitoring_provider_config_proposal_reject(
+    proposal_id: int,
+    input_data: ScreenArtifactReviewInput | None = None,
+) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenArtifactReviewInput()
+    try:
+        return ScreenMonitoringService().decide_provider_config_proposal(
+            proposal_id,
+            "rejected",
+            reviewed_by=payload.reviewed_by,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/screen-monitoring/sessions")

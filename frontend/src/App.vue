@@ -204,6 +204,9 @@
           <button data-testid="screen-artifact-sync-button" @click="syncScreenArtifactReviews" :disabled="screenMonitoringLoading">
             同步 Artifact 复核
           </button>
+          <button data-testid="screen-config-proposal-button" @click="generateScreenProviderConfigProposal" :disabled="screenMonitoringLoading">
+            生成 local-safe 配置提案
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -214,6 +217,7 @@
           <span>OCR {{ screenMonitoringCapabilities?.ocr_provider ?? "not_configured" }}</span>
           <span>观测 {{ screenObservations.length }}</span>
           <span>Artifact {{ screenArtifactReviews.length }}</span>
+          <span>配置提案 {{ screenProviderConfigProposals.length }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -272,6 +276,11 @@
             <span>新增 {{ screenArtifactSyncResult.created_review_count }} / 已存在 {{ screenArtifactSyncResult.skipped_existing_count }}</span>
             <small>扫描 {{ screenArtifactSyncResult.scanned_observation_count }} / audit only</small>
           </div>
+          <div v-if="screenProviderConfigProposalResult" class="score-item">
+            <strong>Config Proposal / {{ screenProviderConfigProposalResult.status }}</strong>
+            <span>{{ screenProviderConfigProposalResult.provider }} / {{ screenProviderConfigProposalResult.target_window_title }}</span>
+            <small>写入 env {{ screenProviderConfigProposalResult.proposal.writes_env ? "是" : "否" }} / 执行命令 {{ screenProviderConfigProposalResult.proposal.executes_commands ? "是" : "否" }}</small>
+          </div>
           <div v-if="screenObservationResult" class="score-item">
             <strong>Latest Observation / {{ screenObservationResult.app_status }}</strong>
             <span>置信度 {{ screenObservationResult.confidence }} / 插入 {{ screenObservationResult.inserted ? "是" : "去重" }}</span>
@@ -293,6 +302,17 @@
             <div class="actions" v-if="review.review_status === 'pending_review'">
               <button @click="approveScreenArtifactReview(review.id)" :disabled="screenMonitoringLoading">接受</button>
               <button @click="rejectScreenArtifactReview(review.id)" :disabled="screenMonitoringLoading">拒绝</button>
+            </div>
+          </div>
+        </div>
+        <div v-if="screenProviderConfigProposals.length" class="score-list">
+          <div v-for="proposal in screenProviderConfigProposals.slice(0, 5)" :key="proposal.id" class="score-item">
+            <strong>Config Proposal #{{ proposal.id }} / {{ proposal.status }}</strong>
+            <span>{{ proposal.provider }} / {{ proposal.target_window_title ?? "未指定窗口" }}</span>
+            <small>写 env {{ proposal.proposal.writes_env ? "是" : "否" }} / 自动应用 {{ proposal.proposal.apply_automatically ? "是" : "否" }} / live trading disabled</small>
+            <div class="actions" v-if="proposal.status === 'pending_review'">
+              <button @click="approveScreenProviderConfigProposal(proposal.id)" :disabled="screenMonitoringLoading">接受</button>
+              <button @click="rejectScreenProviderConfigProposal(proposal.id)" :disabled="screenMonitoringLoading">拒绝</button>
             </div>
           </div>
         </div>
@@ -1878,6 +1898,32 @@ type ScreenArtifactSyncResult = {
   live_trading_enabled: boolean;
 };
 
+type ScreenProviderConfigProposal = {
+  id: number;
+  status: string;
+  title: string;
+  provider: string;
+  target_window_title?: string | null;
+  proposal: {
+    env_patch: Record<string, string>;
+    manual_review_required: boolean;
+    apply_automatically: boolean;
+    writes_env: boolean;
+    executes_commands: boolean;
+    real_screen_capture_enabled_by_api: boolean;
+    ocr_enabled_by_api: boolean;
+    operator_steps: string[];
+    rollback_steps: string[];
+  };
+  rationale: Record<string, any>;
+  reviewed_by?: string | null;
+  review_note?: string | null;
+  reviewed_at?: string | null;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2110,6 +2156,8 @@ const screenCaptureStubResult = ref<ScreenCaptureStubResult | null>(null);
 const screenArtifactPolicy = ref<ScreenArtifactPolicy | null>(null);
 const screenArtifactReviews = ref<ScreenArtifactReview[]>([]);
 const screenArtifactSyncResult = ref<ScreenArtifactSyncResult | null>(null);
+const screenProviderConfigProposals = ref<ScreenProviderConfigProposal[]>([]);
+const screenProviderConfigProposalResult = ref<ScreenProviderConfigProposal | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3055,7 +3103,8 @@ async function loadScreenMonitoring() {
       sessionData,
       observationsData,
       artifactPolicyData,
-      artifactReviewsData
+      artifactReviewsData,
+      providerConfigProposalsData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3063,7 +3112,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenMonitoringSession>("/api/screen-monitoring/sessions/latest"),
       fetchJson<ScreenObservation[]>("/api/screen-monitoring/observations?limit=20"),
       fetchJson<ScreenArtifactPolicy>("/api/screen-monitoring/artifact-policy"),
-      fetchJson<ScreenArtifactReview[]>("/api/screen-monitoring/artifact-reviews?limit=20")
+      fetchJson<ScreenArtifactReview[]>("/api/screen-monitoring/artifact-reviews?limit=20"),
+      fetchJson<ScreenProviderConfigProposal[]>("/api/screen-monitoring/provider-config-proposals?limit=20")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3072,6 +3122,7 @@ async function loadScreenMonitoring() {
     screenObservations.value = observationsData;
     screenArtifactPolicy.value = artifactPolicyData;
     screenArtifactReviews.value = artifactReviewsData;
+    screenProviderConfigProposals.value = providerConfigProposalsData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3080,6 +3131,7 @@ async function loadScreenMonitoring() {
     screenObservations.value = [];
     screenArtifactPolicy.value = null;
     screenArtifactReviews.value = [];
+    screenProviderConfigProposals.value = [];
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -3197,6 +3249,60 @@ async function rejectScreenArtifactReview(id: number) {
     await loadScreenMonitoring();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Artifact 复核拒绝失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function generateScreenProviderConfigProposal() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenProviderConfigProposalResult.value = await fetchJson<ScreenProviderConfigProposal>(
+      "/api/screen-monitoring/provider-config-proposals",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_window_title: "Untitled - Notepad" })
+      }
+    );
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "local-safe 配置提案生成失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function approveScreenProviderConfigProposal(id: number) {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    await fetchJson<ScreenProviderConfigProposal>(`/api/screen-monitoring/provider-config-proposals/${id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewed_by: "operator", note: "Config proposal accepted from dashboard; not applied by API" })
+    });
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "local-safe 配置提案接受失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function rejectScreenProviderConfigProposal(id: number) {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    await fetchJson<ScreenProviderConfigProposal>(`/api/screen-monitoring/provider-config-proposals/${id}/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewed_by: "operator", note: "Config proposal rejected from dashboard" })
+    });
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "local-safe 配置提案拒绝失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

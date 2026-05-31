@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P5",
+            "stage": "V4.5-P6",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -51,6 +51,7 @@ class ScreenMonitoringService:
                 "artifact_review_queue",
                 "artifact_retention_policy",
                 "provider_readiness_runbook",
+                "provider_config_proposal",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -135,7 +136,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P5",
+            "stage": "V4.5-P6",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -217,6 +218,138 @@ class ScreenMonitoringService:
             "simulation_only": True,
             "live_trading_enabled": False,
         }
+
+    def generate_provider_config_proposal(self, target_window_title: str | None = None) -> dict[str, Any]:
+        title = (target_window_title or "Untitled - Notepad").strip()[:120]
+        allowed_windows = sorted({title, "Calculator"})
+        broker_terms = self._split_csv(settings.screen_capture_broker_window_terms)
+        proposal = {
+            "provider": "local_safe",
+            "target_window_title": title,
+            "env_patch": {
+                "SCREEN_CAPTURE_PROVIDER": "local_safe",
+                "SCREEN_CAPTURE_ALLOW_REAL_CAPTURE": "true",
+                "SCREEN_CAPTURE_ALLOWED_WINDOWS": ",".join(allowed_windows),
+                "SCREEN_CAPTURE_BLOCK_BROKER_WINDOWS": "true",
+                "SCREEN_CAPTURE_BROKER_WINDOW_TERMS": ",".join(broker_terms),
+            },
+            "manual_review_required": True,
+            "apply_automatically": False,
+            "writes_env": False,
+            "executes_commands": False,
+            "real_screen_capture_enabled_by_api": False,
+            "ocr_enabled_by_api": False,
+            "operator_steps": [
+                "Review the harmless window title and broker deny terms.",
+                "If accepted, apply settings manually outside the API after closing broker software.",
+                "Restart the backend manually and re-check /api/screen-monitoring/provider-readiness.",
+                "Run capture-preflight against the harmless window before any metadata stub.",
+            ],
+            "rollback_steps": [
+                "Set SCREEN_CAPTURE_PROVIDER=disabled.",
+                "Set SCREEN_CAPTURE_ALLOW_REAL_CAPTURE=false.",
+                "Restart the backend manually and verify provider status is disabled.",
+            ],
+        }
+        rationale = {
+            "summary": "Operator-reviewed local_safe configuration proposal for harmless-window preflight only.",
+            "why": [
+                "A reviewed allowlist prevents accidental broker-window observation.",
+                "Broker deny terms remain enabled and must include Chinese trading-client keywords.",
+                "The backend stores this as audit evidence only and does not mutate .env.",
+            ],
+            "safety": {
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+                "pixel_capture": False,
+                "ocr_execution": False,
+                "screen_click": False,
+                "broker_action": False,
+                "credential_access": False,
+            },
+        }
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO screen_provider_config_proposals(
+                    status, title, provider, target_window_title,
+                    proposal_json, rationale_json,
+                    review_only, simulation_only, live_trading_enabled,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "pending_review",
+                    "local_safe harmless-window configuration proposal",
+                    "local_safe",
+                    title,
+                    json.dumps(proposal, ensure_ascii=False, default=str),
+                    json.dumps(rationale, ensure_ascii=False, default=str),
+                    1,
+                    1,
+                    0,
+                    now,
+                    now,
+                ),
+            )
+            proposal_id = int(cursor.lastrowid)
+        return self.get_provider_config_proposal(proposal_id) or {"id": proposal_id}
+
+    def list_provider_config_proposals(self, status: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        normalized = (status or "").strip()
+        params: tuple[Any, ...]
+        where = ""
+        if normalized:
+            where = "WHERE status = ?"
+            params = (normalized, max(1, min(limit, 200)))
+        else:
+            params = (max(1, min(limit, 200)),)
+        rows = self.store.fetch_all(
+            f"""
+            SELECT *
+            FROM screen_provider_config_proposals
+            {where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        )
+        return [self._provider_config_proposal_model(row) for row in rows]
+
+    def decide_provider_config_proposal(
+        self,
+        proposal_id: int,
+        decision: str,
+        reviewed_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        normalized = decision.strip().lower()
+        if normalized not in {"accepted", "rejected"}:
+            raise ValueError("provider config proposal decision must be accepted or rejected")
+        reviewed_at = datetime.now().isoformat(timespec="seconds")
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE screen_provider_config_proposals
+                SET status = ?, reviewed_by = ?, review_note = ?,
+                    reviewed_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (normalized, reviewed_by[:80], note, reviewed_at, reviewed_at, proposal_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"screen provider config proposal {proposal_id} not found")
+        return self.get_provider_config_proposal(proposal_id) or {"id": proposal_id, "status": normalized}
+
+    def get_provider_config_proposal(self, proposal_id: int) -> dict[str, Any] | None:
+        row = self.store.fetch_one(
+            "SELECT * FROM screen_provider_config_proposals WHERE id = ?",
+            (proposal_id,),
+        )
+        return self._provider_config_proposal_model(row) if row else None
 
     def provider_capabilities(self) -> list[dict[str, Any]]:
         providers = [
@@ -813,6 +946,17 @@ class ScreenMonitoringService:
             "live_trading_enabled": False,
         }
         item["observation"] = observation
+        item["review_only"] = bool(item.get("review_only"))
+        item["simulation_only"] = bool(item.get("simulation_only"))
+        item["live_trading_enabled"] = bool(item.get("live_trading_enabled"))
+        return item
+
+    def _provider_config_proposal_model(self, row: dict[str, Any] | None) -> dict[str, Any]:
+        if not row:
+            return {}
+        item = dict(row)
+        item["proposal"] = self._decode_json(item.pop("proposal_json", "{}"))
+        item["rationale"] = self._decode_json(item.pop("rationale_json", "{}"))
         item["review_only"] = bool(item.get("review_only"))
         item["simulation_only"] = bool(item.get("simulation_only"))
         item["live_trading_enabled"] = bool(item.get("live_trading_enabled"))

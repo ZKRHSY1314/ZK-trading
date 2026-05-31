@@ -124,6 +124,9 @@
 - [ ] V4.5-P5 exposes `/api/screen-monitoring/provider-readiness` with read-only local provider diagnostics and runbook steps.
 - [ ] V4.5-P5 readiness checks prove real pixel capture and OCR adapters remain blocked while live trading stays disabled.
 - [ ] V4.5-P5 dashboard shows provider readiness, config checks, next safe steps, and blocked actions without executing local commands or controlling windows.
+- [ ] V4.5-P6 exposes `/api/screen-monitoring/provider-config-proposals` for review-only local-safe configuration proposals.
+- [ ] V4.5-P6 provider config proposals include proposed env values, manual review steps, rollback steps, and explicit `writes_env=false` / `executes_commands=false`.
+- [ ] V4.5-P6 dashboard shows provider config proposals and accept/reject audit actions without applying config, enabling screenshots/OCR, or controlling windows.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence
