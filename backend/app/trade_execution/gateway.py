@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P14"
+    stage = "V5.5-P15"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -67,6 +67,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_evidence_verification",
                 "audit_ledger_migration_manual_release_evidence_comparison",
                 "audit_ledger_migration_manual_release_health_digest",
+                "audit_ledger_migration_manual_release_health_digest_history_retention_proposal",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -100,6 +101,7 @@ class TradeExecutionGatewayService:
                 "persist_manual_release_evidence",
                 "persist_manual_release_evidence_comparison",
                 "persist_manual_release_health_digest",
+                "persist_manual_release_health_digest_history",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -611,7 +613,7 @@ class TradeExecutionGatewayService:
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "checklist_state": "defined_for_manual_review_only",
             "checklist_items": checklist_items,
-            "operator_attestation_phrase": "我确认这是发布前人工验收清单，不是实盘启用授权",
+            "operator_attestation_phrase": "I confirm this is a pre-release manual acceptance checklist, not live-trading enablement.",
             "acceptance_policy": {
                 "all_items_required": True,
                 "operator_review_required": True,
@@ -3434,6 +3436,7 @@ class TradeExecutionGatewayService:
             "allowed_output": "review_only_manual_release_health_digest",
             "forbidden_actions": [
                 "persist_manual_release_health_digest",
+                "persist_manual_release_health_digest_history",
                 "record_manual_release_review_by_api",
                 "approve_release_from_health_digest",
                 "execute_migration_from_health_digest",
@@ -3445,6 +3448,212 @@ class TradeExecutionGatewayService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def audit_ledger_migration_manual_release_health_digest_history_retention_proposal(
+        self,
+        baseline_evidence: dict[str, Any] | None = None,
+        candidate_evidence: dict[str, Any] | None = None,
+        limit: int = 50,
+        max_age_days: int = 7,
+        repeat_checks: int = 2,
+    ) -> dict[str, Any]:
+        digest = self.audit_ledger_migration_manual_release_health_digest(
+            baseline_evidence=baseline_evidence,
+            candidate_evidence=candidate_evidence,
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        retention_fields = [
+            "digest_id",
+            "digest_status",
+            "generated_at",
+            "stage",
+            "module_statuses",
+            "attention_item_names",
+            "failed_check_names",
+            "release_package_evidence_id",
+            "integrity_evidence_id",
+            "rehearsal_evidence_id",
+            "verification_evidence_id",
+            "comparison_evidence_id",
+            "health_flags",
+            "summary",
+            "decision_go_no_go",
+            "next_required_action",
+            "safety_summary",
+        ]
+        excluded_fields = [
+            "raw_manual_release_evidence",
+            "artifact_file_contents",
+            "artifact_paths",
+            "operator_plaintext_notes",
+            "broker_account",
+            "broker_credentials",
+            "orders",
+            "positions",
+            "plaintext_secrets",
+            "sql_script_body",
+            "migration_file_body",
+        ]
+        module_ids = {item["name"]: item.get("evidence_id") for item in digest.get("module_statuses", [])}
+        review_gates = [
+            self._manual_release_digest_history_gate(
+                "schema_review_required",
+                True,
+                "Future history retention fields must be reviewed before any persistence is implemented.",
+            ),
+            self._manual_release_digest_history_gate(
+                "metadata_only_required",
+                all(field in excluded_fields for field in ["raw_manual_release_evidence", "artifact_file_contents", "broker_credentials", "orders"]),
+                "Retention may store only digest metadata and must exclude raw evidence, broker data, orders, credentials, and secrets.",
+            ),
+            self._manual_release_digest_history_gate(
+                "dedupe_policy_required",
+                True,
+                "Digest history must dedupe by digest id, status, failed checks, and attention item names before future persistence is reviewed.",
+            ),
+            self._manual_release_digest_history_gate(
+                "migration_review_required",
+                True,
+                "Any future table requires a separately reviewed SQLite migration, rollback plan, and tests.",
+            ),
+            self._manual_release_digest_history_gate(
+                "manual_enable_required",
+                True,
+                "This proposal must not create a retention job, write records, approve a release, or enable migration execution.",
+            ),
+            self._manual_release_digest_history_gate(
+                "live_trading_disabled",
+                settings.enable_live_trading is False and digest.get("live_trading_enabled") is False,
+                "Live trading must stay disabled while proposing digest history retention.",
+            ),
+        ]
+        blocked_gates = [gate for gate in review_gates if gate["status"] == "blocked"]
+        proposal_id = self._stable_hash(
+            {
+                "digest_id": digest.get("digest_id"),
+                "digest_status": digest.get("status"),
+                "retention_fields": retention_fields,
+                "excluded_fields": excluded_fields,
+                "review_gates": {gate["name"]: gate["status"] for gate in review_gates},
+            }
+        )
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_manual_release_health_digest_history_retention_proposal.v1",
+            "status": "history_retention_proposal_ready" if not blocked_gates else "history_retention_proposal_blocked",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "proposal_id": proposal_id,
+            "proposal": {
+                "name": "audit_ledger_migration_manual_release_health_digest_history",
+                "purpose": "operator_review_only_digest_trend_and_regression_tracking",
+                "default_state": "not_persisted",
+                "recommended_retention_days": 30,
+                "max_records_per_day": 24,
+                "dedupe_key": "digest_id + digest_status + failed_check_names + attention_item_names",
+                "storage_mode": "future_reviewed_metadata_only_table",
+                "required_fields": retention_fields,
+                "excluded_fields": excluded_fields,
+                "operator_review_required": True,
+                "apply_automatically": False,
+                "requires_future_migration": True,
+                "writes_database_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "executes_commands": False,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "current_digest_summary": {
+                "digest_id": digest.get("digest_id"),
+                "digest_status": digest.get("status"),
+                "digest_stage": digest.get("stage"),
+                "module_statuses": {item["name"]: item.get("status") for item in digest.get("module_statuses", [])},
+                "attention_item_names": [item["name"] for item in digest.get("attention_items", [])],
+                "failed_check_names": [item["name"] for item in digest.get("failed_checks", [])],
+                "release_package_evidence_id": module_ids.get("manual_release_package"),
+                "integrity_evidence_id": module_ids.get("release_package_integrity"),
+                "rehearsal_evidence_id": module_ids.get("manual_release_rehearsal"),
+                "verification_evidence_id": module_ids.get("manual_release_evidence_verifier"),
+                "comparison_evidence_id": module_ids.get("manual_release_evidence_comparison"),
+                "summary": digest.get("summary", {}),
+                "health_flags": digest.get("health_flags", {}),
+                "decision_go_no_go": digest.get("decision", {}).get("go_no_go"),
+                "next_required_action": digest.get("decision", {}).get("next_required_action"),
+                "allowed_output": digest.get("allowed_output"),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "review_gates": review_gates,
+            "summary": {
+                "required_field_count": len(retention_fields),
+                "excluded_field_count": len(excluded_fields),
+                "blocked_gate_count": len(blocked_gates),
+                "attention_item_count": len(digest.get("attention_items", [])),
+                "failed_check_count": len(digest.get("failed_checks", [])),
+                "writes_database_now": False,
+                "persists_history_now": False,
+            },
+            "decision": {
+                "proposal_ready_for_manual_review": not blocked_gates,
+                "history_persistence_enabled_now": False,
+                "can_create_table_now": False,
+                "can_write_history_row_now": False,
+                "can_run_migration_now": False,
+                "can_write_migration_file_now": False,
+                "release_approved_now": False,
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "gateway_can_execute": False,
+                "go_no_go": "ready_for_future_retention_design_review" if not blocked_gates else "no_go",
+                "next_required_action": "review_future_digest_history_migration_checklist",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "persists_manual_release_health_digest": False,
+                "persists_manual_release_health_digest_history": False,
+                "persists_manual_release_evidence": False,
+                "persists_manual_release_evidence_comparison": False,
+                "writes_database_now": False,
+                "creates_table_now": False,
+                "writes_history_row_now": False,
+                "executes_sql": False,
+                "runs_migration_now": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "executes_commands": False,
+                "records_manual_review_now": False,
+                "approves_release_now": False,
+                "enables_gateway_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+            },
+            "allowed_output": "review_only_manual_release_health_digest_history_retention_proposal",
+            "forbidden_actions": [
+                "persist_manual_release_health_digest_history",
+                "persist_manual_release_health_digest",
+                "persist_manual_release_evidence",
+                "create_history_table",
+                "write_history_row",
+                "run_history_migration",
+                "write_migration_file",
+                "record_manual_release_review_by_api",
+                "approve_release_from_history_proposal",
+                "execute_migration_from_history_proposal",
+                "create_history_download",
+                "write_history_file",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -3643,12 +3852,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_release_health_digest",
                 "V5.5-P14 summarizes manual release package, integrity, rehearsal, verifier, comparison, and safety flags without persisting snapshots, approving release, or executing migrations.",
             ),
+            self._gate(
+                "audit_ledger_migration_manual_release_health_digest_history_retention_proposal_required",
+                "passed",
+                "audit_ledger_migration_manual_release_health_digest_history_retention_proposal_ready",
+                "review_only_manual_release_health_digest_history_retention_proposal",
+                "V5.5-P15 proposes metadata-only future health digest history retention without creating tables, writing records, or running migrations.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_retention_proposal_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -3681,9 +3897,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_evidence_verifier_ready": True,
                 "audit_ledger_migration_manual_release_evidence_comparison_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_ready": True,
+                "audit_ledger_migration_manual_release_health_digest_history_retention_proposal_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest",
+                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_retention_proposal",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -3835,6 +4052,12 @@ class TradeExecutionGatewayService:
                 "name": "AuditLedgerMigrationManualReleaseHealthDigest",
                 "status": "review_manual_release_health_digest_defined",
                 "required_before": "any_manual_audit_ledger_migration_release",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryRetentionProposal",
+                "status": "review_manual_release_health_digest_history_retention_proposal_defined",
+                "required_before": "any_manual_release_health_digest_history_persistence",
                 "review_only": True,
             },
         ]
@@ -4120,6 +4343,20 @@ class TradeExecutionGatewayService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def _manual_release_digest_history_gate(
+        self,
+        name: str,
+        passed: bool,
+        reason: str,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else "blocked",
+            "reason": reason,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
     def _manual_release_artifact_hashes(self, evidence: dict[str, Any]) -> dict[str, str]:
         artifacts = evidence.get("artifacts") if isinstance(evidence, dict) else None
         if not isinstance(artifacts, list):

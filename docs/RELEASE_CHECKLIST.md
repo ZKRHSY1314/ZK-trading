@@ -273,3 +273,7 @@ The following automation schedule is recommended during active trading days:
 
 **Non-Trading Days (Weekends/Holidays):**
 - Run `--mode potential` for broad off-hours potential searches (discovering 200+ candidates for the coming week).
+- [ ] V5.5-P15 exposes `POST /api/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-proposal` as review-only metadata for future digest history retention.
+- [ ] V5.5-P15 proposal defines required metadata fields, excluded sensitive fields, dedupe key, retention limits, review gates, and current digest summary without persisting history.
+- [ ] V5.5-P15 dashboard shows health digest history proposal status, proposal id prefix, field count, and persistence blocked evidence.
+- [ ] V5.5-P15 must keep `history_persistence_enabled_now=false`, `can_create_table_now=false`, `can_write_history_row_now=false`, `can_run_migration_now=false`, `can_write_migration_file_now=false`, `release_approved_now=false`, `migration_allowed_now=false`, `execution_allowed_now=false`, `persists_manual_release_health_digest_history=false`, `writes_database_now=false`, `writes_file=false`, `executes_sql=false`, and `live_trading_enabled=false`.

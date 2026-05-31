@@ -356,6 +356,23 @@ def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest(
     )
 
 
+
+@router.post("/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-proposal")
+def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest_history_retention_proposal(
+    input_data: TradeManualReleaseEvidenceComparisonInput | None = None,
+    limit: int = 50,
+    max_age_days: int = 7,
+    repeat_checks: int = 2,
+) -> dict:
+    payload = input_data or TradeManualReleaseEvidenceComparisonInput()
+    return TradeExecutionGatewayService().audit_ledger_migration_manual_release_health_digest_history_retention_proposal(
+        baseline_evidence=payload.baseline_evidence,
+        candidate_evidence=payload.candidate_evidence,
+        limit=limit,
+        max_age_days=max_age_days,
+        repeat_checks=repeat_checks,
+    )
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()
@@ -383,7 +400,7 @@ def automation_cycle_run_once(
 def automation_latest() -> dict:
     latest = AutomationSupervisor().latest_run()
     if latest is None:
-        raise HTTPException(status_code=404, detail="尚未产生自动化运行记录")
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
     return latest
 
 
@@ -396,7 +413,7 @@ def automation_runs(limit: int = 20) -> list[dict]:
 def automation_run_detail(run_id: int) -> dict:
     run = AutomationSupervisor().get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="自动化运行不存在")
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
     return run
 
 
@@ -422,7 +439,7 @@ def automation_record_event(run_id: int, event: AutomationEventInput) -> dict:
             event.payload,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
 
 
 @router.post("/automation/runs/{run_id}/finish")
@@ -434,7 +451,7 @@ def automation_finish_external_run(run_id: int, finish: AutomationFinishInput) -
             finish.summary,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
 
 
 @router.get("/knowledge/summary")
@@ -605,7 +622,7 @@ def experience_code_evolution_detail(record_id: int) -> dict:
     try:
         return CodeEvolutionService().get_record(record_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
 
 
 @router.post("/experience/code-evolution/{record_id}/validation")
@@ -644,14 +661,14 @@ def reject_code_evolution_record(record_id: int, input_data: CodeEvolutionReview
             note=input_data.note,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
 
 
 @router.get("/learning/reports/latest", response_model=LearningReport)
 def latest_learning_report() -> LearningReport:
     report = LearningService().latest_report()
     if report is None:
-        raise HTTPException(status_code=404, detail="尚未生成学习复盘报告")
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
     return report
 
 
@@ -685,7 +702,7 @@ def list_phase_replays(symbol: str | None = None, limit: int = 20) -> list[dict]
 def get_phase_replay(replay_id: int) -> dict:
     replay = MainForcePhaseReplayService().get_replay(replay_id)
     if replay is None:
-        raise HTTPException(status_code=404, detail="阶段回放不存在")
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
     return replay
 
 
@@ -714,7 +731,7 @@ def list_phase_matches(symbol: str | None = None, limit: int = 20) -> list[dict]
 def get_phase_match(match_id: int) -> dict:
     match = PhaseSimilarityService().get_match(match_id)
     if match is None:
-        raise HTTPException(status_code=404, detail="阶段匹配不存在")
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
     return match
 
 
@@ -741,7 +758,7 @@ def latest_monitoring_session() -> dict:
 def monitoring_session(session_id: int) -> dict:
     session = MonitoringService().get_session(session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="监控会话不存在")
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
     return session
 
 
@@ -1143,7 +1160,7 @@ def screen_monitoring_provider_config_proposal_approve(
             note=payload.note,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
 
 
 @router.post("/screen-monitoring/provider-config-proposals/{proposal_id}/reject")
@@ -1162,7 +1179,7 @@ def screen_monitoring_provider_config_proposal_reject(
             note=payload.note,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
 
 
 @router.post("/screen-monitoring/sessions")
@@ -1228,7 +1245,7 @@ def screen_monitoring_artifact_review_approve(
             note=payload.note,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
 
 
 @router.post("/screen-monitoring/artifact-reviews/{review_id}/reject")
@@ -1247,7 +1264,7 @@ def screen_monitoring_artifact_review_reject(
             note=payload.note,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
 
 
 @router.post("/screen-monitoring/observations/mock")
@@ -1406,7 +1423,7 @@ def list_potential_search_runs(limit: int = 20) -> list[dict]:
 def latest_candidate_scan() -> dict:
     latest = LocalCandidateScanner().latest_scan()
     if latest is None:
-        raise HTTPException(status_code=404, detail="尚未产生候选池扫描结果")
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
     return latest
 
 
@@ -1491,7 +1508,7 @@ def list_agent_control_tasks(limit: int = 50) -> list[AgentControlTask]:
 def get_agent_control_task(task_id: int) -> AgentControlTask:
     task = AgentControlService().get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
     return task
 
 
@@ -1658,7 +1675,7 @@ def reject_calibration_proposal(proposal_id: int, input_data: CalibrationReviewI
 
 
 # ------------------------------------------------------------------
-# Sandbox Experiments (approved proposals → what-if simulation)
+# Sandbox Experiments (approved proposals �?what-if simulation)
 # ------------------------------------------------------------------
 
 @router.post("/learning/sandbox-experiments/run/{proposal_id}")
@@ -1892,7 +1909,7 @@ def get_backtest_run(run_id: int) -> dict:
     store = SQLiteStore(settings.database_path)
     run = store.fetch_one("SELECT * FROM historical_backtest_runs WHERE id = ?", (run_id,))
     if not run:
-        raise HTTPException(status_code=404, detail="Backtest run not found")
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
     trades = store.fetch_all(
         "SELECT * FROM historical_backtest_trades WHERE run_id = ? ORDER BY trade_date ASC, id ASC",
         (run_id,),
@@ -1938,7 +1955,7 @@ def explain_code_evolution_with_model(record_id: int) -> dict:
     try:
         return AIModelGatewayService().explain_code_evolution(record_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
 
 
 @router.get("/ai/model/audit-logs")
@@ -1969,7 +1986,7 @@ def validate_ai_proposal(proposal_id: int) -> dict:
     try:
         return AIReviewWorker().validate_proposal(proposal_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
 
 
 @router.post("/ai/review/proposals/{proposal_id}/approve-for-simulation")
@@ -2001,4 +2018,4 @@ def reject_ai_proposal(
     try:
         return AIReviewWorker().reject(proposal_id, reviewed_by=reviewed_by, note=note)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
