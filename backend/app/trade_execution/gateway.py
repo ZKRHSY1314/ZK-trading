@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P16"
+    stage = "V5.5-P17"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -69,6 +69,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_health_digest",
                 "audit_ledger_migration_manual_release_health_digest_history_retention_proposal",
                 "audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist",
+                "audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -106,6 +107,7 @@ class TradeExecutionGatewayService:
                 "create_manual_release_health_digest_history_table",
                 "run_manual_release_health_digest_history_migration",
                 "write_manual_release_health_digest_history_migration_file",
+                "execute_manual_release_health_digest_history_migration_spec",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -3889,6 +3891,208 @@ class TradeExecutionGatewayService:
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
         }
+
+    def verify_audit_ledger_migration_manual_release_health_digest_history_migration_spec(
+        self,
+        spec_text: str | None = None,
+        baseline_evidence: dict[str, Any] | None = None,
+        candidate_evidence: dict[str, Any] | None = None,
+        limit: int = 50,
+        max_age_days: int = 7,
+        repeat_checks: int = 2,
+    ) -> dict[str, Any]:
+        checklist = self.audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist(
+            baseline_evidence=baseline_evidence,
+            candidate_evidence=candidate_evidence,
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        target_table = str(checklist.get("migration_plan", {}).get("target_table") or "manual_release_health_digest_history")
+        field_mappings = [
+            item
+            for item in checklist.get("field_mapping", [])
+            if isinstance(item, dict) and item.get("target_field")
+        ]
+        field_names = [str(item["target_field"]) for item in field_mappings]
+        spec = spec_text if spec_text is not None else self._default_manual_release_health_digest_history_migration_spec(field_mappings)
+        normalized = " ".join(spec.lower().split())
+        dangerous_terms = [
+            " drop ",
+            " delete ",
+            " insert ",
+            " update ",
+            " alter ",
+            " pragma ",
+            " attach ",
+            " detach ",
+            " vacuum ",
+            " replace ",
+            " truncate ",
+            " execute ",
+        ]
+        sensitive_terms = [
+            *[str(field) for field in checklist.get("excluded_fields", [])],
+            "broker_account",
+            "trading_password",
+            "plaintext_secret",
+            "account_funds",
+            "live_positions",
+            "sms_code",
+        ]
+        missing_fields = [field for field in field_names if field.lower() not in normalized]
+        dangerous_matches = [term.strip() for term in dangerous_terms if term in f" {normalized} "]
+        sensitive_matches = [term for term in sensitive_terms if term.lower() in normalized]
+        checks = [
+            self._migration_spec_check(
+                "spec_text_present",
+                bool(spec.strip()),
+                "migration spec text must be provided or generated from the safe default",
+            ),
+            self._migration_spec_check(
+                "target_table_named",
+                target_table.lower() in normalized,
+                "spec must name the future manual release health digest history target table",
+            ),
+            self._migration_spec_check(
+                "create_table_shape_present",
+                "create table" in normalized and "if not exists" in normalized,
+                "dry-run spec may describe a guarded CREATE TABLE shape but must not execute it",
+            ),
+            self._migration_spec_check(
+                "required_fields_covered",
+                not missing_fields,
+                "spec must cover every P15/P16 required metadata field",
+                {"missing_fields": missing_fields[:20]},
+            ),
+            self._migration_spec_check(
+                "safety_flags_present",
+                all(flag in normalized for flag in ["review_only", "simulation_only", "live_trading_enabled"]),
+                "spec must preserve review_only/simulation_only/live_trading_enabled=false evidence columns",
+            ),
+            self._migration_spec_check(
+                "sensitive_fields_absent",
+                not sensitive_matches,
+                "spec must not include raw evidence, artifact contents, broker data, orders, credentials, secrets, funds, or positions",
+                {"sensitive_matches": sensitive_matches},
+            ),
+            self._migration_spec_check(
+                "dangerous_sql_absent",
+                not dangerous_matches,
+                "dry-run verifier rejects destructive, mutating, attachment, pragma, or execution SQL terms",
+                {"dangerous_matches": dangerous_matches},
+            ),
+            self._migration_spec_check(
+                "checklist_review_ready",
+                checklist.get("decision", {}).get("migration_readiness_review_ready") is True,
+                "P17 verification requires the P16 migration readiness checklist to be review-ready",
+            ),
+            self._migration_spec_check(
+                "migration_not_allowed_now",
+                checklist.get("summary", {}).get("migration_allowed_now") is False,
+                "dry-run verification must not enable migration execution",
+            ),
+            self._migration_spec_check(
+                "manual_review_required",
+                checklist.get("summary", {}).get("manual_review_required") is True,
+                "future migration spec still requires manual operator review",
+            ),
+            self._migration_spec_check(
+                "live_trading_disabled",
+                settings.enable_live_trading is False and checklist.get("live_trading_enabled") is False,
+                "migration spec verification must preserve disabled live-trading state",
+            ),
+        ]
+        failed = [item for item in checks if item["status"] != "passed"]
+        spec_hash = hashlib.sha256(spec.encode("utf-8")).hexdigest()
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier.v1",
+            "status": "spec_verification_passed" if not failed else "spec_verification_failed",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "verification_state": "dry_run_in_memory_only",
+            "target_table": target_table,
+            "spec_hash": spec_hash,
+            "spec_excerpt": spec[:800],
+            "checks": checks,
+            "failed_checks": failed,
+            "missing_fields": missing_fields,
+            "dangerous_matches": dangerous_matches,
+            "sensitive_matches": sensitive_matches,
+            "safety_blocks": [
+                {"name": "dangerous_sql", "matches": dangerous_matches, "blocked": bool(dangerous_matches)},
+                {"name": "sensitive_fields", "matches": sensitive_matches, "blocked": bool(sensitive_matches)},
+            ],
+            "source_checklist_status": checklist.get("status"),
+            "migration_allowed_now": False,
+            "forbidden_actions": [
+                "execute_sql",
+                "create_history_table",
+                "run_history_migration",
+                "write_migration_file",
+                "write_history_row",
+                "persist_manual_release_health_digest_history",
+                "write_file",
+                "create_download",
+                "approve_release_from_spec_verifier",
+                "connect_broker",
+                "submit_order",
+                "store_credentials",
+                "screen_click",
+            ],
+            "summary": {
+                "required_field_count": len(field_names),
+                "covered_field_count": len(field_names) - len(missing_fields),
+                "dangerous_match_count": len(dangerous_matches),
+                "sensitive_match_count": len(sensitive_matches),
+                "failed_count": len(failed),
+                "executes_sql": False,
+                "creates_table_now": False,
+                "writes_database_now": False,
+                "runs_migration_now": False,
+                "writes_migration_file_now": False,
+                "writes_history_row_now": False,
+            },
+            "decision": {
+                "spec_verification_ready_for_review": True,
+                "spec_verification_passed": not failed,
+                "can_execute_sql_now": False,
+                "can_create_table_now": False,
+                "can_run_migration_now": False,
+                "can_write_migration_file_now": False,
+                "can_write_history_row_now": False,
+                "history_persistence_enabled_now": False,
+                "release_approved_now": False,
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "gateway_can_execute": False,
+                "next_required_action": "review_manual_release_health_digest_history_migration_spec_approval_metadata",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "dry_run_verifier_only": True,
+                "persists_manual_release_health_digest_history": False,
+                "executes_sql": False,
+                "creates_table_now": False,
+                "writes_database_now": False,
+                "runs_migration_now": False,
+                "writes_migration_file_now": False,
+                "writes_history_row_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "approves_release_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+            },
+            "allowed_output": "review_only_manual_release_health_digest_history_migration_spec_verifier",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -4101,12 +4305,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_release_health_digest_history_migration_readiness_checklist",
                 "V5.5-P16 checks future health digest history migration readiness without creating tables, writing rows, writing files, or running migrations.",
             ),
+            self._gate(
+                "audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier_required",
+                "passed",
+                "audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier_ready",
+                "review_only_manual_release_health_digest_history_migration_spec_verifier",
+                "V5.5-P17 dry-run verifies future health digest history migration specs in memory without executing SQL, writing files, creating tables, or writing history rows.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -4141,9 +4352,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_health_digest_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_retention_proposal_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist_ready": True,
+                "audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist",
+                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -4307,6 +4519,12 @@ class TradeExecutionGatewayService:
                 "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryMigrationReadinessChecklist",
                 "status": "review_manual_release_health_digest_history_migration_readiness_checklist_defined",
                 "required_before": "any_manual_release_health_digest_history_migration_spec",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryMigrationSpecVerifier",
+                "status": "review_manual_release_health_digest_history_migration_spec_verifier_defined",
+                "required_before": "any_manual_release_health_digest_history_migration_spec_approval",
                 "review_only": True,
             },
         ]
@@ -4648,6 +4866,32 @@ class TradeExecutionGatewayService:
             f"{indexes}\n"
             "-- Dry-run review text only. API does not run this text."
         )
+
+    def _default_manual_release_health_digest_history_migration_spec(self, field_mappings: list[dict[str, Any]]) -> str:
+        lines = [
+            "CREATE TABLE IF NOT EXISTS manual_release_health_digest_history (",
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,",
+        ]
+        for item in field_mappings:
+            field = str(item.get("target_field"))
+            storage = str(item.get("storage", "text"))
+            column_type = "INTEGER" if storage == "integer" or field.endswith("_count") else "JSON" if storage == "metadata_json" else "TEXT"
+            nullability = " NOT NULL" if item.get("required") else ""
+            lines.append(f"  {field} {column_type}{nullability},")
+        lines.extend(
+            [
+                "  created_at TEXT NOT NULL,",
+                "  review_only INTEGER NOT NULL DEFAULT 1,",
+                "  simulation_only INTEGER NOT NULL DEFAULT 1,",
+                "  live_trading_enabled INTEGER NOT NULL DEFAULT 0,",
+                "  CHECK (review_only = 1),",
+                "  CHECK (simulation_only = 1),",
+                "  CHECK (live_trading_enabled = 0)",
+                ");",
+                "-- Dry-run review text only. API does not run this text, create tables, write rows, or write migration files.",
+            ]
+        )
+        return "\n".join(lines)
 
     def _decode_json(self, raw: str) -> Any:
         try:

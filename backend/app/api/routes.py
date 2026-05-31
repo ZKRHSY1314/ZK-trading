@@ -137,6 +137,12 @@ class TradeManualReleaseEvidenceComparisonInput(BaseModel):
     candidate_evidence: dict = Field(default_factory=dict)
 
 
+class TradeManualReleaseHealthDigestHistoryMigrationSpecInput(BaseModel):
+    spec_text: str | None = None
+    baseline_evidence: dict = Field(default_factory=dict)
+    candidate_evidence: dict = Field(default_factory=dict)
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -382,6 +388,24 @@ def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest_
 ) -> dict:
     payload = input_data or TradeManualReleaseEvidenceComparisonInput()
     return TradeExecutionGatewayService().audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist(
+        baseline_evidence=payload.baseline_evidence,
+        candidate_evidence=payload.candidate_evidence,
+        limit=limit,
+        max_age_days=max_age_days,
+        repeat_checks=repeat_checks,
+    )
+
+
+@router.post("/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-spec/verify")
+def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest_history_migration_spec_verify(
+    input_data: TradeManualReleaseHealthDigestHistoryMigrationSpecInput | None = None,
+    limit: int = 50,
+    max_age_days: int = 7,
+    repeat_checks: int = 2,
+) -> dict:
+    payload = input_data or TradeManualReleaseHealthDigestHistoryMigrationSpecInput()
+    return TradeExecutionGatewayService().verify_audit_ledger_migration_manual_release_health_digest_history_migration_spec(
+        spec_text=payload.spec_text,
         baseline_evidence=payload.baseline_evidence,
         candidate_evidence=payload.candidate_evidence,
         limit=limit,
