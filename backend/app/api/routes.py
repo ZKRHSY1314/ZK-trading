@@ -173,6 +173,12 @@ class Dataset2StagingQualityReviewInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingFixPlanInput(BaseModel):
+    quality_review_id: int | None = None
+    planned_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -832,6 +838,21 @@ def dataset2_staging_quality_review(payload: Dataset2StagingQualityReviewInput |
 @router.get("/learning/dataset2/staging/quality-reviews")
 def dataset2_staging_quality_reviews(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_quality_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/fix-plan")
+def dataset2_staging_fix_plan(payload: Dataset2StagingFixPlanInput | None = None) -> dict:
+    payload = payload or Dataset2StagingFixPlanInput()
+    return Dataset2TrainingReadinessService().staging_fix_plan(
+        quality_review_id=payload.quality_review_id,
+        planned_by=payload.planned_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/fix-plans")
+def dataset2_staging_fix_plans(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_fix_plans(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])

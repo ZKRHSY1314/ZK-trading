@@ -1419,6 +1419,27 @@
           </span>
           <small>review payloads store gate evidence, not record bodies</small>
         </div>
+        <div v-if="dataset2StagingFixPlan" class="report">
+          <strong>Dataset2 Freeze Fix Plan / {{ dataset2StagingFixPlan.status }}</strong>
+          <span>
+            event {{ dataset2StagingFixPlan.event_id }} /
+            actions {{ dataset2StagingFixPlan.summary.action_item_count }} /
+            blocked gates {{ dataset2StagingFixPlan.summary.blocked_gate_count }}
+          </span>
+          <span>
+            auto apply {{ dataset2StagingFixPlan.plan.can_be_applied_automatically_now ? "allowed" : "blocked" }} /
+            staging mutation {{ dataset2StagingFixPlan.decision.mutates_staging_records_now ? "yes" : "no" }} /
+            training {{ dataset2StagingFixPlan.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2StagingFixPlan.decision.next_required_action }} / plan only</small>
+        </div>
+        <div v-if="dataset2StagingFixPlans.length" class="report">
+          <strong>Dataset2 Fix Plan History / {{ dataset2StagingFixPlans.length }}</strong>
+          <span>
+            {{ dataset2StagingFixPlans.slice(0, 3).map((item) => `#${item.id}:${item.status}:${item.summary.action_item_count}`).join(" / ") }}
+          </span>
+          <small>plans are review-only and do not apply cleanup</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -1443,6 +1464,9 @@
           </button>
           <button data-testid="dataset2-staging-quality-review-button" @click="reviewDataset2StagingQuality" :disabled="dataset2Loading">
             Dataset2 quality review
+          </button>
+          <button data-testid="dataset2-staging-fix-plan-button" @click="planDataset2StagingFixes" :disabled="dataset2Loading">
+            Dataset2 fix plan
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -2018,6 +2042,56 @@ type Dataset2StagingQualityReview = {
     training_freeze_allowed: boolean;
     can_start_training_now: boolean;
     next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2StagingFixPlan = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  quality_review_id?: number;
+  package_id?: string | null;
+  record_count?: number;
+  source_quality_status?: string;
+  action_items: Array<{
+    id: string;
+    gate_name: string;
+    priority: string;
+    execution_mode: string;
+    title: string;
+    acceptance_checks: string[];
+    forbidden_actions: string[];
+    review_only: boolean;
+  }>;
+  summary: {
+    action_item_count: number;
+    blocked_gate_count: number;
+    warning_gate_count: number;
+    manual_action_count: number;
+    automated_action_count: number;
+  };
+  plan: {
+    requires_operator_approval: boolean;
+    can_be_applied_automatically_now: boolean;
+    record_bodies_included: boolean;
+    recommended_sequence: string[];
+  };
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now: boolean;
+    writes_staging_records_now: boolean;
+    writes_learning_samples_now: boolean;
+    mutates_staging_records_now: boolean;
+    training_started_now: boolean;
+    training_freeze_allowed: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  review: {
+    planned_by: string;
+    note?: string | null;
   };
   safety_summary: Record<string, boolean>;
 };
@@ -5558,6 +5632,8 @@ const dataset2StagingRecords = ref<Dataset2StagingRecord[]>([]);
 const dataset2StagingSummary = ref<Dataset2StagingSummary | null>(null);
 const dataset2StagingQualityReview = ref<Dataset2StagingQualityReview | null>(null);
 const dataset2StagingQualityReviews = ref<Dataset2StagingQualityReview[]>([]);
+const dataset2StagingFixPlan = ref<Dataset2StagingFixPlan | null>(null);
+const dataset2StagingFixPlans = ref<Dataset2StagingFixPlan[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -5927,9 +6003,34 @@ async function reviewDataset2StagingQuality() {
       })
     });
     await loadDataset2StagingQualityReviews();
+    await loadDataset2StagingFixPlans();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Dataset2 staging quality review failed";
     dataset2StagingQualityReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function planDataset2StagingFixes() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2StagingQualityReview.value?.event_id) {
+      await reviewDataset2StagingQuality();
+    }
+    dataset2StagingFixPlan.value = await fetchJson<Dataset2StagingFixPlan>("/api/learning/dataset2/staging/fix-plan", {
+      method: "POST",
+      body: JSON.stringify({
+        quality_review_id: dataset2StagingQualityReview.value?.event_id,
+        planned_by: "dashboard",
+        note: "V5.6-P5 review-only freeze fix plan"
+      })
+    });
+    await loadDataset2StagingFixPlans();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 staging fix plan failed";
+    dataset2StagingFixPlan.value = null;
   } finally {
     dataset2Loading.value = false;
   }
@@ -5951,6 +6052,15 @@ async function loadDataset2StagingQualityReviews() {
     dataset2StagingQualityReview.value = dataset2StagingQualityReviews.value[0] ?? dataset2StagingQualityReview.value;
   } catch {
     dataset2StagingQualityReviews.value = [];
+  }
+}
+
+async function loadDataset2StagingFixPlans() {
+  try {
+    dataset2StagingFixPlans.value = await fetchJson<Dataset2StagingFixPlan[]>("/api/learning/dataset2/staging/fix-plans?limit=5");
+    dataset2StagingFixPlan.value = dataset2StagingFixPlans.value[0] ?? dataset2StagingFixPlan.value;
+  } catch {
+    dataset2StagingFixPlans.value = [];
   }
 }
 
@@ -7941,6 +8051,7 @@ onMounted(async () => {
     loadDataset2ImportQueueReviews(),
     loadDataset2Staging(),
     loadDataset2StagingQualityReviews(),
+    loadDataset2StagingFixPlans(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),

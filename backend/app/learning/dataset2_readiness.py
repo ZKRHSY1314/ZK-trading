@@ -60,10 +60,11 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P4"
+    stage = "V5.6-P5"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
+    staging_fix_plan_event_type = "dataset2_staging_fix_plan"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -688,6 +689,131 @@ class Dataset2TrainingReadinessService:
             )
         return reviews
 
+    def staging_fix_plan(
+        self,
+        quality_review_id: int | None = None,
+        planned_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        quality_review = self._quality_review_by_id(store, quality_review_id) if quality_review_id else self._latest_quality_review(store)
+        if quality_review is None:
+            return {
+                "schema_version": "dataset2_staging_fix_plan.v1",
+                "stage": self.stage,
+                "status": "fix_plan_blocked_missing_quality_review",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "quality_review_id": quality_review_id,
+                "package_id": None,
+                "action_items": [],
+                "summary": {
+                    "action_item_count": 0,
+                    "blocked_gate_count": 0,
+                    "warning_gate_count": 0,
+                    "manual_action_count": 0,
+                    "automated_action_count": 0,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "training_started_now": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "run_dataset2_staging_quality_review_before_fix_plan",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        gates = quality_review.get("gates") or []
+        action_items = self._fix_plan_action_items(quality_review)
+        manual_count = sum(1 for item in action_items if item.get("execution_mode") == "manual_review_required")
+        automated_count = sum(1 for item in action_items if item.get("execution_mode") == "future_script_after_review")
+        payload = {
+            "schema_version": "dataset2_staging_fix_plan.v1",
+            "stage": self.stage,
+            "status": "fix_plan_ready_for_review" if action_items else "fix_plan_not_required",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "quality_review_id": quality_review.get("id"),
+            "package_id": quality_review.get("package_id"),
+            "record_count": quality_review.get("record_count", 0),
+            "source_quality_status": quality_review.get("status"),
+            "source_summary": quality_review.get("summary", {}),
+            "action_items": action_items,
+            "summary": {
+                "action_item_count": len(action_items),
+                "blocked_gate_count": sum(1 for gate in gates if gate.get("status") == "blocked"),
+                "warning_gate_count": sum(1 for gate in gates if gate.get("status") == "warning"),
+                "manual_action_count": manual_count,
+                "automated_action_count": automated_count,
+            },
+            "plan": {
+                "requires_operator_approval": True,
+                "can_be_applied_automatically_now": False,
+                "record_bodies_included": False,
+                "recommended_sequence": [item["id"] for item in action_items],
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": "review_fix_plan_then_build_separate_approved_cleanup_stage",
+            },
+            "review": {
+                "planned_by": planned_by or "operator",
+                "note": note,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (self.staging_fix_plan_event_type, json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_fix_plans(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_fix_plan_event_type, max(1, min(limit, 100))),
+        )
+        plans: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            plans.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return plans
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -789,6 +915,152 @@ class Dataset2TrainingReadinessService:
             """
         )
         return str(row["package_id"]) if row and row.get("package_id") else None
+
+    def _quality_review_by_id(self, store: SQLiteStore, review_id: int | None) -> dict[str, Any] | None:
+        if review_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_quality_review_event_type, review_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_quality_review(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_quality_review_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _event_payload(self, row: dict[str, Any]) -> dict[str, Any]:
+        payload = json.loads(row.get("payload_json") or "{}")
+        return {
+            "id": row["id"],
+            "event_type": row["event_type"],
+            "created_at": row["created_at"],
+            **payload,
+        }
+
+    def _fix_plan_action_items(self, quality_review: dict[str, Any]) -> list[dict[str, Any]]:
+        counts = quality_review.get("counts") or {}
+        summary = quality_review.get("summary") or {}
+        gates = quality_review.get("gates") or []
+        items: list[dict[str, Any]] = []
+        for gate in gates:
+            if gate.get("status") == "passed":
+                continue
+            name = str(gate.get("name") or "unknown_gate")
+            if name == "quality_flags_cleared":
+                items.append(
+                    self._fix_item(
+                        name,
+                        "P0",
+                        "manual_review_required",
+                        "Review and clear staged quality flags before any training freeze.",
+                        {
+                            "quality_flags": counts.get("quality_flags", {}),
+                            "cleanup_operations": counts.get("cleanup_operations", {}),
+                        },
+                        [
+                            "Every quality flag is either corrected in a later approved stage or explicitly accepted with reviewer evidence.",
+                            "No source dataset file is modified by this plan.",
+                        ],
+                    )
+                )
+            elif name == "historical_outcomes_complete":
+                items.append(
+                    self._fix_item(
+                        name,
+                        "P0",
+                        "manual_review_required",
+                        "Backfill or join dated historical outcome fields for staged records.",
+                        {"missing_historical_count": summary.get("missing_historical_count", 0)},
+                        [
+                            "Missing stock/date/entry/exit/forward-return/MAE/MFE/benchmark fields are resolved or records are quarantined.",
+                            "Outcome joins are validated before promotion to any training table.",
+                        ],
+                    )
+                )
+            elif name == "split_coverage":
+                items.append(
+                    self._fix_item(
+                        name,
+                        "P0",
+                        "future_script_after_review",
+                        "Create a deterministic time-aware train/validation or train/test split proposal.",
+                        {"splits": counts.get("splits", {})},
+                        [
+                            "Out-of-sample split exists and is reproducible.",
+                            "Split policy is recorded before any training freeze.",
+                        ],
+                    )
+                )
+            elif name == "label_support":
+                items.append(
+                    self._fix_item(
+                        name,
+                        "P1",
+                        "manual_review_required",
+                        "Review low-support action labels and decide weighting, consolidation, or sample expansion.",
+                        {"low_support_label_count": summary.get("low_support_label_count", 0), "action_labels": counts.get("action_labels", {})},
+                        [
+                            "Low-support labels have a documented weighting/consolidation decision.",
+                            "Classifier target distribution is reviewed before training.",
+                        ],
+                    )
+                )
+            else:
+                items.append(
+                    self._fix_item(
+                        name,
+                        "P1" if gate.get("status") == "warning" else "P0",
+                        "manual_review_required",
+                        f"Resolve gate `{name}` before training freeze.",
+                        {"gate": gate},
+                        ["Gate status is passed or explicitly deferred with reviewer evidence."],
+                    )
+                )
+        return items
+
+    def _fix_item(
+        self,
+        gate_name: str,
+        priority: str,
+        execution_mode: str,
+        title: str,
+        evidence: dict[str, Any],
+        acceptance_checks: list[str],
+    ) -> dict[str, Any]:
+        item_id = self._stable_hash({"gate": gate_name, "priority": priority, "title": title})[:16]
+        return {
+            "id": f"dataset2_fix_{item_id}",
+            "gate_name": gate_name,
+            "priority": priority,
+            "execution_mode": execution_mode,
+            "title": title,
+            "evidence": evidence,
+            "acceptance_checks": acceptance_checks,
+            "forbidden_actions": [
+                "modify_dataset2_source_files",
+                "write_learning_samples",
+                "start_training",
+                "create_export_file",
+                "enable_live_trading",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
 
     def _staging_row(self, row: dict[str, Any]) -> dict[str, Any]:
         row = dict(row)

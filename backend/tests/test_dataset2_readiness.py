@@ -89,7 +89,7 @@ def test_dataset2_readiness_blocks_unclean_training_data(tmp_path):
 
     data = Dataset2TrainingReadinessService().readiness(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P4"
+    assert data["stage"] == "V5.6-P5"
     assert data["status"] == "training_blocked_cleanup_required"
     assert data["quality"]["invalid_risk_level_count"] == 1
     assert data["quality"]["stringified_list_item_count"] == 1
@@ -140,7 +140,7 @@ def test_dataset2_cleanup_package_summarizes_review_actions_without_writes(tmp_p
 
     data = Dataset2TrainingReadinessService().cleanup_package(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P4"
+    assert data["stage"] == "V5.6-P5"
     assert data["status"] == "cleanup_package_ready_for_review"
     assert len(data["package_id"]) == 64
     assert len(data["normalized_records_hash"]) == 64
@@ -183,7 +183,7 @@ def test_dataset2_import_queue_review_records_metadata_only(tmp_path, test_db):
         note="metadata only",
     )
 
-    assert data["stage"] == "V5.6-P4"
+    assert data["stage"] == "V5.6-P5"
     assert data["status"] == "import_queue_review_recorded"
     assert isinstance(data["event_id"], int)
     assert data["decision"]["writes_existing_event_now"] is True
@@ -231,7 +231,7 @@ def test_dataset2_staging_import_requires_review_and_avoids_training_tables(tmp_
         note="stage reviewed records only",
     )
 
-    assert imported["stage"] == "V5.6-P4"
+    assert imported["stage"] == "V5.6-P5"
     assert imported["status"] == "staging_import_recorded"
     assert imported["imported_count"] == 2
     assert imported["review_event_id"] == review["event_id"]
@@ -279,7 +279,7 @@ def test_dataset2_staging_quality_review_blocks_training_freeze(tmp_path, test_d
         note="freeze gate review",
     )
 
-    assert quality["stage"] == "V5.6-P4"
+    assert quality["stage"] == "V5.6-P5"
     assert quality["status"] == "training_freeze_blocked"
     assert isinstance(quality["event_id"], int)
     assert quality["record_count"] == 2
@@ -297,6 +297,55 @@ def test_dataset2_staging_quality_review_blocks_training_freeze(tmp_path, test_d
     reviews = service.list_staging_quality_reviews(limit=5)
     assert reviews[0]["id"] == quality["event_id"]
     assert reviews[0]["package_id"] == imported["package_id"]
+
+
+def test_dataset2_staging_fix_plan_uses_quality_review_without_mutation(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(pattern_id="FIX_PLAN_001", risk_level="medium_high", split_tag="train"),
+            _record(pattern_id="FIX_PLAN_002", action_label="RISK_ALERT", risk_level="high", split_tag="train"),
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+
+    missing = service.staging_fix_plan(quality_review_id=999999, planned_by="tester")
+    assert missing["status"] == "fix_plan_blocked_missing_quality_review"
+    assert missing["decision"]["writes_existing_event_now"] is False
+    assert missing["decision"]["training_started_now"] is False
+
+    review = service.create_import_queue_review(source_dir=str(pack), limit=10, reviewed_by="tester")
+    imported = service.import_reviewed_to_staging(
+        source_dir=str(pack),
+        limit=10,
+        review_event_id=review["event_id"],
+        imported_by="tester",
+    )
+    quality = service.staging_quality_review(package_id=imported["package_id"], reviewed_by="tester")
+    plan = service.staging_fix_plan(
+        quality_review_id=quality["event_id"],
+        planned_by="tester",
+        note="plan only",
+    )
+
+    assert plan["stage"] == "V5.6-P5"
+    assert plan["status"] == "fix_plan_ready_for_review"
+    assert isinstance(plan["event_id"], int)
+    assert plan["quality_review_id"] == quality["event_id"]
+    assert plan["summary"]["action_item_count"] >= 1
+    assert plan["plan"]["can_be_applied_automatically_now"] is False
+    assert plan["plan"]["record_bodies_included"] is False
+    assert plan["decision"]["writes_staging_records_now"] is False
+    assert plan["decision"]["writes_learning_samples_now"] is False
+    assert plan["decision"]["mutates_staging_records_now"] is False
+    assert plan["decision"]["training_started_now"] is False
+    assert plan["decision"]["can_start_training_now"] is False
+    assert all(item["review_only"] is True for item in plan["action_items"])
+    assert any(item["gate_name"] == "split_coverage" for item in plan["action_items"])
+
+    plans = service.list_staging_fix_plans(limit=5)
+    assert plans[0]["id"] == plan["event_id"]
+    assert plans[0]["review"]["planned_by"] == "tester"
 
 
 def test_dataset2_readiness_api_smoke(client, tmp_path):
@@ -321,6 +370,11 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
         json={"package_id": staging.json().get("package_id"), "reviewed_by": "api-test"},
     )
     quality_reviews = client.get("/api/learning/dataset2/staging/quality-reviews", params={"limit": 3})
+    fix_plan = client.post(
+        "/api/learning/dataset2/staging/fix-plan",
+        json={"quality_review_id": quality.json().get("event_id"), "planned_by": "api-test"},
+    )
+    fix_plans = client.get("/api/learning/dataset2/staging/fix-plans", params={"limit": 3})
 
     assert readiness.status_code == 200
     assert preview.status_code == 200
@@ -332,6 +386,8 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert staging_summary.status_code == 200
     assert quality.status_code == 200
     assert quality_reviews.status_code == 200
+    assert fix_plan.status_code == 200
+    assert fix_plans.status_code == 200
     assert readiness.json()["decision"]["can_start_training_now"] is False
     assert preview.json()["preview_count"] == 1
     assert preview.json()["safety_summary"]["allow_live_order"] is False
@@ -346,3 +402,7 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert quality.json()["decision"]["training_started_now"] is False
     assert quality.json()["decision"]["writes_learning_samples_now"] is False
     assert quality_reviews.json()[0]["review"]["reviewed_by"] == "api-test"
+    assert fix_plan.json()["decision"]["training_started_now"] is False
+    assert fix_plan.json()["decision"]["writes_learning_samples_now"] is False
+    assert fix_plan.json()["plan"]["can_be_applied_automatically_now"] is False
+    assert fix_plans.json()[0]["review"]["planned_by"] == "api-test"
