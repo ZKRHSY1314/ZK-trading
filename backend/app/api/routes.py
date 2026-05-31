@@ -84,6 +84,10 @@ class ScreenCapturePreflightInput(BaseModel):
     target_window_title: str | None = None
 
 
+class ScreenCaptureStubInput(BaseModel):
+    target_window_title: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -750,6 +754,14 @@ def screen_monitoring_capture_preflight(input_data: ScreenCapturePreflightInput 
 
     payload = input_data or ScreenCapturePreflightInput()
     return ScreenMonitoringService().capture_preflight(target_window_title=payload.target_window_title)
+
+
+@router.post("/screen-monitoring/capture-stub")
+def screen_monitoring_capture_stub(input_data: ScreenCaptureStubInput | None = None) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenCaptureStubInput()
+    return ScreenMonitoringService().capture_harmless_window_stub(target_window_title=payload.target_window_title)
 
 
 @router.post("/data/daily-bars/refresh")

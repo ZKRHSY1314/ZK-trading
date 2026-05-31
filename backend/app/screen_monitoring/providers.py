@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -33,6 +34,9 @@ class ScreenCaptureProvider(Protocol):
     def capture_preflight(self, target_window_title: str | None = None) -> dict[str, Any]:
         ...
 
+    def capture_harmless_window_stub(self, target_window_title: str | None = None) -> dict[str, Any]:
+        ...
+
 
 class DisabledScreenCaptureProvider:
     name = "disabled"
@@ -47,6 +51,7 @@ class DisabledScreenCaptureProvider:
             "configured": False,
             "capture_supported": False,
             "capture_preflight_supported": True,
+            "capture_stub_supported": False,
             "ocr_supported": False,
             "fixture_replay_supported": False,
             "last_error": "No screen capture provider is enabled.",
@@ -69,6 +74,12 @@ class DisabledScreenCaptureProvider:
             configured=False,
         )
 
+    def capture_harmless_window_stub(self, target_window_title: str | None = None) -> dict[str, Any]:
+        return _capture_stub_result(
+            self.capture_preflight(target_window_title=target_window_title),
+            artifact_status="not_created",
+        )
+
 
 class FixtureScreenCaptureProvider:
     name = "fixture"
@@ -83,6 +94,7 @@ class FixtureScreenCaptureProvider:
             "configured": True,
             "capture_supported": False,
             "capture_preflight_supported": True,
+            "capture_stub_supported": False,
             "ocr_supported": False,
             "fixture_replay_supported": True,
             "last_error": None,
@@ -128,6 +140,12 @@ class FixtureScreenCaptureProvider:
             configured=True,
         )
 
+    def capture_harmless_window_stub(self, target_window_title: str | None = None) -> dict[str, Any]:
+        return _capture_stub_result(
+            self.capture_preflight(target_window_title=target_window_title),
+            artifact_status="not_created",
+        )
+
 
 class LocalSafeScreenCaptureProvider:
     name = "local_safe"
@@ -155,6 +173,7 @@ class LocalSafeScreenCaptureProvider:
             "configured": configured,
             "capture_supported": False,
             "capture_preflight_supported": True,
+            "capture_stub_supported": True,
             "ocr_supported": False,
             "fixture_replay_supported": False,
             "last_error": None if configured else "SCREEN_CAPTURE_ALLOW_REAL_CAPTURE and SCREEN_CAPTURE_ALLOWED_WINDOWS are required.",
@@ -231,6 +250,12 @@ class LocalSafeScreenCaptureProvider:
             allowed_windows=self.allowed_windows,
         )
 
+    def capture_harmless_window_stub(self, target_window_title: str | None = None) -> dict[str, Any]:
+        preflight = self.capture_preflight(target_window_title=target_window_title)
+        if not preflight.get("capture_would_be_allowed"):
+            return _capture_stub_result(preflight, artifact_status="blocked")
+        return _capture_stub_result(preflight, artifact_status="stub_created")
+
 
 FIXTURES: dict[str, dict[str, Any]] = {
     "trading_client_online": {
@@ -282,6 +307,37 @@ def _preflight_result(
         "simulation_only": True,
         "live_trading_enabled": False,
         **extra,
+    }
+
+
+def _capture_stub_result(preflight: dict[str, Any], artifact_status: str) -> dict[str, Any]:
+    artifact_ref = None
+    if artifact_status == "stub_created":
+        seed = "|".join(
+            [
+                str(preflight.get("provider") or "unknown"),
+                str(preflight.get("target_window_title") or ""),
+                datetime.now().isoformat(timespec="seconds"),
+            ]
+        )
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+        artifact_ref = f"artifact://screen_capture_stub/{digest}"
+    return {
+        "status": "captured_stub" if artifact_status == "stub_created" else "blocked",
+        "provider": preflight.get("provider"),
+        "target_window_title": preflight.get("target_window_title"),
+        "artifact_status": artifact_status,
+        "artifact_ref": artifact_ref,
+        "preflight": preflight,
+        "real_screen_capture": False,
+        "pixel_data_stored": False,
+        "ocr_executed": False,
+        "redaction_applied": artifact_status == "stub_created",
+        "redaction_required": True,
+        "operator_review_required": True,
+        "review_only": True,
+        "simulation_only": True,
+        "live_trading_enabled": False,
     }
 
 

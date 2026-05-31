@@ -115,6 +115,9 @@
 - [ ] V4.5-P2 exposes `/api/screen-monitoring/capture-preflight` for explicit local-safe screenshot readiness checks.
 - [ ] V4.5-P2 blocks capture preflight unless real capture is explicitly enabled and the target window matches a harmless allowlist.
 - [ ] V4.5-P2 always blocks broker/trading windows even if they accidentally match the allowlist, and records the block as audit evidence only.
+- [ ] V4.5-P3 exposes `/api/screen-monitoring/capture-stub` for harmless-window artifact metadata after preflight.
+- [ ] V4.5-P3 records capture stub attempts as screen observations, including blocked attempts, without storing pixels or running OCR.
+- [ ] V4.5-P3 dashboard shows capture stub status, artifact reference, pixel-storage status, OCR status, and live-trading-disabled evidence.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

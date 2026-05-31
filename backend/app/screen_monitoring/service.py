@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P1",
+            "stage": "V4.5-P3",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -46,6 +46,8 @@ class ScreenMonitoringService:
                 "manual_observation",
                 "mock_observation",
                 "fixture_replay",
+                "capture_preflight",
+                "capture_artifact_stub",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -185,6 +187,35 @@ class ScreenMonitoringService:
                 }
             ],
             warnings=warnings,
+            raw_payload=result,
+            artifact_ref=result.get("artifact_ref"),
+        )
+        return {
+            **result,
+            "observation": observation,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def capture_harmless_window_stub(self, target_window_title: str | None = None) -> dict[str, Any]:
+        result = self.provider.capture_harmless_window_stub(target_window_title=target_window_title)
+        preflight = result.get("preflight") or {}
+        created = result.get("artifact_status") == "stub_created"
+        reason = str(preflight.get("reason") or result.get("artifact_status") or "capture_artifact_stub_blocked")
+        observation = self.record_observation(
+            source=f"capture_stub:{result.get('provider', 'unknown')}",
+            app_status="capture_artifact_stub_ready" if created else "capture_artifact_stub_blocked",
+            window_title=target_window_title,
+            confidence=1.0 if created else 0.2,
+            detected_items=[
+                {
+                    "type": "capture_artifact_stub",
+                    "value": result.get("artifact_status"),
+                    "reason": reason,
+                }
+            ],
+            warnings=[] if created else [reason],
             raw_payload=result,
             artifact_ref=result.get("artifact_ref"),
         )

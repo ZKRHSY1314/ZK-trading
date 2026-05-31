@@ -187,7 +187,7 @@
       </article>
 <article class="panel wide">
         <h2>V4.5 屏幕只读监控</h2>
-        <p class="review-only-banner">只记录交易软件屏幕观测证据；不截图实采集、不 OCR、不点击、不输入、不下单。</p>
+        <p class="review-only-banner">只记录屏幕观测证据；不读取真实像素、不 OCR、不点击、不输入、不下单。</p>
         <div class="actions">
           <button data-testid="mock-screen-observation-button" @click="recordMockScreenObservation" :disabled="screenMonitoringLoading">
             {{ screenMonitoringLoading ? "记录中" : "记录只读观测样本" }}
@@ -197,6 +197,9 @@
           </button>
           <button data-testid="screen-preflight-button" @click="runScreenCapturePreflight" :disabled="screenMonitoringLoading">
             截图预检
+          </button>
+          <button data-testid="screen-capture-stub-button" @click="runScreenCaptureStub" :disabled="screenMonitoringLoading">
+            生成截图 Artifact Stub
           </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
@@ -234,6 +237,11 @@
             <strong>Capture Preflight / {{ screenPreflightResult.status }}</strong>
             <span>{{ screenPreflightResult.target_window_title ?? "未指定窗口" }} / {{ screenPreflightResult.reason }}</span>
             <small>允许 {{ screenPreflightResult.capture_would_be_allowed ? "是" : "否" }} / 真实截图 {{ screenPreflightResult.real_screen_capture ? "是" : "否" }} / OCR {{ screenPreflightResult.ocr_executed ? "是" : "否" }}</small>
+          </div>
+          <div v-if="screenCaptureStubResult" class="score-item">
+            <strong>Capture Stub / {{ screenCaptureStubResult.status }}</strong>
+            <span>{{ screenCaptureStubResult.artifact_status }} / {{ screenCaptureStubResult.artifact_ref ?? "未生成 artifact" }}</span>
+            <small>像素保存 {{ screenCaptureStubResult.pixel_data_stored ? "是" : "否" }} / 真实截图 {{ screenCaptureStubResult.real_screen_capture ? "是" : "否" }} / OCR {{ screenCaptureStubResult.ocr_executed ? "是" : "否" }}</small>
           </div>
           <div v-if="screenObservationResult" class="score-item">
             <strong>Latest Observation / {{ screenObservationResult.app_status }}</strong>
@@ -1651,6 +1659,7 @@ type ScreenProviderCapabilities = {
   configured: boolean;
   capture_supported: boolean;
   capture_preflight_supported: boolean;
+  capture_stub_supported?: boolean;
   ocr_supported: boolean;
   fixture_replay_supported: boolean;
   last_error?: string | null;
@@ -1725,6 +1734,25 @@ type ScreenPreflightResult = {
   real_screen_capture: boolean;
   ocr_executed: boolean;
   artifact_ref?: string | null;
+  redaction_required: boolean;
+  operator_review_required: boolean;
+  observation: ScreenObservation;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type ScreenCaptureStubResult = {
+  status: string;
+  provider: string;
+  target_window_title?: string | null;
+  artifact_status: string;
+  artifact_ref?: string | null;
+  preflight: Record<string, any>;
+  real_screen_capture: boolean;
+  pixel_data_stored: boolean;
+  ocr_executed: boolean;
+  redaction_applied: boolean;
   redaction_required: boolean;
   operator_review_required: boolean;
   observation: ScreenObservation;
@@ -1960,6 +1988,7 @@ const screenObservations = ref<ScreenObservation[]>([]);
 const screenObservationResult = ref<ScreenObservation | null>(null);
 const screenFixtureReplayResult = ref<ScreenFixtureReplayResult | null>(null);
 const screenPreflightResult = ref<ScreenPreflightResult | null>(null);
+const screenCaptureStubResult = ref<ScreenCaptureStubResult | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -2956,6 +2985,27 @@ async function runScreenCapturePreflight() {
     await loadScreenMonitoring();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "屏幕截图预检失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function runScreenCaptureStub() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenCaptureStubResult.value = await fetchJson<ScreenCaptureStubResult>(
+      "/api/screen-monitoring/capture-stub",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_window_title: "Untitled - Notepad" })
+      }
+    );
+    screenObservationResult.value = screenCaptureStubResult.value.observation;
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "截图 artifact stub 生成失败";
   } finally {
     screenMonitoringLoading.value = false;
   }
