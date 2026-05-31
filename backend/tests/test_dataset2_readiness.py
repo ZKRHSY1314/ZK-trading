@@ -89,7 +89,7 @@ def test_dataset2_readiness_blocks_unclean_training_data(tmp_path):
 
     data = Dataset2TrainingReadinessService().readiness(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P6"
+    assert data["stage"] == "V5.6-P7"
     assert data["status"] == "training_blocked_cleanup_required"
     assert data["quality"]["invalid_risk_level_count"] == 1
     assert data["quality"]["stringified_list_item_count"] == 1
@@ -140,7 +140,7 @@ def test_dataset2_cleanup_package_summarizes_review_actions_without_writes(tmp_p
 
     data = Dataset2TrainingReadinessService().cleanup_package(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P6"
+    assert data["stage"] == "V5.6-P7"
     assert data["status"] == "cleanup_package_ready_for_review"
     assert len(data["package_id"]) == 64
     assert len(data["normalized_records_hash"]) == 64
@@ -183,7 +183,7 @@ def test_dataset2_import_queue_review_records_metadata_only(tmp_path, test_db):
         note="metadata only",
     )
 
-    assert data["stage"] == "V5.6-P6"
+    assert data["stage"] == "V5.6-P7"
     assert data["status"] == "import_queue_review_recorded"
     assert isinstance(data["event_id"], int)
     assert data["decision"]["writes_existing_event_now"] is True
@@ -231,7 +231,7 @@ def test_dataset2_staging_import_requires_review_and_avoids_training_tables(tmp_
         note="stage reviewed records only",
     )
 
-    assert imported["stage"] == "V5.6-P6"
+    assert imported["stage"] == "V5.6-P7"
     assert imported["status"] == "staging_import_recorded"
     assert imported["imported_count"] == 2
     assert imported["review_event_id"] == review["event_id"]
@@ -279,7 +279,7 @@ def test_dataset2_staging_quality_review_blocks_training_freeze(tmp_path, test_d
         note="freeze gate review",
     )
 
-    assert quality["stage"] == "V5.6-P6"
+    assert quality["stage"] == "V5.6-P7"
     assert quality["status"] == "training_freeze_blocked"
     assert isinstance(quality["event_id"], int)
     assert quality["record_count"] == 2
@@ -328,7 +328,7 @@ def test_dataset2_staging_fix_plan_uses_quality_review_without_mutation(tmp_path
         note="plan only",
     )
 
-    assert plan["stage"] == "V5.6-P6"
+    assert plan["stage"] == "V5.6-P7"
     assert plan["status"] == "fix_plan_ready_for_review"
     assert isinstance(plan["event_id"], int)
     assert plan["quality_review_id"] == quality["event_id"]
@@ -388,12 +388,12 @@ def test_dataset2_staging_fix_plan_approval_and_preflight_are_metadata_only(tmp_
         note="preflight only",
     )
 
-    assert approval["stage"] == "V5.6-P6"
+    assert approval["stage"] == "V5.6-P7"
     assert approval["status"] == "fix_plan_approved_for_preflight"
     assert approval["decision"]["approval_allows_fix_application_now"] is False
     assert approval["decision"]["can_generate_preflight_now"] is True
     assert approval["decision"]["writes_learning_samples_now"] is False
-    assert preflight["stage"] == "V5.6-P6"
+    assert preflight["stage"] == "V5.6-P7"
     assert preflight["status"] == "fix_preflight_ready_for_manual_execution"
     assert preflight["summary"]["check_count"] >= 1
     assert preflight["summary"]["record_mutation_count"] == 0
@@ -407,6 +407,65 @@ def test_dataset2_staging_fix_plan_approval_and_preflight_are_metadata_only(tmp_
     preflights = service.list_staging_fix_preflights(limit=5)
     assert approvals[0]["id"] == approval["event_id"]
     assert preflights[0]["id"] == preflight["event_id"]
+
+
+def test_dataset2_cleanup_execution_spec_is_review_only(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(pattern_id="EXEC_SPEC_001", risk_level="medium_high", split_tag="train"),
+            _record(pattern_id="EXEC_SPEC_002", action_label="RISK_ALERT", risk_level="high", split_tag="train"),
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+
+    missing = service.staging_cleanup_execution_spec(preflight_event_id=999999, specified_by="tester")
+    assert missing["status"] == "execution_spec_blocked_missing_preflight"
+    assert missing["decision"]["writes_existing_event_now"] is False
+    assert missing["decision"]["cleanup_executed_now"] is False
+
+    review = service.create_import_queue_review(source_dir=str(pack), limit=10, reviewed_by="tester")
+    imported = service.import_reviewed_to_staging(
+        source_dir=str(pack),
+        limit=10,
+        review_event_id=review["event_id"],
+        imported_by="tester",
+    )
+    quality = service.staging_quality_review(package_id=imported["package_id"], reviewed_by="tester")
+    plan = service.staging_fix_plan(quality_review_id=quality["event_id"], planned_by="tester")
+    approval = service.approve_staging_fix_plan(
+        fix_plan_event_id=plan["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_preflight",
+    )
+    preflight = service.staging_fix_preflight(approval_event_id=approval["event_id"], requested_by="tester")
+    spec = service.staging_cleanup_execution_spec(
+        preflight_event_id=preflight["event_id"],
+        specified_by="tester",
+        note="spec only",
+    )
+
+    assert spec["stage"] == "V5.6-P7"
+    assert spec["status"] == "cleanup_execution_spec_ready_for_review"
+    assert isinstance(spec["event_id"], int)
+    assert spec["preflight_event_id"] == preflight["event_id"]
+    assert spec["summary"]["step_count"] >= 1
+    assert spec["summary"]["record_body_count"] == 0
+    assert spec["spec"]["can_execute_now"] is False
+    assert spec["spec"]["contains_executable_code"] is False
+    assert spec["spec"]["sql_included"] is False
+    assert spec["spec"]["record_bodies_included"] is False
+    assert spec["decision"]["execution_spec_can_be_applied_now"] is False
+    assert spec["decision"]["cleanup_executed_now"] is False
+    assert spec["decision"]["mutates_staging_records_now"] is False
+    assert spec["decision"]["writes_learning_samples_now"] is False
+    assert spec["decision"]["training_started_now"] is False
+    assert any(step["name"] == "deterministic_split_assignment_spec" for step in spec["execution_steps"])
+    assert all("write_learning_samples" in step["forbidden_actions"] for step in spec["execution_steps"])
+
+    specs = service.list_staging_cleanup_execution_specs(limit=5)
+    assert specs[0]["id"] == spec["event_id"]
+    assert specs[0]["review"]["specified_by"] == "tester"
 
 
 def test_dataset2_readiness_api_smoke(client, tmp_path):
@@ -450,6 +509,11 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
         json={"approval_event_id": approval.json().get("event_id"), "requested_by": "api-test"},
     )
     preflights = client.get("/api/learning/dataset2/staging/fix-preflights", params={"limit": 3})
+    execution_spec = client.post(
+        "/api/learning/dataset2/staging/cleanup-execution-spec",
+        json={"preflight_event_id": preflight.json().get("event_id"), "specified_by": "api-test"},
+    )
+    execution_specs = client.get("/api/learning/dataset2/staging/cleanup-execution-specs", params={"limit": 3})
 
     assert readiness.status_code == 200
     assert preview.status_code == 200
@@ -467,6 +531,8 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert approvals.status_code == 200
     assert preflight.status_code == 200
     assert preflights.status_code == 200
+    assert execution_spec.status_code == 200
+    assert execution_specs.status_code == 200
     assert readiness.json()["decision"]["can_start_training_now"] is False
     assert preview.json()["preview_count"] == 1
     assert preview.json()["safety_summary"]["allow_live_order"] is False
@@ -491,3 +557,7 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert preflight.json()["decision"]["fixes_applied_now"] is False
     assert preflight.json()["decision"]["writes_learning_samples_now"] is False
     assert preflights.json()[0]["request"]["requested_by"] == "api-test"
+    assert execution_spec.json()["spec"]["can_execute_now"] is False
+    assert execution_spec.json()["decision"]["cleanup_executed_now"] is False
+    assert execution_spec.json()["decision"]["writes_learning_samples_now"] is False
+    assert execution_specs.json()[0]["review"]["specified_by"] == "api-test"

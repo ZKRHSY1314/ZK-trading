@@ -1466,6 +1466,20 @@
           </span>
           <small>{{ dataset2StagingFixPreflight.decision.next_required_action }}</small>
         </div>
+        <div v-if="dataset2CleanupExecutionSpec" class="report">
+          <strong>Dataset2 Cleanup Execution Spec / {{ dataset2CleanupExecutionSpec.status }}</strong>
+          <span>
+            event {{ dataset2CleanupExecutionSpec.event_id }} /
+            steps {{ dataset2CleanupExecutionSpec.summary.step_count }} /
+            source blocked {{ dataset2CleanupExecutionSpec.summary.blocked_source_check_count }}
+          </span>
+          <span>
+            executable code {{ dataset2CleanupExecutionSpec.spec.contains_executable_code ? "yes" : "no" }} /
+            can execute {{ dataset2CleanupExecutionSpec.spec.can_execute_now ? "yes" : "no" }} /
+            training {{ dataset2CleanupExecutionSpec.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2CleanupExecutionSpec.decision.next_required_action }}</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -1499,6 +1513,9 @@
           </button>
           <button data-testid="dataset2-staging-fix-preflight-button" @click="preflightDataset2StagingFixes" :disabled="dataset2Loading">
             Dataset2 fix preflight
+          </button>
+          <button data-testid="dataset2-cleanup-execution-spec-button" @click="specDataset2CleanupExecution" :disabled="dataset2Loading">
+            Dataset2 execution spec
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -2187,6 +2204,57 @@ type Dataset2StagingFixPreflight = {
     training_started_now: boolean;
     can_start_training_now: boolean;
     next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2CleanupExecutionSpec = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  preflight_event_id?: number | null;
+  approval_event_id?: number | null;
+  fix_plan_event_id?: number | null;
+  execution_steps: Array<{
+    id: string;
+    name: string;
+    execution_mode: string;
+    source_check_status?: string;
+    forbidden_actions: string[];
+    review_only: boolean;
+  }>;
+  summary: {
+    step_count: number;
+    blocked_source_check_count: number;
+    machine_assisted_step_count: number;
+    manual_step_count: number;
+    record_body_count: number;
+  };
+  spec: {
+    requires_operator_approval: boolean;
+    can_execute_now: boolean;
+    contains_executable_code: boolean;
+    sql_included: boolean;
+    record_bodies_included: boolean;
+    recommended_sequence: string[];
+  };
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now: boolean;
+    writes_staging_records_now: boolean;
+    writes_learning_samples_now: boolean;
+    mutates_staging_records_now: boolean;
+    cleanup_executed_now: boolean;
+    execution_spec_can_be_applied_now: boolean;
+    can_promote_to_learning_samples_now: boolean;
+    training_started_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  review: {
+    specified_by: string;
+    note?: string | null;
   };
   safety_summary: Record<string, boolean>;
 };
@@ -5733,6 +5801,8 @@ const dataset2StagingFixApproval = ref<Dataset2StagingFixApproval | null>(null);
 const dataset2StagingFixApprovals = ref<Dataset2StagingFixApproval[]>([]);
 const dataset2StagingFixPreflight = ref<Dataset2StagingFixPreflight | null>(null);
 const dataset2StagingFixPreflights = ref<Dataset2StagingFixPreflight[]>([]);
+const dataset2CleanupExecutionSpec = ref<Dataset2CleanupExecutionSpec | null>(null);
+const dataset2CleanupExecutionSpecs = ref<Dataset2CleanupExecutionSpec[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -6227,6 +6297,39 @@ async function loadDataset2StagingFixPreflights() {
     dataset2StagingFixPreflight.value = dataset2StagingFixPreflights.value[0] ?? dataset2StagingFixPreflight.value;
   } catch {
     dataset2StagingFixPreflights.value = [];
+  }
+}
+
+async function specDataset2CleanupExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2StagingFixPreflight.value?.event_id && !dataset2StagingFixPreflight.value?.id) {
+      await preflightDataset2StagingFixes();
+    }
+    dataset2CleanupExecutionSpec.value = await fetchJson<Dataset2CleanupExecutionSpec>("/api/learning/dataset2/staging/cleanup-execution-spec", {
+      method: "POST",
+      body: JSON.stringify({
+        preflight_event_id: dataset2StagingFixPreflight.value?.event_id ?? dataset2StagingFixPreflight.value?.id,
+        specified_by: "dashboard",
+        note: "V5.6-P7 review-only cleanup execution spec"
+      })
+    });
+    await loadDataset2CleanupExecutionSpecs();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 cleanup execution spec failed";
+    dataset2CleanupExecutionSpec.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2CleanupExecutionSpecs() {
+  try {
+    dataset2CleanupExecutionSpecs.value = await fetchJson<Dataset2CleanupExecutionSpec[]>("/api/learning/dataset2/staging/cleanup-execution-specs?limit=5");
+    dataset2CleanupExecutionSpec.value = dataset2CleanupExecutionSpecs.value[0] ?? dataset2CleanupExecutionSpec.value;
+  } catch {
+    dataset2CleanupExecutionSpecs.value = [];
   }
 }
 
@@ -8220,6 +8323,7 @@ onMounted(async () => {
     loadDataset2StagingFixPlans(),
     loadDataset2StagingFixApprovals(),
     loadDataset2StagingFixPreflights(),
+    loadDataset2CleanupExecutionSpecs(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),

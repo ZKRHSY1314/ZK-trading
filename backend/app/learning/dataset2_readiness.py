@@ -60,13 +60,14 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P6"
+    stage = "V5.6-P7"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
     staging_fix_plan_event_type = "dataset2_staging_fix_plan"
     staging_fix_plan_approval_event_type = "dataset2_staging_fix_plan_approval"
     staging_fix_preflight_event_type = "dataset2_staging_fix_preflight"
+    staging_cleanup_execution_spec_event_type = "dataset2_staging_cleanup_execution_spec"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -1058,6 +1059,143 @@ class Dataset2TrainingReadinessService:
             )
         return preflights
 
+    def staging_cleanup_execution_spec(
+        self,
+        preflight_event_id: int | None = None,
+        specified_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        preflight = self._fix_preflight_by_id(store, preflight_event_id) if preflight_event_id else self._latest_fix_preflight(store)
+        if preflight is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_execution_spec.v1",
+                "stage": self.stage,
+                "status": "execution_spec_blocked_missing_preflight",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "preflight_event_id": preflight_event_id,
+                "execution_steps": [],
+                "summary": {
+                    "step_count": 0,
+                    "blocked_source_check_count": 0,
+                    "machine_assisted_step_count": 0,
+                    "manual_step_count": 0,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "cleanup_executed_now": False,
+                    "execution_spec_can_be_applied_now": False,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "run_dataset2_staging_fix_preflight_before_execution_spec",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        steps = self._cleanup_execution_steps(preflight)
+        blocked_source_checks = sum(1 for check in preflight.get("preflight_checks") or [] if check.get("status") == "blocked")
+        machine_steps = sum(1 for step in steps if step.get("execution_mode") == "future_reviewed_script")
+        manual_steps = sum(1 for step in steps if step.get("execution_mode") == "manual_operator_action")
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_execution_spec.v1",
+            "stage": self.stage,
+            "status": "cleanup_execution_spec_ready_for_review" if steps else "cleanup_execution_spec_no_steps",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "preflight_event_id": preflight.get("id"),
+            "approval_event_id": preflight.get("approval_event_id"),
+            "fix_plan_event_id": preflight.get("fix_plan_event_id"),
+            "quality_review_id": preflight.get("quality_review_id"),
+            "package_id": preflight.get("package_id"),
+            "source_preflight_status": preflight.get("status"),
+            "source_preflight_summary": preflight.get("summary", {}),
+            "execution_steps": steps,
+            "summary": {
+                "step_count": len(steps),
+                "blocked_source_check_count": blocked_source_checks,
+                "machine_assisted_step_count": machine_steps,
+                "manual_step_count": manual_steps,
+                "record_body_count": 0,
+            },
+            "spec": {
+                "requires_operator_approval": True,
+                "can_execute_now": False,
+                "contains_executable_code": False,
+                "sql_included": False,
+                "record_bodies_included": False,
+                "recommended_sequence": [step["id"] for step in steps],
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "cleanup_executed_now": False,
+                "execution_spec_can_be_applied_now": False,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": "review_execution_spec_then_build_separate_manual_cleanup_application_stage",
+            },
+            "review": {
+                "specified_by": specified_by or "operator",
+                "note": note,
+                "record_bodies_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_execution_spec_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_execution_specs(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_cleanup_execution_spec_event_type, max(1, min(limit, 100))),
+        )
+        specs: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            specs.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return specs
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -1235,6 +1373,32 @@ class Dataset2TrainingReadinessService:
             LIMIT 1
             """,
             (self.staging_fix_plan_approval_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _fix_preflight_by_id(self, store: SQLiteStore, preflight_id: int | None) -> dict[str, Any] | None:
+        if preflight_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_fix_preflight_event_type, preflight_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_fix_preflight(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_fix_preflight_event_type,),
         )
         return self._event_payload(row) if row else None
 
@@ -1448,6 +1612,119 @@ class Dataset2TrainingReadinessService:
             "forbidden_actions": [
                 "modify_dataset2_source_files",
                 "mutate_staging_records",
+                "write_learning_samples",
+                "start_training",
+                "create_export_file",
+                "enable_live_trading",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _cleanup_execution_steps(self, preflight: dict[str, Any]) -> list[dict[str, Any]]:
+        steps: list[dict[str, Any]] = []
+        for check in preflight.get("preflight_checks") or []:
+            name = str(check.get("name") or "unknown_check")
+            if name == "time_aware_split_policy":
+                steps.append(
+                    self._execution_step(
+                        check,
+                        "deterministic_split_assignment_spec",
+                        "future_reviewed_script",
+                        "Create deterministic train/validation split assignments after manual approval.",
+                        {
+                            "sort_keys": ["signal_date", "stock_code", "pattern_id"],
+                            "train_ratio": check.get("details", {}).get("train_ratio", 0.7),
+                            "validation_ratio": check.get("details", {}).get("validation_ratio", 0.3),
+                            "writes_staging_records_now": False,
+                        },
+                    )
+                )
+            elif name == "historical_outcome_join_requirements":
+                steps.append(
+                    self._execution_step(
+                        check,
+                        "historical_outcome_join_spec",
+                        "manual_operator_action",
+                        "Prepare reviewed historical outcome source and join keys before any cleanup application.",
+                        {
+                            "required_fields": check.get("details", {}).get("required_fields", sorted(HISTORICAL_OUTCOME_FIELDS)),
+                            "requires_external_reviewed_dataset": True,
+                            "writes_staging_records_now": False,
+                        },
+                    )
+                )
+            elif name == "quality_flag_resolution_requirements":
+                steps.append(
+                    self._execution_step(
+                        check,
+                        "quality_flag_disposition_spec",
+                        "manual_operator_action",
+                        "Decide whether each quality flag should be corrected, accepted with evidence, or quarantined.",
+                        {
+                            "quality_flag_evidence": check.get("details", {}).get("quality_flag_evidence", {}),
+                            "allowed_dispositions": ["correct_later", "accept_with_evidence", "quarantine"],
+                            "writes_staging_records_now": False,
+                        },
+                    )
+                )
+            elif name == "label_support_policy_requirements":
+                steps.append(
+                    self._execution_step(
+                        check,
+                        "label_support_policy_spec",
+                        "manual_operator_action",
+                        "Choose class weighting, label consolidation, or sample expansion policy before training freeze.",
+                        {
+                            "allowed_future_options": check.get("details", {}).get("allowed_future_options", []),
+                            "label_evidence": check.get("details", {}).get("label_evidence", {}),
+                            "writes_staging_records_now": False,
+                        },
+                    )
+                )
+            else:
+                steps.append(
+                    self._execution_step(
+                        check,
+                        f"{name}_execution_spec",
+                        "manual_operator_action",
+                        f"Review preflight check `{name}` before any cleanup application.",
+                        {
+                            "check_details": check.get("details", {}),
+                            "writes_staging_records_now": False,
+                        },
+                    )
+                )
+        return steps
+
+    def _execution_step(
+        self,
+        check: dict[str, Any],
+        name: str,
+        execution_mode: str,
+        title: str,
+        details: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "id": f"dataset2_execution_{self._stable_hash({'check': check.get('id'), 'name': name})[:16]}",
+            "name": name,
+            "source_preflight_check_id": check.get("id"),
+            "source_check_status": check.get("status"),
+            "gate_name": check.get("gate_name"),
+            "priority": check.get("priority"),
+            "execution_mode": execution_mode,
+            "title": title,
+            "details": details,
+            "acceptance_checks": [
+                *check.get("acceptance_checks", []),
+                "Operator approval is recorded before any cleanup application stage.",
+                "No staging row, source dataset, or training table is modified by this spec.",
+            ],
+            "forbidden_actions": [
+                "execute_sql",
+                "mutate_staging_records",
+                "modify_dataset2_source_files",
                 "write_learning_samples",
                 "start_training",
                 "create_export_file",

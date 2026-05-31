@@ -192,6 +192,12 @@ class Dataset2StagingFixPreflightInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingCleanupExecutionSpecInput(BaseModel):
+    preflight_event_id: int | None = None
+    specified_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -897,6 +903,21 @@ def dataset2_staging_fix_preflight(payload: Dataset2StagingFixPreflightInput | N
 @router.get("/learning/dataset2/staging/fix-preflights")
 def dataset2_staging_fix_preflights(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_fix_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-spec")
+def dataset2_staging_cleanup_execution_spec(payload: Dataset2StagingCleanupExecutionSpecInput | None = None) -> dict:
+    payload = payload or Dataset2StagingCleanupExecutionSpecInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_execution_spec(
+        preflight_event_id=payload.preflight_event_id,
+        specified_by=payload.specified_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-specs")
+def dataset2_staging_cleanup_execution_specs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_execution_specs(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])
