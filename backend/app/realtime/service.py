@@ -66,6 +66,54 @@ class RealtimeMarketService:
             "live_trading_enabled": False,
         }
 
+    def scheduler_plan(self) -> dict[str, Any]:
+        health = self.provider.health()
+        configured = bool(self.provider.configured())
+        cadence = {
+            "workday_trading_hours": [
+                {"time": "10:00", "mode": "realtime-cycle", "reason": "morning momentum and provider health check"},
+                {"time": "13:00", "mode": "realtime-cycle", "reason": "midday trend persistence check"},
+                {"time": "16:00", "mode": "realtime-cycle", "reason": "post-market replay and alert audit"},
+            ],
+            "non_trading_day": [
+                {"time": "20:00", "mode": "potential", "reason": "off-hours candidate discovery remains lower risk"},
+            ],
+            "provider_unconfigured_behavior": "run only as review evidence; do not invent realtime prices",
+        }
+        return {
+            "status": "ready" if configured else "needs_config",
+            "active_provider": health.get("provider"),
+            "provider_status": health.get("status"),
+            "recommended_mode": "realtime-cycle",
+            "recommended_symbols": ["SZ002081", "SZ002115"],
+            "command_examples": [
+                "backend\\.venv\\Scripts\\python.exe backend\\scripts\\automation_loop.py --mode realtime-cycle --symbols SZ002081,SZ002115 --limit 20 --max-cycles 1",
+                "backend\\.venv\\Scripts\\python.exe backend\\scripts\\automation_loop.py --mode realtime-refresh --symbols SZ002081,SZ002115 --limit 20 --max-cycles 1",
+                "backend\\.venv\\Scripts\\python.exe backend\\scripts\\automation_loop.py --mode realtime-monitoring-sync --limit 100 --max-cycles 1",
+            ],
+            "cadence": cadence,
+            "pause_controls": [
+                "Pause the Codex/OS automation that calls realtime-cycle.",
+                "Leave REALTIME_PROVIDER=disabled when no authorized realtime data source is configured.",
+                "Use provider-health and realtime-cycle history before resuming a failed cadence.",
+            ],
+            "degrade_controls": [
+                "fallback_required means review_required, not realtime_ok.",
+                "disabled or needs_config providers must not write fake realtime prices.",
+                "monitoring alerts are review evidence only and never trigger broker/order actions.",
+            ],
+            "forbidden_actions": [
+                "broker_order",
+                "credential_access",
+                "screen_click_trading",
+                "live_auto_trading",
+                "risk_gate_bypass",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
     def provider_health(self) -> list[dict[str, Any]]:
         base = [
             self._health_model(AShareHubRealtimeProvider().health()),

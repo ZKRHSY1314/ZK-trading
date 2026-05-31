@@ -44,6 +44,8 @@ class AutomationSupervisor:
                 "refresh": "simulation-only cached market events",
                 "monitoring_sync": "review-only monitoring alerts from persisted realtime events",
                 "cycle": "scheduler-safe refresh -> monitoring sync -> replay evidence loop",
+                "recommended_cadence": ["10:00", "13:00", "16:00"],
+                "pause_control": "pause the external automation that calls realtime-cycle; do not switch to broker or screen control",
                 "forbidden": ["broker_order", "credential_access", "screen_click_trading", "live_auto_trading"],
             },
             "guardrails": [

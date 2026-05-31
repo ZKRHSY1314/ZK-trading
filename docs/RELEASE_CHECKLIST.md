@@ -95,6 +95,9 @@
 - [ ] V4.0-P3 persists realtime-cycle run evidence with symbols, provider, refresh status, alert counts, replay event count, fallback state, summary JSON, and steps JSON.
 - [ ] V4.0-P3 API smoke covers `/api/realtime/cycles` and `/api/realtime/cycles/latest`.
 - [ ] V4.0-P3 dashboard shows recent realtime-cycle run history without adding broker/order/credential/screen-click controls.
+- [ ] V4.0-P4 exposes `/api/realtime/scheduler-plan` with cadence, CLI commands, pause controls, degradation rules, and forbidden actions.
+- [ ] V4.0-P4 dashboard shows scheduler/runbook metadata without enabling live automation by default.
+- [ ] V4.0-P4 keeps recurring-job enablement outside the backend API; operator must explicitly configure Codex/OS automation.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 12. Desired Workday Schedule Cadence

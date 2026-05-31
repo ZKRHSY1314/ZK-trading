@@ -40,6 +40,7 @@ def test_realtime_capabilities_are_disabled_by_default(test_db):
     service = RealtimeMarketService()
 
     capabilities = service.capabilities()
+    scheduler_plan = service.scheduler_plan()
     health = service.provider_health()
 
     assert capabilities["active_provider"] == "disabled"
@@ -47,6 +48,10 @@ def test_realtime_capabilities_are_disabled_by_default(test_db):
     assert capabilities["simulation_only"] is True
     assert capabilities["live_trading_enabled"] is False
     assert "order_action" in capabilities["forbidden_modes"]
+    assert scheduler_plan["status"] == "needs_config"
+    assert scheduler_plan["recommended_mode"] == "realtime-cycle"
+    assert scheduler_plan["live_trading_enabled"] is False
+    assert "broker_order" in scheduler_plan["forbidden_actions"]
     assert any(item["provider"] == "asharehub" and item["quality_status"] == "needs_config" for item in health)
     assert any(item["provider"] == "akshare_fallback" for item in health)
 
@@ -274,6 +279,7 @@ def test_realtime_api_smoke(client, test_db):
     RealtimeMarketService(provider=MockRealtimeMarketProvider()).ingest_quote(_quote(price=9.8))
 
     capabilities_resp = client.get("/api/realtime/capabilities")
+    scheduler_plan_resp = client.get("/api/realtime/scheduler-plan")
     health_resp = client.get("/api/realtime/provider-health")
     snapshot_resp = client.get("/api/realtime/snapshot/SZ002081")
     events_resp = client.get("/api/realtime/events?symbol=SZ002081&limit=5")
@@ -286,6 +292,7 @@ def test_realtime_api_smoke(client, test_db):
     replay_resp = client.post("/api/realtime/replay?symbol=SZ002081&limit=5")
 
     assert capabilities_resp.status_code == 200
+    assert scheduler_plan_resp.status_code == 200
     assert health_resp.status_code == 200
     assert snapshot_resp.status_code == 200
     assert events_resp.status_code == 200
@@ -297,6 +304,8 @@ def test_realtime_api_smoke(client, test_db):
     assert latest_cycle_resp.status_code == 200
     assert replay_resp.status_code == 200
     assert snapshot_resp.json()["event"]["symbol"] == "SZ002081"
+    assert scheduler_plan_resp.json()["recommended_mode"] == "realtime-cycle"
+    assert scheduler_plan_resp.json()["simulation_only"] is True
     assert events_resp.json()
     assert refresh_resp.json()["live_trading_enabled"] is False
     assert sync_resp.json()["simulation_only"] is True

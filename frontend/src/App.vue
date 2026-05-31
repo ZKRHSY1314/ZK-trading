@@ -94,7 +94,20 @@
           <span>事件 {{ realtimeEvents.length }}</span>
           <span>提醒 {{ realtimeMonitoringSync?.created_alert_count ?? 0 }}</span>
           <span>闭环 {{ realtimeCycleResult?.status ?? "未运行" }}</span>
+          <span>调度 {{ realtimeSchedulerPlan?.status ?? "未加载" }}</span>
           <span>实盘 {{ realtimeCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
+        </div>
+        <div v-if="realtimeSchedulerPlan" class="score-list">
+          <div class="score-item">
+            <strong>Scheduler / {{ realtimeSchedulerPlan.status }}</strong>
+            <span>模式 {{ realtimeSchedulerPlan.recommended_mode }} / 标的 {{ realtimeSchedulerPlan.recommended_symbols.join(", ") }}</span>
+            <small>{{ realtimeSchedulerPlan.cadence.workday_trading_hours.map((item) => item.time).join(" / ") }} / live trading disabled</small>
+          </div>
+          <div class="score-item">
+            <strong>Pause / Degrade</strong>
+            <span>{{ realtimeSchedulerPlan.pause_controls[0] }}</span>
+            <small>{{ realtimeSchedulerPlan.degrade_controls[0] }}</small>
+          </div>
         </div>
         <div v-if="realtimeRefreshResult || realtimeMonitoringSync || realtimeCycleResult" class="score-list">
           <div v-if="realtimeRefreshResult" class="score-item">
@@ -1327,6 +1340,34 @@ type RealtimeCapabilities = {
   live_trading_enabled: boolean;
 };
 
+type RealtimeSchedulerPlan = {
+  status: string;
+  active_provider: string;
+  provider_status: string;
+  recommended_mode: string;
+  recommended_symbols: string[];
+  command_examples: string[];
+  cadence: {
+    workday_trading_hours: Array<{
+      time: string;
+      mode: string;
+      reason: string;
+    }>;
+    non_trading_day: Array<{
+      time: string;
+      mode: string;
+      reason: string;
+    }>;
+    provider_unconfigured_behavior: string;
+  };
+  pause_controls: string[];
+  degrade_controls: string[];
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type RealtimeProviderHealth = {
   provider: string;
   status: string;
@@ -1681,6 +1722,7 @@ const priceReadinessLoading = ref(false);
 const dailyBarCoverage = ref<any[]>([]);
 const dailyBarRefreshLoading = ref(false);
 const realtimeCapabilities = ref<RealtimeCapabilities | null>(null);
+const realtimeSchedulerPlan = ref<RealtimeSchedulerPlan | null>(null);
 const realtimeHealth = ref<RealtimeProviderHealth[]>([]);
 const realtimeSnapshot = ref<RealtimeSnapshot | null>(null);
 const realtimeEvents = ref<RealtimeEvent[]>([]);
@@ -2522,20 +2564,23 @@ async function runDailyBarRefresh() {
 async function loadRealtimeData() {
   realtimeLoading.value = true;
   try {
-    const [capabilitiesData, healthData, snapshotData, eventsData, cycleRunsData] = await Promise.all([
+    const [capabilitiesData, schedulerPlanData, healthData, snapshotData, eventsData, cycleRunsData] = await Promise.all([
       fetchJson<RealtimeCapabilities>("/api/realtime/capabilities"),
+      fetchJson<RealtimeSchedulerPlan>("/api/realtime/scheduler-plan"),
       fetchJson<RealtimeProviderHealth[]>("/api/realtime/provider-health"),
       fetchJson<RealtimeSnapshot>("/api/realtime/snapshot/SZ002081"),
       fetchJson<RealtimeEvent[]>("/api/realtime/events?limit=20"),
       fetchJson<RealtimeCycleRun[]>("/api/realtime/cycles?limit=10")
     ]);
     realtimeCapabilities.value = capabilitiesData;
+    realtimeSchedulerPlan.value = schedulerPlanData;
     realtimeHealth.value = healthData;
     realtimeSnapshot.value = snapshotData;
     realtimeEvents.value = eventsData;
     realtimeCycleRuns.value = cycleRunsData;
   } catch (err) {
     realtimeCapabilities.value = null;
+    realtimeSchedulerPlan.value = null;
     realtimeHealth.value = [];
     realtimeSnapshot.value = null;
     realtimeEvents.value = [];

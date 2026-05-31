@@ -546,6 +546,13 @@ def realtime_capabilities() -> dict:
     return RealtimeMarketService().capabilities()
 
 
+@router.get("/realtime/scheduler-plan")
+def realtime_scheduler_plan() -> dict:
+    from app.realtime.service import RealtimeMarketService
+
+    return RealtimeMarketService().scheduler_plan()
+
+
 @router.get("/realtime/provider-health")
 def realtime_provider_health() -> list[dict]:
     from app.realtime.service import RealtimeMarketService
