@@ -60,8 +60,9 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P2"
+    stage = "V5.6-P3"
     import_queue_event_type = "dataset2_import_queue_review"
+    staging_import_event_type = "dataset2_staging_import"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -334,6 +335,230 @@ class Dataset2TrainingReadinessService:
             )
         return reviews
 
+    def import_reviewed_to_staging(
+        self,
+        source_dir: str | None = None,
+        limit: int = 1000,
+        review_event_id: int | None = None,
+        imported_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        pack = self._locate_pack(source_dir)
+        if pack is None:
+            return self._missing_dataset_response(source_dir)
+
+        safe_limit = max(1, min(limit, 1000))
+        source_path = pack / "dataset" / "all_training_patterns.jsonl"
+        records = self._read_jsonl(source_path, limit=safe_limit)
+        normalized = [self._normalize_record(record) for record in records]
+        source_hash = self._file_hash(source_path)
+        normalized_hash = self._normalized_records_hash(normalized)
+        cleanup_actions = self._cleanup_actions(self._analyze(records))
+        package_id = self._stable_hash(
+            {
+                "source_hash": source_hash,
+                "normalized_hash": normalized_hash,
+                "record_count": len(records),
+                "cleanup_actions": cleanup_actions,
+            }
+        )
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        review = self._matching_import_queue_review(
+            store=store,
+            package_id=package_id,
+            normalized_records_hash=normalized_hash,
+            review_event_id=review_event_id,
+        )
+        if review is None:
+            return {
+                "schema_version": "dataset2_staging_import.v1",
+                "stage": self.stage,
+                "status": "import_blocked_missing_review",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "package_id": package_id,
+                "record_count": len(records),
+                "source_data_hash": source_hash,
+                "normalized_records_hash": normalized_hash,
+                "imported_count": 0,
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "normalized_records_persisted_to_staging": False,
+                    "normalized_records_persisted_to_training": False,
+                    "training_started_now": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "record_dataset2_import_queue_review_before_staging_import",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        now = datetime.now().isoformat(timespec="seconds")
+        with store.connect() as conn:
+            conn.execute("DELETE FROM dataset2_staging_records WHERE package_id = ?", (package_id,))
+            for record in normalized:
+                conn.execute(
+                    """
+                    INSERT INTO dataset2_staging_records (
+                        package_id, source_data_hash, normalized_records_hash,
+                        pattern_id, action_label, risk_level, split_tag, stock_code, signal_date,
+                        normalized_json, quality_flags_json, cleanup_operations_json,
+                        review_event_id, status, imported_by, import_note, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        package_id,
+                        source_hash,
+                        normalized_hash,
+                        str(record.get("pattern_id") or ""),
+                        record.get("action_label"),
+                        record.get("risk_level"),
+                        record.get("split_tag"),
+                        record.get("stock_code"),
+                        record.get("signal_date"),
+                        json.dumps(record, ensure_ascii=False, sort_keys=True, default=str),
+                        json.dumps(record.get("quality_flags") or [], ensure_ascii=False, sort_keys=True, default=str),
+                        json.dumps(record.get("cleanup_operations") or [], ensure_ascii=False, sort_keys=True, default=str),
+                        review["id"],
+                        "staged_review_only",
+                        imported_by or "operator",
+                        note,
+                        now,
+                    ),
+                )
+            payload = {
+                "schema_version": "dataset2_staging_import_event.v1",
+                "stage": self.stage,
+                "status": "staging_import_recorded",
+                "package_id": package_id,
+                "source_data_hash": source_hash,
+                "normalized_records_hash": normalized_hash,
+                "record_count": len(normalized),
+                "review_event_id": review["id"],
+                "imported_by": imported_by or "operator",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (self.staging_import_event_type, json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)),
+            )
+            event_id = int(cursor.lastrowid)
+
+        return {
+            "schema_version": "dataset2_staging_import.v1",
+            "stage": self.stage,
+            "status": "staging_import_recorded",
+            "generated_at": now,
+            "package_id": package_id,
+            "source_data_hash": source_hash,
+            "normalized_records_hash": normalized_hash,
+            "record_count": len(normalized),
+            "imported_count": len(normalized),
+            "review_event_id": review["id"],
+            "staging_import_event_id": event_id,
+            "decision": {
+                "writes_database_now": True,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": True,
+                "writes_learning_samples_now": False,
+                "normalized_records_persisted_to_staging": True,
+                "normalized_records_persisted_to_training": False,
+                "training_started_now": False,
+                "can_import_to_learning_samples_now": False,
+                "can_start_training_now": False,
+                "next_required_action": "review_staging_quality_before_training_freeze",
+            },
+            "safety_summary": self._safety_summary(
+                writes_database_now=True,
+                writes_existing_event_now=True,
+                writes_staging_records_now=True,
+                normalized_records_persisted_to_staging=True,
+            ),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def list_staging_records(self, package_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        params: list[Any] = []
+        where = ""
+        if package_id:
+            where = "WHERE package_id = ?"
+            params.append(package_id)
+        params.append(max(1, min(limit, 100)))
+        rows = store.fetch_all(
+            f"""
+            SELECT *
+            FROM dataset2_staging_records
+            {where}
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        return [self._staging_row(row) for row in rows]
+
+    def staging_summary(self) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        total = store.fetch_one("SELECT COUNT(*) AS count FROM dataset2_staging_records") or {"count": 0}
+        packages = store.fetch_all(
+            """
+            SELECT package_id, COUNT(*) AS record_count, MAX(created_at) AS latest_created_at
+            FROM dataset2_staging_records
+            GROUP BY package_id
+            ORDER BY latest_created_at DESC
+            LIMIT 5
+            """
+        )
+        action_rows = store.fetch_all(
+            """
+            SELECT action_label, COUNT(*) AS count
+            FROM dataset2_staging_records
+            GROUP BY action_label
+            ORDER BY count DESC
+            """
+        )
+        risk_rows = store.fetch_all(
+            """
+            SELECT risk_level, COUNT(*) AS count
+            FROM dataset2_staging_records
+            GROUP BY risk_level
+            ORDER BY count DESC
+            """
+        )
+        learning_count = store.fetch_one("SELECT COUNT(*) AS count FROM learning_samples") or {"count": 0}
+        return {
+            "schema_version": "dataset2_staging_summary.v1",
+            "stage": self.stage,
+            "status": "staging_records_available" if total["count"] else "staging_empty",
+            "record_count": total["count"],
+            "package_count": len(packages),
+            "latest_packages": packages,
+            "action_label_counts": {row["action_label"] or "unknown": row["count"] for row in action_rows},
+            "risk_level_counts": {row["risk_level"] or "unknown": row["count"] for row in risk_rows},
+            "decision": {
+                "writes_database_now": False,
+                "writes_learning_samples_now": False,
+                "learning_sample_count": learning_count["count"],
+                "training_started_now": False,
+                "can_start_training_now": False,
+                "next_required_action": "review_staged_records_before_dataset2_training_freeze",
+            },
+            "safety_summary": self._safety_summary(),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -342,9 +567,9 @@ class Dataset2TrainingReadinessService:
             cwd = Path.cwd()
             candidates.extend(
                 [
-                    cwd.parent / "???2" / "a_share_trading_training_pack_v2",
+                    cwd.parent / "数据集2" / "a_share_trading_training_pack_v2",
                     cwd.parent
-                    / "???2"
+                    / "数据集2"
                     / "a_share_trading_training_pack_v2"
                     / "a_share_trading_training_pack_v2",
                     cwd.parent / "数据集2" / "a_share_trading_training_pack_v2",
@@ -387,6 +612,52 @@ class Dataset2TrainingReadinessService:
         if not path.exists():
             return {}
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _matching_import_queue_review(
+        self,
+        store: SQLiteStore,
+        package_id: str,
+        normalized_records_hash: str,
+        review_event_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        clauses = ["event_type = ?"]
+        params: list[Any] = [self.import_queue_event_type]
+        if review_event_id is not None:
+            clauses.append("id = ?")
+            params.append(review_event_id)
+        rows = store.fetch_all(
+            f"""
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE {' AND '.join(clauses)}
+            ORDER BY id DESC
+            LIMIT 100
+            """,
+            tuple(params),
+        )
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            if (
+                payload.get("package_id") == package_id
+                and payload.get("normalized_records_hash") == normalized_records_hash
+            ):
+                return {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+        return None
+
+    def _staging_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        row = dict(row)
+        row["normalized"] = json.loads(row.pop("normalized_json") or "{}")
+        row["quality_flags"] = json.loads(row.pop("quality_flags_json") or "[]")
+        row["cleanup_operations"] = json.loads(row.pop("cleanup_operations_json") or "[]")
+        row["review_only"] = True
+        row["simulation_only"] = True
+        row["live_trading_enabled"] = settings.enable_live_trading
+        return row
 
     def _analyze(self, records: list[dict[str, Any]]) -> dict[str, Any]:
         action_counts: Counter[str] = Counter()
@@ -760,16 +1031,26 @@ class Dataset2TrainingReadinessService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
-    def _safety_summary(self, writes_existing_event_now: bool = False) -> dict[str, bool]:
+    def _safety_summary(
+        self,
+        writes_database_now: bool = False,
+        writes_existing_event_now: bool = False,
+        writes_staging_records_now: bool = False,
+        normalized_records_persisted_to_staging: bool = False,
+    ) -> dict[str, bool]:
         return {
             "review_only": True,
             "simulation_only": True,
             "training_started_now": False,
-            "writes_database_now": False,
+            "writes_database_now": writes_database_now,
             "writes_existing_event_now": writes_existing_event_now,
+            "writes_staging_records_now": writes_staging_records_now,
+            "writes_learning_samples_now": False,
             "writes_file": False,
             "writes_source_dataset": False,
             "normalized_records_persisted": False,
+            "normalized_records_persisted_to_staging": normalized_records_persisted_to_staging,
+            "normalized_records_persisted_to_training": False,
             "allow_live_order": False,
             "requires_backtest_before_training": True,
             "connects_broker": False,

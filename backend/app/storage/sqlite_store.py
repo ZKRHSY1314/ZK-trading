@@ -348,6 +348,33 @@ CREATE TABLE IF NOT EXISTS learning_samples (
     UNIQUE(source_type, source_id)
 );
 
+CREATE TABLE IF NOT EXISTS dataset2_staging_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    package_id TEXT NOT NULL,
+    source_data_hash TEXT,
+    normalized_records_hash TEXT NOT NULL,
+    pattern_id TEXT NOT NULL,
+    action_label TEXT,
+    risk_level TEXT,
+    split_tag TEXT,
+    stock_code TEXT,
+    signal_date TEXT,
+    normalized_json TEXT NOT NULL,
+    quality_flags_json TEXT NOT NULL DEFAULT '[]',
+    cleanup_operations_json TEXT NOT NULL DEFAULT '[]',
+    review_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'staged_review_only',
+    imported_by TEXT,
+    import_note TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(package_id, pattern_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dataset2_staging_package ON dataset2_staging_records(package_id);
+CREATE INDEX IF NOT EXISTS idx_dataset2_staging_action ON dataset2_staging_records(action_label);
+CREATE INDEX IF NOT EXISTS idx_dataset2_staging_status ON dataset2_staging_records(status);
+
 CREATE TABLE IF NOT EXISTS learning_backtests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     strategy_name TEXT NOT NULL,

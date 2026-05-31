@@ -159,6 +159,14 @@ class Dataset2ImportQueueReviewInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingImportInput(BaseModel):
+    source_dir: str | None = None
+    limit: int = 1000
+    review_event_id: int | None = None
+    imported_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -781,6 +789,28 @@ def dataset2_import_queue_review(payload: Dataset2ImportQueueReviewInput | None 
 @router.get("/learning/dataset2/import-queue/reviews")
 def dataset2_import_queue_reviews(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_import_queue_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/import")
+def dataset2_staging_import(payload: Dataset2StagingImportInput | None = None) -> dict:
+    payload = payload or Dataset2StagingImportInput()
+    return Dataset2TrainingReadinessService().import_reviewed_to_staging(
+        source_dir=payload.source_dir,
+        limit=payload.limit,
+        review_event_id=payload.review_event_id,
+        imported_by=payload.imported_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/records")
+def dataset2_staging_records(package_id: str | None = None, limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_records(package_id=package_id, limit=limit)
+
+
+@router.get("/learning/dataset2/staging/summary")
+def dataset2_staging_summary() -> dict:
+    return Dataset2TrainingReadinessService().staging_summary()
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])

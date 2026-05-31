@@ -1368,6 +1368,36 @@
           </span>
           <small>source records and normalized records are excluded from stored review payloads</small>
         </div>
+        <div v-if="dataset2StagingImport" class="report">
+          <strong>Dataset2 Staging Import / {{ dataset2StagingImport.status }}</strong>
+          <span>
+            package {{ dataset2StagingImport.package_id.slice(0, 16) }} /
+            staged {{ dataset2StagingImport.imported_count }} /
+            review #{{ dataset2StagingImport.review_event_id ?? "missing" }}
+          </span>
+          <span>
+            staging {{ dataset2StagingImport.decision.writes_staging_records_now ? "written" : "blocked" }} /
+            learning samples {{ dataset2StagingImport.decision.writes_learning_samples_now ? "written" : "not written" }} /
+            training {{ dataset2StagingImport.decision.training_started_now ? "started" : "blocked" }}
+          </span>
+          <small>{{ dataset2StagingImport.decision.next_required_action }} / quarantine staging only</small>
+        </div>
+        <div v-if="dataset2StagingSummary" class="report">
+          <strong>Dataset2 Staging Summary / {{ dataset2StagingSummary.status }}</strong>
+          <span>
+            staged records {{ dataset2StagingSummary.record_count }} /
+            packages {{ dataset2StagingSummary.package_count }} /
+            learning samples {{ dataset2StagingSummary.decision.learning_sample_count }}
+          </span>
+          <small>{{ dataset2StagingSummary.decision.next_required_action }} / no training start</small>
+        </div>
+        <div v-if="dataset2StagingRecords.length" class="report">
+          <strong>Dataset2 Staging Records / {{ dataset2StagingRecords.length }}</strong>
+          <span>
+            {{ dataset2StagingRecords.slice(0, 3).map((item) => `${item.pattern_id}:${item.risk_level}:${item.status}`).join(" / ") }}
+          </span>
+          <small>records are staged for review, not promoted to training samples</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -1383,6 +1413,12 @@
           </button>
           <button data-testid="dataset2-import-queue-history-button" @click="loadDataset2ImportQueueReviews" :disabled="dataset2Loading">
             Dataset2 queue history
+          </button>
+          <button data-testid="dataset2-staging-import-button" @click="importDataset2ToStaging" :disabled="dataset2Loading">
+            Dataset2 staging import
+          </button>
+          <button data-testid="dataset2-staging-summary-button" @click="loadDataset2Staging" :disabled="dataset2Loading">
+            Dataset2 staging status
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -1853,6 +1889,62 @@ type Dataset2ImportQueueReview = {
     normalized_records_persisted: boolean;
     training_started_now: boolean;
     can_import_to_database_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2StagingImport = {
+  stage: string;
+  status: string;
+  package_id: string;
+  record_count: number;
+  imported_count: number;
+  review_event_id?: number;
+  staging_import_event_id?: number;
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now?: boolean;
+    writes_staging_records_now: boolean;
+    writes_learning_samples_now: boolean;
+    normalized_records_persisted_to_staging: boolean;
+    normalized_records_persisted_to_training: boolean;
+    training_started_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2StagingRecord = {
+  id: number;
+  package_id: string;
+  pattern_id: string;
+  action_label?: string;
+  risk_level?: string;
+  split_tag?: string;
+  stock_code?: string;
+  signal_date?: string;
+  status: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2StagingSummary = {
+  stage: string;
+  status: string;
+  record_count: number;
+  package_count: number;
+  latest_packages: Array<{ package_id: string; record_count: number; latest_created_at?: string }>;
+  action_label_counts: Record<string, number>;
+  risk_level_counts: Record<string, number>;
+  decision: {
+    writes_database_now: boolean;
+    writes_learning_samples_now: boolean;
+    learning_sample_count: number;
+    training_started_now: boolean;
     can_start_training_now: boolean;
     next_required_action: string;
   };
@@ -5390,6 +5482,9 @@ const dataset2Preview = ref<Dataset2Preview | null>(null);
 const dataset2CleanupPackage = ref<Dataset2CleanupPackage | null>(null);
 const dataset2ImportQueueReview = ref<Dataset2ImportQueueReview | null>(null);
 const dataset2ImportQueueReviews = ref<Dataset2ImportQueueReview[]>([]);
+const dataset2StagingImport = ref<Dataset2StagingImport | null>(null);
+const dataset2StagingRecords = ref<Dataset2StagingRecord[]>([]);
+const dataset2StagingSummary = ref<Dataset2StagingSummary | null>(null);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -5699,7 +5794,7 @@ async function recordDataset2ImportQueueReview() {
   try {
     dataset2ImportQueueReview.value = await fetchJson<Dataset2ImportQueueReview>("/api/learning/dataset2/import-queue/review", {
       method: "POST",
-      body: JSON.stringify({ reviewed_by: "dashboard", note: "V5.6-P2 metadata-only review" })
+      body: JSON.stringify({ reviewed_by: "dashboard", note: "V5.6-P3 pre-staging metadata review" })
     });
     await loadDataset2ImportQueueReviews();
   } catch (err) {
@@ -5715,6 +5810,43 @@ async function loadDataset2ImportQueueReviews() {
     dataset2ImportQueueReviews.value = await fetchJson<Dataset2ImportQueueReview[]>("/api/learning/dataset2/import-queue/reviews?limit=5");
   } catch {
     dataset2ImportQueueReviews.value = [];
+  }
+}
+
+async function importDataset2ToStaging() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ImportQueueReview?.value?.event_id) {
+      dataset2ImportQueueReview.value = await fetchJson<Dataset2ImportQueueReview>("/api/learning/dataset2/import-queue/review", {
+        method: "POST",
+        body: JSON.stringify({ reviewed_by: "dashboard", note: "V5.6-P3 pre-staging metadata review" })
+      });
+    }
+    dataset2StagingImport.value = await fetchJson<Dataset2StagingImport>("/api/learning/dataset2/staging/import", {
+      method: "POST",
+      body: JSON.stringify({
+        review_event_id: dataset2ImportQueueReview.value?.event_id,
+        imported_by: "dashboard",
+        note: "V5.6-P3 quarantine staging only"
+      })
+    });
+    await loadDataset2Staging();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 staging import failed";
+    dataset2StagingImport.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2Staging() {
+  try {
+    dataset2StagingSummary.value = await fetchJson<Dataset2StagingSummary>("/api/learning/dataset2/staging/summary");
+    dataset2StagingRecords.value = await fetchJson<Dataset2StagingRecord[]>("/api/learning/dataset2/staging/records?limit=5");
+  } catch {
+    dataset2StagingSummary.value = null;
+    dataset2StagingRecords.value = [];
   }
 }
 
@@ -7703,6 +7835,7 @@ onMounted(async () => {
     loadLearningReport(),
     loadDataset2Readiness(),
     loadDataset2ImportQueueReviews(),
+    loadDataset2Staging(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),

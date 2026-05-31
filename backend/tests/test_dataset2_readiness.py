@@ -1,4 +1,4 @@
-import json
+﻿import json
 
 from app.learning.dataset2_readiness import Dataset2TrainingReadinessService
 
@@ -89,7 +89,7 @@ def test_dataset2_readiness_blocks_unclean_training_data(tmp_path):
 
     data = Dataset2TrainingReadinessService().readiness(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P2"
+    assert data["stage"] == "V5.6-P3"
     assert data["status"] == "training_blocked_cleanup_required"
     assert data["quality"]["invalid_risk_level_count"] == 1
     assert data["quality"]["stringified_list_item_count"] == 1
@@ -140,7 +140,7 @@ def test_dataset2_cleanup_package_summarizes_review_actions_without_writes(tmp_p
 
     data = Dataset2TrainingReadinessService().cleanup_package(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P2"
+    assert data["stage"] == "V5.6-P3"
     assert data["status"] == "cleanup_package_ready_for_review"
     assert len(data["package_id"]) == 64
     assert len(data["normalized_records_hash"]) == 64
@@ -183,7 +183,7 @@ def test_dataset2_import_queue_review_records_metadata_only(tmp_path, test_db):
         note="metadata only",
     )
 
-    assert data["stage"] == "V5.6-P2"
+    assert data["stage"] == "V5.6-P3"
     assert data["status"] == "import_queue_review_recorded"
     assert isinstance(data["event_id"], int)
     assert data["decision"]["writes_existing_event_now"] is True
@@ -205,6 +205,57 @@ def test_dataset2_import_queue_review_records_metadata_only(tmp_path, test_db):
     assert "normalized_records_preview" not in latest
 
 
+def test_dataset2_staging_import_requires_review_and_avoids_training_tables(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(pattern_id="STAGE_001", risk_level="medium_high"),
+            _record(pattern_id="STAGE_002", action_label="RISK_ALERT", risk_level="high"),
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+
+    blocked = service.import_reviewed_to_staging(source_dir=str(pack), limit=10, imported_by="tester")
+
+    assert blocked["status"] == "import_blocked_missing_review"
+    assert blocked["decision"]["writes_database_now"] is False
+    assert blocked["decision"]["writes_staging_records_now"] is False
+    assert blocked["decision"]["training_started_now"] is False
+
+    review = service.create_import_queue_review(source_dir=str(pack), limit=10, reviewed_by="tester")
+    imported = service.import_reviewed_to_staging(
+        source_dir=str(pack),
+        limit=10,
+        review_event_id=review["event_id"],
+        imported_by="tester",
+        note="stage reviewed records only",
+    )
+
+    assert imported["stage"] == "V5.6-P3"
+    assert imported["status"] == "staging_import_recorded"
+    assert imported["imported_count"] == 2
+    assert imported["review_event_id"] == review["event_id"]
+    assert imported["decision"]["writes_staging_records_now"] is True
+    assert imported["decision"]["writes_learning_samples_now"] is False
+    assert imported["decision"]["normalized_records_persisted_to_staging"] is True
+    assert imported["decision"]["normalized_records_persisted_to_training"] is False
+    assert imported["decision"]["training_started_now"] is False
+    assert imported["decision"]["can_start_training_now"] is False
+
+    staged = service.list_staging_records(package_id=imported["package_id"], limit=10)
+    assert len(staged) == 2
+    assert {item["pattern_id"] for item in staged} == {"STAGE_001", "STAGE_002"}
+    assert staged[0]["status"] == "staged_review_only"
+    assert staged[0]["review_only"] is True
+    assert staged[0]["live_trading_enabled"] is False
+
+    summary = service.staging_summary()
+    assert summary["record_count"] == 2
+    assert summary["decision"]["writes_learning_samples_now"] is False
+    assert summary["decision"]["learning_sample_count"] == 0
+    assert summary["decision"]["training_started_now"] is False
+
+
 def test_dataset2_readiness_api_smoke(client, tmp_path):
     pack = _write_dataset2_pack(tmp_path, [_record()])
 
@@ -216,12 +267,21 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
         json={"source_dir": str(pack), "limit": 1, "reviewed_by": "api-test"},
     )
     reviews = client.get("/api/learning/dataset2/import-queue/reviews", params={"limit": 3})
+    staging = client.post(
+        "/api/learning/dataset2/staging/import",
+        json={"source_dir": str(pack), "limit": 1, "review_event_id": queue.json().get("event_id"), "imported_by": "api-test"},
+    )
+    staging_records = client.get("/api/learning/dataset2/staging/records", params={"limit": 3})
+    staging_summary = client.get("/api/learning/dataset2/staging/summary")
 
     assert readiness.status_code == 200
     assert preview.status_code == 200
     assert cleanup.status_code == 200
     assert queue.status_code == 200
     assert reviews.status_code == 200
+    assert staging.status_code == 200
+    assert staging_records.status_code == 200
+    assert staging_summary.status_code == 200
     assert readiness.json()["decision"]["can_start_training_now"] is False
     assert preview.json()["preview_count"] == 1
     assert preview.json()["safety_summary"]["allow_live_order"] is False
@@ -229,3 +289,7 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert queue.json()["decision"]["training_started_now"] is False
     assert queue.json()["decision"]["normalized_records_persisted"] is False
     assert reviews.json()[0]["review"]["reviewed_by"] == "api-test"
+    assert staging.json()["decision"]["writes_learning_samples_now"] is False
+    assert staging.json()["decision"]["training_started_now"] is False
+    assert staging_records.json()[0]["status"] == "staged_review_only"
+    assert staging_summary.json()["decision"]["can_start_training_now"] is False

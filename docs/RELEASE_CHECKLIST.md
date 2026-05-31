@@ -336,3 +336,8 @@ The following automation schedule is recommended during active trading days:
 - [ ] V5.6-P2 import queue review payload stores package id, source data hash, normalized records hash, record count, cleanup action summaries, reviewer metadata, and safety flags only.
 - [ ] V5.6-P2 dashboard shows latest import queue review event id, package id prefix, record count, event write evidence, no normalized row persistence, and training blocked evidence.
 - [ ] V5.6-P2 must keep `writes_existing_event_now=true` only for review metadata, while `writes_database_now=false`, `normalized_records_persisted=false`, `can_import_to_database_now=false`, `can_start_training_now=false`, `training_started_now=false`, `writes_source_dataset=false`, `writes_file=false`, and `live_trading_enabled=false`.
+- [ ] V5.6-P3 creates `dataset2_staging_records` as a quarantine table for reviewed normalized Dataset2 records, separate from `learning_samples`.
+- [ ] V5.6-P3 exposes `POST /api/learning/dataset2/staging/import`, `GET /api/learning/dataset2/staging/records`, and `GET /api/learning/dataset2/staging/summary`.
+- [ ] V5.6-P3 staging import requires a matching V5.6-P2 import queue review event before any normalized record can be staged.
+- [ ] V5.6-P3 dashboard shows staged count, package id prefix, review event id, learning sample count, and training blocked evidence.
+- [ ] V5.6-P3 must keep `writes_staging_records_now=true` only for quarantine staging, while `writes_learning_samples_now=false`, `normalized_records_persisted_to_training=false`, `training_started_now=false`, `can_start_training_now=false`, `writes_source_dataset=false`, `writes_file=false`, and `live_trading_enabled=false`.
