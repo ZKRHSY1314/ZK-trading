@@ -210,6 +210,7 @@
           <span>阶段 {{ screenMonitoringCapabilities?.stage ?? "V4.5-P1" }}</span>
           <span>采集 {{ screenMonitoringCapabilities?.capture_provider ?? "disabled" }}</span>
           <span>Provider {{ screenMonitoringCapabilities?.provider_status ?? "disabled" }}</span>
+          <span>Readiness {{ screenProviderReadiness?.status ?? "未加载" }}</span>
           <span>OCR {{ screenMonitoringCapabilities?.ocr_provider ?? "not_configured" }}</span>
           <span>观测 {{ screenObservations.length }}</span>
           <span>Artifact {{ screenArtifactReviews.length }}</span>
@@ -226,6 +227,20 @@
             <strong>{{ provider.provider }} / {{ provider.status }}</strong>
             <span>配置 {{ provider.configured ? "已配置" : "未配置" }} / fixture {{ provider.fixture_replay_supported ? "enabled" : "disabled" }}</span>
             <small>真实截图 {{ provider.capture_supported ? "可用" : "关闭" }} / OCR {{ provider.ocr_supported ? "可用" : "关闭" }}</small>
+          </div>
+          <div v-if="screenProviderReadiness" class="score-item">
+            <strong>Provider Readiness / {{ screenProviderReadiness.status }}</strong>
+            <span>{{ screenProviderReadiness.active_provider }} / {{ screenProviderReadiness.provider_status }}</span>
+            <small>{{ screenProviderReadiness.next_safe_steps.slice(0, 2).join("；") }}</small>
+          </div>
+          <div
+            v-for="check in screenProviderReadiness?.checks.slice(0, 6) ?? []"
+            :key="check.name"
+            class="score-item"
+          >
+            <strong>{{ check.name }} / {{ check.status }}</strong>
+            <span>{{ check.value || "未设置" }} / 期望 {{ check.expected }}</span>
+            <small>{{ check.reason }}</small>
           </div>
           <div v-if="screenMonitoringSession && screenMonitoringSession.status !== 'empty'" class="score-item">
             <strong>Session #{{ screenMonitoringSession.id }} / {{ screenMonitoringSession.status }}</strong>
@@ -1694,6 +1709,34 @@ type ScreenProviderCapabilities = {
   live_trading_enabled: boolean;
 };
 
+type ScreenProviderReadiness = {
+  status: string;
+  stage: string;
+  active_provider: string;
+  provider_status: string;
+  provider_configured: boolean;
+  checks: Array<{
+    name: string;
+    status: string;
+    value: string;
+    expected: string;
+    reason: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  environment: Record<string, any>;
+  runbook: {
+    safe_sequence: string[];
+    safe_api_checks: string[];
+    blocked_actions: string[];
+  };
+  next_safe_steps: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type ScreenObservation = {
   id: number;
   session_id?: number | null;
@@ -2057,6 +2100,7 @@ const realtimeCycleRuns = ref<RealtimeCycleRun[]>([]);
 const realtimeLoading = ref(false);
 const screenMonitoringCapabilities = ref<ScreenMonitoringCapabilities | null>(null);
 const screenMonitoringProviders = ref<ScreenProviderCapabilities[]>([]);
+const screenProviderReadiness = ref<ScreenProviderReadiness | null>(null);
 const screenMonitoringSession = ref<ScreenMonitoringSession | null>(null);
 const screenObservations = ref<ScreenObservation[]>([]);
 const screenObservationResult = ref<ScreenObservation | null>(null);
@@ -3004,9 +3048,18 @@ async function runRealtimeReplay() {
 async function loadScreenMonitoring() {
   screenMonitoringLoading.value = true;
   try {
-    const [capabilitiesData, providersData, sessionData, observationsData, artifactPolicyData, artifactReviewsData] = await Promise.all([
+    const [
+      capabilitiesData,
+      providersData,
+      readinessData,
+      sessionData,
+      observationsData,
+      artifactPolicyData,
+      artifactReviewsData
+    ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
+      fetchJson<ScreenProviderReadiness>("/api/screen-monitoring/provider-readiness"),
       fetchJson<ScreenMonitoringSession>("/api/screen-monitoring/sessions/latest"),
       fetchJson<ScreenObservation[]>("/api/screen-monitoring/observations?limit=20"),
       fetchJson<ScreenArtifactPolicy>("/api/screen-monitoring/artifact-policy"),
@@ -3014,6 +3067,7 @@ async function loadScreenMonitoring() {
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
+    screenProviderReadiness.value = readinessData;
     screenMonitoringSession.value = sessionData;
     screenObservations.value = observationsData;
     screenArtifactPolicy.value = artifactPolicyData;
@@ -3021,6 +3075,7 @@ async function loadScreenMonitoring() {
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
+    screenProviderReadiness.value = null;
     screenMonitoringSession.value = null;
     screenObservations.value = [];
     screenArtifactPolicy.value = null;

@@ -686,6 +686,13 @@ def screen_monitoring_providers() -> list[dict]:
     return ScreenMonitoringService().provider_capabilities()
 
 
+@router.get("/screen-monitoring/provider-readiness")
+def screen_monitoring_provider_readiness() -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().provider_readiness_runbook()
+
+
 @router.post("/screen-monitoring/sessions")
 def start_screen_monitoring_session(input_data: ScreenMonitoringSessionInput | None = None) -> dict:
     from app.screen_monitoring.service import ScreenMonitoringService

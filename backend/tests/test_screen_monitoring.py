@@ -13,7 +13,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     _reset_screen_monitoring(test_db)
     capabilities = ScreenMonitoringService().capabilities()
 
-    assert capabilities["stage"] == "V4.5-P4"
+    assert capabilities["stage"] == "V4.5-P5"
     assert capabilities["capture_provider"] == "disabled"
     assert capabilities["provider_status"] == "disabled"
     assert capabilities["provider_configured"] is False
@@ -28,6 +28,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     assert "fixture_replay" in capabilities["allowed_modes"]
     assert "capture_artifact_stub" in capabilities["allowed_modes"]
     assert "artifact_review_queue" in capabilities["allowed_modes"]
+    assert "provider_readiness_runbook" in capabilities["allowed_modes"]
 
 
 def test_screen_observation_creates_session_and_summary(test_db):
@@ -131,6 +132,47 @@ def test_screen_provider_capabilities_include_fixture_but_default_disabled(test_
     assert by_provider["local_safe"]["capture_stub_supported"] is True
     assert by_provider["fixture"]["details"]["real_screen_capture"] is False
     assert all(item["live_trading_enabled"] is False for item in providers)
+
+
+def test_screen_provider_readiness_runbook_is_read_only_and_blocks_real_adapters(test_db):
+    _reset_screen_monitoring(test_db)
+    readiness = ScreenMonitoringService().provider_readiness_runbook()
+    checks = {item["name"]: item for item in readiness["checks"]}
+
+    assert readiness["stage"] == "V4.5-P5"
+    assert readiness["status"] == "disabled_needs_provider_selection"
+    assert readiness["active_provider"] == "disabled"
+    assert checks["provider_selected"]["status"] == "blocked"
+    assert checks["real_pixel_capture_adapter"]["status"] == "blocked"
+    assert checks["ocr_adapter"]["status"] == "blocked"
+    assert checks["live_trading_disabled"]["status"] == "ready"
+    assert "real_pixel_capture" in readiness["runbook"]["blocked_actions"]
+    assert "GET /api/screen-monitoring/provider-readiness" in readiness["runbook"]["safe_api_checks"]
+    assert readiness["review_only"] is True
+    assert readiness["simulation_only"] is True
+    assert readiness["live_trading_enabled"] is False
+
+
+def test_local_safe_provider_readiness_reports_preflight_only_state(test_db):
+    _reset_screen_monitoring(test_db)
+    provider = LocalSafeScreenCaptureProvider(
+        allow_real_capture=True,
+        allowed_windows=["Notepad"],
+        broker_window_terms=["trading", "证券"],
+    )
+    readiness = ScreenMonitoringService(provider=provider).provider_readiness_runbook()
+    checks = {item["name"]: item for item in readiness["checks"]}
+
+    assert readiness["status"] == "preflight_ready_metadata_only"
+    assert readiness["active_provider"] == "local_safe"
+    assert readiness["provider_configured"] is True
+    assert checks["provider_selected"]["status"] == "ready"
+    assert checks["provider_configured"]["status"] == "ready"
+    assert checks["harmless_window_allowlist"]["status"] == "ready"
+    assert checks["real_pixel_capture_adapter"]["status"] == "blocked"
+    assert checks["ocr_adapter"]["status"] == "blocked"
+    assert readiness["environment"]["SCREEN_CAPTURE_ALLOWED_WINDOWS_SET"] is False
+    assert any("capture preflight" in step.lower() for step in readiness["next_safe_steps"])
 
 
 def test_local_safe_preflight_requires_explicit_config(test_db):
@@ -302,6 +344,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
 
     capabilities_resp = client.get("/api/screen-monitoring/capabilities")
     providers_resp = client.get("/api/screen-monitoring/providers")
+    provider_readiness_resp = client.get("/api/screen-monitoring/provider-readiness")
     empty_latest_resp = client.get("/api/screen-monitoring/sessions/latest")
     session_resp = client.post(
         "/api/screen-monitoring/sessions",
@@ -328,6 +371,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
 
     assert capabilities_resp.status_code == 200
     assert providers_resp.status_code == 200
+    assert provider_readiness_resp.status_code == 200
     assert empty_latest_resp.status_code == 200
     assert session_resp.status_code == 200
     assert observation_resp.status_code == 200
@@ -341,6 +385,9 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert latest_resp.status_code == 200
     assert capabilities_resp.json()["live_trading_enabled"] is False
     assert capabilities_resp.json()["provider_configured"] is False
+    assert provider_readiness_resp.json()["stage"] == "V4.5-P5"
+    assert provider_readiness_resp.json()["live_trading_enabled"] is False
+    assert "ocr_execution" in provider_readiness_resp.json()["runbook"]["blocked_actions"]
     assert any(item["provider"] == "fixture" for item in providers_resp.json())
     assert empty_latest_resp.json()["status"] == "empty"
     assert session_resp.json()["status"] == "running"

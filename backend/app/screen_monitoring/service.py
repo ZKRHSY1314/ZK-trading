@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P4",
+            "stage": "V4.5-P5",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -50,6 +50,7 @@ class ScreenMonitoringService:
                 "capture_artifact_stub",
                 "artifact_review_queue",
                 "artifact_retention_policy",
+                "provider_readiness_runbook",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -62,6 +63,118 @@ class ScreenMonitoringService:
                 "live_auto_trading",
             ],
             "default_session_name": "screen_readonly_watch",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def provider_readiness_runbook(self) -> dict[str, Any]:
+        provider_capabilities = self.provider.capabilities()
+        details = provider_capabilities.get("details") or {}
+        provider = str(provider_capabilities.get("provider") or "unknown")
+        configured = bool(provider_capabilities.get("configured"))
+        allowed_windows = details.get("allowed_windows") or self._split_csv(settings.screen_capture_allowed_windows)
+        broker_terms = details.get("broker_window_terms") or self._split_csv(settings.screen_capture_broker_window_terms)
+        checks = [
+            self._readiness_check(
+                "provider_selected",
+                provider != "disabled",
+                provider,
+                "fixture or local_safe",
+                "default provider is disabled" if provider == "disabled" else "provider selected",
+            ),
+            self._readiness_check(
+                "provider_configured",
+                configured or provider == "fixture",
+                str(configured),
+                "true for local_safe, fixture-only for fixtures",
+                provider_capabilities.get("last_error") or "provider configuration accepted",
+            ),
+            self._readiness_check(
+                "harmless_window_allowlist",
+                provider != "local_safe" or bool(allowed_windows),
+                ", ".join(allowed_windows) if allowed_windows else "",
+                "one or more non-broker harmless window titles",
+                "local_safe requires SCREEN_CAPTURE_ALLOWED_WINDOWS before future capture attempts",
+            ),
+            self._readiness_check(
+                "broker_window_denylist",
+                bool(settings.screen_capture_block_broker_windows),
+                str(settings.screen_capture_block_broker_windows),
+                "true",
+                "broker/trading windows must stay blocked",
+            ),
+            self._readiness_check(
+                "broker_window_terms",
+                bool(broker_terms),
+                ", ".join(broker_terms[:8]),
+                "broker, trading, 交易, 证券, 券商, etc.",
+                "deny terms prevent accidental broker-window observation",
+            ),
+            self._readiness_check(
+                "real_pixel_capture_adapter",
+                False,
+                str(provider_capabilities.get("capture_supported")),
+                "false in V4.5-P5",
+                "real screenshot capture is intentionally not implemented in this stage",
+            ),
+            self._readiness_check(
+                "ocr_adapter",
+                False,
+                str(provider_capabilities.get("ocr_supported")),
+                "false in V4.5-P5",
+                "OCR execution is intentionally not implemented in this stage",
+            ),
+            self._readiness_check(
+                "live_trading_disabled",
+                not settings.enable_live_trading,
+                str(settings.enable_live_trading),
+                "false",
+                "screen monitoring must not enable live trading",
+            ),
+        ]
+        return {
+            "status": self._readiness_status(provider, configured),
+            "stage": "V4.5-P5",
+            "active_provider": provider,
+            "provider_status": provider_capabilities.get("status"),
+            "provider_configured": configured,
+            "checks": checks,
+            "environment": {
+                "SCREEN_CAPTURE_PROVIDER": settings.screen_capture_provider,
+                "SCREEN_CAPTURE_ALLOW_REAL_CAPTURE": settings.screen_capture_allow_real_capture,
+                "SCREEN_CAPTURE_ALLOWED_WINDOWS_SET": bool(settings.screen_capture_allowed_windows.strip()),
+                "SCREEN_CAPTURE_BLOCK_BROKER_WINDOWS": settings.screen_capture_block_broker_windows,
+                "SCREEN_CAPTURE_BROKER_WINDOW_TERMS_SET": bool(settings.screen_capture_broker_window_terms.strip()),
+            },
+            "runbook": {
+                "safe_sequence": [
+                    "Review /api/screen-monitoring/provider-readiness before changing any local screen config.",
+                    "Use fixture replay to validate UI and persistence without touching the desktop.",
+                    "Use capture preflight only against a harmless allowlisted window such as Notepad.",
+                    "Use capture-stub to create metadata-only artifact evidence after preflight.",
+                    "Sync artifact reviews and accept/reject metadata manually.",
+                ],
+                "safe_api_checks": [
+                    "GET /api/screen-monitoring/capabilities",
+                    "GET /api/screen-monitoring/providers",
+                    "GET /api/screen-monitoring/provider-readiness",
+                    "POST /api/screen-monitoring/capture-preflight",
+                    "POST /api/screen-monitoring/capture-stub",
+                    "GET /health",
+                ],
+                "blocked_actions": [
+                    "screen_click",
+                    "keyboard_type",
+                    "real_pixel_capture",
+                    "ocr_execution",
+                    "broker_action",
+                    "order_action",
+                    "credential_access",
+                    "live_auto_trading",
+                ],
+            },
+            "next_safe_steps": self._readiness_next_steps(provider, configured, allowed_windows),
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
@@ -548,6 +661,50 @@ class ScreenMonitoringService:
             "live_trading_enabled": False,
         }
 
+    def _readiness_status(self, provider: str, configured: bool) -> str:
+        if provider == "disabled":
+            return "disabled_needs_provider_selection"
+        if provider == "fixture":
+            return "fixture_only_ready"
+        if provider == "local_safe" and configured:
+            return "preflight_ready_metadata_only"
+        if provider == "local_safe":
+            return "needs_explicit_local_safe_config"
+        return "unknown_provider_review_required"
+
+    def _readiness_check(
+        self,
+        name: str,
+        passed: bool,
+        value: str,
+        expected: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "ready" if passed else "blocked",
+            "value": value,
+            "expected": expected,
+            "reason": reason,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def _readiness_next_steps(self, provider: str, configured: bool, allowed_windows: list[str]) -> list[str]:
+        steps: list[str] = []
+        if provider == "disabled":
+            steps.append("Keep provider disabled for normal operation; use fixture replay for UI and persistence checks.")
+            steps.append("If testing local_safe later, configure only harmless window titles and keep broker denylist enabled.")
+        if provider == "local_safe" and not configured:
+            steps.append("Set SCREEN_CAPTURE_ALLOW_REAL_CAPTURE=true only for a reviewed harmless-window test session.")
+        if provider == "local_safe" and not allowed_windows:
+            steps.append("Set SCREEN_CAPTURE_ALLOWED_WINDOWS to harmless titles such as Notepad or Calculator, never broker windows.")
+        if provider == "local_safe" and configured:
+            steps.append("Run capture preflight against the harmless allowlisted window before creating metadata-only stubs.")
+        steps.append("Confirm /health reports live_trading_enabled=false before any screen-monitoring run.")
+        return steps
+
     def _safety_blocks(self, payload: dict[str, Any]) -> list[str]:
         blocked_terms = (
             "click",
@@ -562,6 +719,9 @@ class ScreenMonitoringService:
         )
         action_text = json.dumps(payload, ensure_ascii=False, default=str).lower()
         return [f"blocked_readonly_payload_term:{term}" for term in blocked_terms if term in action_text]
+
+    def _split_csv(self, value: str | None) -> list[str]:
+        return [item.strip() for item in (value or "").split(",") if item.strip()]
 
     def _normalize_observed_at(self, observed_at: str | None) -> str:
         if not observed_at:

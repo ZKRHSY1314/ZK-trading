@@ -121,6 +121,9 @@
 - [ ] V4.5-P4 exposes metadata-only artifact retention policy through `/api/screen-monitoring/artifact-policy`.
 - [ ] V4.5-P4 syncs capture stub observations into `screen_artifact_reviews` with pending/accepted/rejected audit states.
 - [ ] V4.5-P4 dashboard shows artifact review queue, metadata retention policy, and accept/reject audit actions without enabling capture, OCR, broker, order, or screen-click controls.
+- [ ] V4.5-P5 exposes `/api/screen-monitoring/provider-readiness` with read-only local provider diagnostics and runbook steps.
+- [ ] V4.5-P5 readiness checks prove real pixel capture and OCR adapters remain blocked while live trading stays disabled.
+- [ ] V4.5-P5 dashboard shows provider readiness, config checks, next safe steps, and blocked actions without executing local commands or controlling windows.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence
