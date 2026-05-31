@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <main class="shell">
     <section class="topbar">
       <div>
@@ -249,6 +249,9 @@
           <button data-testid="screen-digest-approval-review-button" @click="refreshScreenDigestApprovalReview" :disabled="screenMonitoringLoading">
             审批有效期复核
           </button>
+          <button data-testid="screen-digest-release-package-button" @click="refreshScreenDigestReleasePackage" :disabled="screenMonitoringLoading">
+            最终发布包清单
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -274,6 +277,7 @@
           <span>Spec审批 {{ screenDigestMigrationSpecApprovals.length }}</span>
           <span>Release {{ screenDigestReleaseReadiness?.status ?? "未生成" }}</span>
           <span>Approval {{ screenDigestApprovalReview?.status ?? "未复核" }}</span>
+          <span>Package {{ screenDigestReleasePackage?.status ?? "未生成" }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -406,6 +410,11 @@
             <strong>Approval Review / {{ screenDigestApprovalReview.status }}</strong>
             <span>{{ screenDigestApprovalReview.decision.next_required_action }} / {{ screenDigestApprovalReview.allowed_output }}</span>
             <small>有效期 {{ screenDigestApprovalReview.review_policy.max_age_days }} 天 / age {{ screenDigestApprovalReview.latest_approval.approval_age_days ?? "无" }} / 复用 {{ screenDigestApprovalReview.decision.approval_can_be_reused_for_manual_release_review ? "是" : "否" }}</small>
+          </div>
+          <div v-if="screenDigestReleasePackage" class="score-item">
+            <strong>Release Package / {{ screenDigestReleasePackage.status }}</strong>
+            <span>{{ screenDigestReleasePackage.decision.go_no_go }} / {{ screenDigestReleasePackage.allowed_output }}</span>
+            <small>{{ screenDigestReleasePackage.package_id.slice(0, 16) }} / items {{ screenDigestReleasePackage.manifest.items.length }} / 执行 {{ screenDigestReleasePackage.decision.execution_allowed_now ? "允许" : "禁止" }}</small>
           </div>
           <div
             v-for="item in screenReadinessAudit?.safety_matrix.slice(0, 6) ?? []"
@@ -2764,6 +2773,70 @@ type ScreenDigestApprovalReview = {
   live_trading_enabled: boolean;
 };
 
+type ScreenDigestReleasePackage = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  package_id: string;
+  package_id_inputs: Record<string, any>;
+  manifest: {
+    name: string;
+    purpose: string;
+    items: Array<{
+      name: string;
+      status: string | null;
+      allowed_output: string | null;
+      generated_at: string | null;
+      included: boolean;
+      review_only: boolean;
+      simulation_only: boolean;
+      live_trading_enabled: boolean;
+    }>;
+    required_manual_artifacts_before_execution: string[];
+    delivery: string;
+    writes_file: boolean;
+    download_created: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  evidence: {
+    proposal_status: string;
+    checklist_status: string;
+    verification_status: string;
+    verification_failed_count: number;
+    latest_approval_event_id: number | null;
+    latest_approval_status: string | null;
+    release_readiness_status: string;
+    approval_review_status: string;
+    spec_hash: string;
+    approved_spec_hash: string | null;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  gates: ScreenDigestReleaseReadiness["gates"];
+  blocked_gates: ScreenDigestReleaseReadiness["gates"];
+  review_required_gates: ScreenDigestReleaseReadiness["gates"];
+  decision: {
+    go_no_go: string;
+    migration_allowed_now: boolean;
+    execution_allowed_now: boolean;
+    requires_human_release_approval: boolean;
+    next_required_action: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  safety_summary: ScreenDigestReleaseReadiness["safety_summary"];
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -3015,6 +3088,7 @@ const screenDigestMigrationSpecApprovalResult = ref<ScreenDigestMigrationSpecApp
 const screenDigestMigrationSpecApprovals = ref<ScreenDigestMigrationSpecApproval[]>([]);
 const screenDigestReleaseReadiness = ref<ScreenDigestReleaseReadiness | null>(null);
 const screenDigestApprovalReview = ref<ScreenDigestApprovalReview | null>(null);
+const screenDigestReleasePackage = ref<ScreenDigestReleasePackage | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3974,7 +4048,8 @@ async function loadScreenMonitoring() {
       digestMigrationChecklistData,
       digestMigrationSpecApprovalsData,
       digestReleaseReadinessData,
-      digestApprovalReviewData
+      digestApprovalReviewData,
+      digestReleasePackageData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3996,7 +4071,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenDigestMigrationChecklist>("/api/screen-monitoring/readiness-health/history-migration-checklist?limit=40"),
       fetchJson<ScreenDigestMigrationSpecApproval[]>("/api/screen-monitoring/readiness-health/history-migration-spec/approvals?limit=10"),
       fetchJson<ScreenDigestReleaseReadiness>("/api/screen-monitoring/readiness-health/history-migration-release-readiness?limit=40"),
-      fetchJson<ScreenDigestApprovalReview>("/api/screen-monitoring/readiness-health/history-migration-approval-review?limit=40&max_age_days=7")
+      fetchJson<ScreenDigestApprovalReview>("/api/screen-monitoring/readiness-health/history-migration-approval-review?limit=40&max_age_days=7"),
+      fetchJson<ScreenDigestReleasePackage>("/api/screen-monitoring/readiness-health/history-migration-release-package?limit=40&max_age_days=7")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -4019,6 +4095,7 @@ async function loadScreenMonitoring() {
     screenDigestMigrationSpecApprovals.value = digestMigrationSpecApprovalsData;
     screenDigestReleaseReadiness.value = digestReleaseReadinessData;
     screenDigestApprovalReview.value = digestApprovalReviewData;
+    screenDigestReleasePackage.value = digestReleasePackageData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -4041,6 +4118,7 @@ async function loadScreenMonitoring() {
     screenDigestMigrationSpecApprovals.value = [];
     screenDigestReleaseReadiness.value = null;
     screenDigestApprovalReview.value = null;
+    screenDigestReleasePackage.value = null;
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -4226,6 +4304,9 @@ async function approveScreenDigestMigrationSpec() {
     screenDigestApprovalReview.value = await fetchJson<ScreenDigestApprovalReview>(
       "/api/screen-monitoring/readiness-health/history-migration-approval-review?limit=40&max_age_days=7"
     );
+    screenDigestReleasePackage.value = await fetchJson<ScreenDigestReleasePackage>(
+      "/api/screen-monitoring/readiness-health/history-migration-release-package?limit=40&max_age_days=7"
+    );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Digest history migration spec 审批记录失败";
   } finally {
@@ -4256,6 +4337,20 @@ async function refreshScreenDigestApprovalReview() {
     );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Digest history approval review 生成失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function refreshScreenDigestReleasePackage() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenDigestReleasePackage.value = await fetchJson<ScreenDigestReleasePackage>(
+      "/api/screen-monitoring/readiness-health/history-migration-release-package?limit=40&max_age_days=7"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Digest history release package 生成失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

@@ -169,6 +169,9 @@
 - [ ] V4.5-P20 exposes `GET /api/screen-monitoring/readiness-health/history-migration-approval-review` as an approval freshness and rotation review over latest approval metadata.
 - [ ] V4.5-P20 approval review reports missing, expired, spec-changed, and current approval states while keeping `migration_allowed_now=false`.
 - [ ] V4.5-P20 dashboard shows approval review status without writing database records, applying migrations, executing SQL, creating tables, writing migration files, capturing pixels, running OCR, clicking screens, or changing live-trading state.
+- [ ] V4.5-P21 exposes `GET /api/screen-monitoring/readiness-health/history-migration-release-package` as a final manual release package manifest over P15-P20 evidence.
+- [ ] V4.5-P21 release package reports package id, manifest items, required manual artifacts, go/no-go status, and safety gates while keeping `execution_allowed_now=false`.
+- [ ] V4.5-P21 dashboard shows final release package status without writing files, creating downloads, writing database records, applying migrations, executing SQL, creating tables, capturing pixels, running OCR, clicking screens, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence
