@@ -166,6 +166,9 @@
 - [ ] V4.5-P19 exposes `GET /api/screen-monitoring/readiness-health/history-migration-release-readiness` as a release-readiness summary over the P16 checklist, P17 verifier, and P18 approval metadata.
 - [ ] V4.5-P19 release readiness reports go/no-go evidence, matching approval/spec hashes, remaining manual requirements, and safety gates while keeping `migration_allowed_now=false`.
 - [ ] V4.5-P19 dashboard shows release readiness metadata without applying migrations, executing SQL, creating tables, writing migration files, writing digest history records, capturing pixels, running OCR, clicking screens, or changing live-trading state.
+- [ ] V4.5-P20 exposes `GET /api/screen-monitoring/readiness-health/history-migration-approval-review` as an approval freshness and rotation review over latest approval metadata.
+- [ ] V4.5-P20 approval review reports missing, expired, spec-changed, and current approval states while keeping `migration_allowed_now=false`.
+- [ ] V4.5-P20 dashboard shows approval review status without writing database records, applying migrations, executing SQL, creating tables, writing migration files, capturing pixels, running OCR, clicking screens, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

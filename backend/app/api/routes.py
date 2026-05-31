@@ -853,6 +853,19 @@ def screen_monitoring_readiness_health_history_migration_release_readiness(limit
     return ScreenMonitoringService().screen_readiness_digest_history_release_readiness(limit=limit)
 
 
+@router.get("/screen-monitoring/readiness-health/history-migration-approval-review")
+def screen_monitoring_readiness_health_history_migration_approval_review(
+    limit: int = 50,
+    max_age_days: int = 7,
+) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().screen_readiness_digest_history_approval_review(
+        limit=limit,
+        max_age_days=max_age_days,
+    )
+
+
 @router.post("/screen-monitoring/provider-config-proposals")
 def screen_monitoring_provider_config_proposal(
     input_data: ScreenProviderConfigProposalInput | None = None,
