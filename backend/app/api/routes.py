@@ -778,6 +778,13 @@ def screen_monitoring_readiness_export_compare(limit: int = 50) -> dict:
     return ScreenMonitoringService().compare_screen_readiness_evidence(limit=limit)
 
 
+@router.get("/screen-monitoring/readiness-health")
+def screen_monitoring_readiness_health(limit: int = 50) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().screen_readiness_health_digest(limit=limit)
+
+
 @router.post("/screen-monitoring/provider-config-proposals")
 def screen_monitoring_provider_config_proposal(
     input_data: ScreenProviderConfigProposalInput | None = None,

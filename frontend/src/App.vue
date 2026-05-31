@@ -228,6 +228,9 @@
           <button data-testid="screen-readiness-compare-button" @click="compareScreenReadinessEvidence" :disabled="screenMonitoringLoading">
             对比证据稳定性
           </button>
+          <button data-testid="screen-readiness-health-button" @click="refreshScreenReadinessHealth" :disabled="screenMonitoringLoading">
+            生成健康摘要
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -246,6 +249,7 @@
           <span>Export {{ screenReadinessExport?.status ?? "未生成" }}</span>
           <span>Verify {{ screenReadinessVerification?.status ?? "未校验" }}</span>
           <span>Compare {{ screenReadinessComparison?.status ?? "未对比" }}</span>
+          <span>Health {{ screenReadinessHealth?.status ?? "未生成" }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -338,6 +342,11 @@
             <strong>Evidence Compare / {{ screenReadinessComparison.status }}</strong>
             <span>差异 {{ screenReadinessComparison.difference_count }} / {{ screenReadinessComparison.allowed_output }}</span>
             <small>{{ screenReadinessComparison.baseline.export_bundle_hash.slice(0, 16) }} -> {{ screenReadinessComparison.candidate.export_bundle_hash.slice(0, 16) }} / OCR {{ screenReadinessComparison.safety_summary.ocr_executed ? "执行" : "关闭" }}</small>
+          </div>
+          <div v-if="screenReadinessHealth" class="score-item">
+            <strong>Evidence Health / {{ screenReadinessHealth.status }}</strong>
+            <span>{{ screenReadinessHealth.summary.verification_status }} / {{ screenReadinessHealth.summary.comparison_status }} / {{ screenReadinessHealth.allowed_output }}</span>
+            <small>{{ screenReadinessHealth.summary.export_bundle_hash.slice(0, 16) }} / flags {{ screenReadinessHealth.failed_flags.length }} / 实盘 {{ screenReadinessHealth.live_trading_enabled ? "开启" : "关闭" }}</small>
           </div>
           <div
             v-for="item in screenReadinessAudit?.safety_matrix.slice(0, 6) ?? []"
@@ -2295,6 +2304,61 @@ type ScreenReadinessComparison = {
   live_trading_enabled: boolean;
 };
 
+type ScreenReadinessHealthFlag = {
+  name: string;
+  status: string;
+  reason: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type ScreenReadinessHealth = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  summary: {
+    capture_provider: string;
+    provider_status: string;
+    readiness_status: string;
+    audit_status: string;
+    export_status: string;
+    verification_status: string;
+    comparison_status: string;
+    acknowledgement_count: number;
+    timeline_item_count: number;
+    readiness_blocked_count: number;
+    audit_blocked_check_count: number;
+    artifact_pending_count: number;
+    config_pending_count: number;
+    verification_failed_count: number;
+    comparison_difference_count: number;
+    export_bundle_hash: string;
+    allowed_output: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  module_statuses: Array<{
+    name: string;
+    status: string;
+    stage: string;
+    live_trading_enabled: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  }>;
+  health_flags: ScreenReadinessHealthFlag[];
+  failed_flags: ScreenReadinessHealthFlag[];
+  operator_notes: string[];
+  safety_summary: ScreenReadinessVerification["safety_summary"];
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2538,6 +2602,7 @@ const screenReadinessTimeline = ref<ScreenReadinessTimeline | null>(null);
 const screenReadinessExport = ref<ScreenReadinessEvidenceExport | null>(null);
 const screenReadinessVerification = ref<ScreenReadinessVerification | null>(null);
 const screenReadinessComparison = ref<ScreenReadinessComparison | null>(null);
+const screenReadinessHealth = ref<ScreenReadinessHealth | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3491,7 +3556,8 @@ async function loadScreenMonitoring() {
       readinessTimelineData,
       readinessExportData,
       readinessVerificationData,
-      readinessComparisonData
+      readinessComparisonData,
+      readinessHealthData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3507,7 +3573,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenReadinessTimeline>("/api/screen-monitoring/readiness-timeline?limit=40"),
       fetchJson<ScreenReadinessEvidenceExport>("/api/screen-monitoring/readiness-export?limit=40"),
       fetchJson<ScreenReadinessVerification>("/api/screen-monitoring/readiness-export/verify?limit=40"),
-      fetchJson<ScreenReadinessComparison>("/api/screen-monitoring/readiness-export/compare?limit=40")
+      fetchJson<ScreenReadinessComparison>("/api/screen-monitoring/readiness-export/compare?limit=40"),
+      fetchJson<ScreenReadinessHealth>("/api/screen-monitoring/readiness-health?limit=40")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3524,6 +3591,7 @@ async function loadScreenMonitoring() {
     screenReadinessExport.value = readinessExportData;
     screenReadinessVerification.value = readinessVerificationData;
     screenReadinessComparison.value = readinessComparisonData;
+    screenReadinessHealth.value = readinessHealthData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3540,6 +3608,7 @@ async function loadScreenMonitoring() {
     screenReadinessExport.value = null;
     screenReadinessVerification.value = null;
     screenReadinessComparison.value = null;
+    screenReadinessHealth.value = null;
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -3634,6 +3703,20 @@ async function compareScreenReadinessEvidence() {
     );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Readiness evidence comparison 对比失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function refreshScreenReadinessHealth() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenReadinessHealth.value = await fetchJson<ScreenReadinessHealth>(
+      "/api/screen-monitoring/readiness-health?limit=40"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Readiness health digest 生成失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

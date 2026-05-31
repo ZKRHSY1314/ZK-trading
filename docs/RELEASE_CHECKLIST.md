@@ -148,6 +148,9 @@
 - [ ] V4.5-P13 exposes `/api/screen-monitoring/readiness-export/compare` as a read-only evidence stability comparison.
 - [ ] V4.5-P13 comparison performs two API-memory verifier reads, compares stable fields, and reports differences without persisting snapshots.
 - [ ] V4.5-P13 dashboard shows comparison stability/difference counts without writing files, creating downloads, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
+- [ ] V4.5-P14 exposes `/api/screen-monitoring/readiness-health` as a read-only operator digest over readiness, audit, timeline, export, verifier, comparison, and acknowledgements.
+- [ ] V4.5-P14 digest reports module statuses, health flags, blocker/pending counts, evidence hash, and safety summary without persisting snapshots.
+- [ ] V4.5-P14 dashboard shows digest status and failed health flag count without writing files, creating downloads, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

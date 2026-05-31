@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P13",
+            "stage": "V4.5-P14",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -59,6 +59,7 @@ class ScreenMonitoringService:
                 "screen_readiness_evidence_export",
                 "screen_readiness_evidence_verifier",
                 "screen_readiness_evidence_comparison",
+                "screen_readiness_health_digest",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -143,7 +144,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P13",
+            "stage": "V4.5-P14",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -246,7 +247,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P13",
+            "stage": "V4.5-P14",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -303,7 +304,7 @@ class ScreenMonitoringService:
         evidence_bundle = {
             "schema_version": "screen_readiness_evidence_export.v1",
             "status": "export_ready",
-            "stage": "V4.5-P13",
+            "stage": "V4.5-P14",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "bundle_scope": [
                 "capabilities",
@@ -511,7 +512,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_verifier.v1",
             "status": "verification_passed" if not failed else "verification_failed",
-            "stage": "V4.5-P13",
+            "stage": "V4.5-P14",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "export_bundle_hash": bundle.get("bundle_hash"),
             "verified_export_stage": bundle.get("stage"),
@@ -549,7 +550,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_comparison.v1",
             "status": "comparison_stable" if not differences else "comparison_changed",
-            "stage": "V4.5-P13",
+            "stage": "V4.5-P14",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "baseline": baseline_summary,
             "candidate": candidate_summary,
@@ -579,6 +580,112 @@ class ScreenMonitoringService:
             },
             "allowed_output": "review_only_screen_readiness_evidence_comparison",
             "forbidden_actions": baseline.get("forbidden_actions", []),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def screen_readiness_health_digest(self, limit: int = 50) -> dict[str, Any]:
+        safe_limit = max(1, min(limit, 200))
+        capabilities = self.capabilities()
+        readiness = self.provider_readiness_runbook()
+        report = self.screen_readiness_audit_report(limit=min(safe_limit, 100))
+        acknowledgements = self.list_screen_readiness_audit_acknowledgements(limit=safe_limit)
+        timeline = self.screen_readiness_timeline(limit=safe_limit)
+        export = self.screen_readiness_evidence_export(limit=safe_limit)
+        verification = self.verify_screen_readiness_evidence_export(limit=safe_limit)
+        comparison = self.compare_screen_readiness_evidence(limit=safe_limit)
+        report_summary = report.get("summary", {})
+        readiness_blocked = [
+            item.get("name")
+            for item in readiness.get("checks", [])
+            if item.get("status") != "ready"
+        ]
+        health_flags = [
+            self._screen_health_flag("live_trading_disabled", not settings.enable_live_trading, "live trading remains disabled"),
+            self._screen_health_flag("verification_passed", verification.get("status") == "verification_passed", "evidence verifier passed"),
+            self._screen_health_flag("comparison_stable", comparison.get("status") == "comparison_stable", "repeated verifier summaries are stable"),
+            self._screen_health_flag("safety_matrix_passed", bool(report_summary.get("safety_passed")), "audit safety matrix passed"),
+            self._screen_health_flag(
+                "no_file_or_download",
+                export.get("export_metadata", {}).get("writes_file") is False
+                and export.get("export_metadata", {}).get("download_created") is False,
+                "evidence output is API response only",
+            ),
+            self._screen_health_flag(
+                "no_capture_or_ocr",
+                export.get("safety", {}).get("real_screen_capture") is False
+                and export.get("safety", {}).get("pixel_data_stored") is False
+                and export.get("safety", {}).get("ocr_executed") is False,
+                "digest did not require capture, pixels, or OCR",
+            ),
+            self._screen_health_flag(
+                "no_broker_or_order",
+                export.get("safety", {}).get("broker_action") is False
+                and export.get("safety", {}).get("order_action") is False
+                and export.get("safety", {}).get("credential_access") is False,
+                "digest did not require broker, order, or credential access",
+            ),
+        ]
+        failed_flags = [item for item in health_flags if item["status"] != "passed"]
+        return {
+            "schema_version": "screen_readiness_health_digest.v1",
+            "status": "health_digest_clean" if not failed_flags else "health_digest_review_required",
+            "stage": "V4.5-P14",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "summary": {
+                "capture_provider": capabilities.get("capture_provider"),
+                "provider_status": capabilities.get("provider_status"),
+                "readiness_status": readiness.get("status"),
+                "audit_status": report.get("status"),
+                "export_status": export.get("status"),
+                "verification_status": verification.get("status"),
+                "comparison_status": comparison.get("status"),
+                "acknowledgement_count": len(acknowledgements),
+                "timeline_item_count": timeline.get("item_count", 0),
+                "readiness_blocked_count": len(readiness_blocked),
+                "audit_blocked_check_count": report_summary.get("blocked_check_count", 0),
+                "artifact_pending_count": report_summary.get("artifact_pending_count", 0),
+                "config_pending_count": report_summary.get("config_pending_count", 0),
+                "verification_failed_count": verification.get("failed_count", 0),
+                "comparison_difference_count": comparison.get("difference_count", 0),
+                "export_bundle_hash": export.get("bundle_hash"),
+                "allowed_output": "review_only_screen_readiness_health_digest",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            },
+            "module_statuses": [
+                self._screen_digest_module("capabilities", capabilities.get("status"), capabilities.get("stage"), capabilities.get("live_trading_enabled")),
+                self._screen_digest_module("provider_readiness", readiness.get("status"), readiness.get("stage"), readiness.get("live_trading_enabled")),
+                self._screen_digest_module("readiness_audit_report", report.get("status"), report.get("stage"), report.get("live_trading_enabled")),
+                self._screen_digest_module("readiness_timeline", timeline.get("status"), timeline.get("stage"), timeline.get("live_trading_enabled")),
+                self._screen_digest_module("evidence_export", export.get("status"), export.get("stage"), export.get("live_trading_enabled")),
+                self._screen_digest_module("evidence_verifier", verification.get("status"), verification.get("stage"), verification.get("live_trading_enabled")),
+                self._screen_digest_module("evidence_comparison", comparison.get("status"), comparison.get("stage"), comparison.get("live_trading_enabled")),
+            ],
+            "health_flags": health_flags,
+            "failed_flags": failed_flags,
+            "operator_notes": [
+                "Digest is an API response only and does not persist evidence snapshots.",
+                "Provider readiness may still require manual review when provider is disabled or local_safe is not configured.",
+                "Any future real capture/OCR or broker workflow remains outside this digest and requires separate reviewed stages.",
+            ],
+            "safety_summary": {
+                "writes_file": False,
+                "download_created": False,
+                "executes_commands": False,
+                "writes_env": False,
+                "real_screen_capture": False,
+                "pixel_data_stored": False,
+                "ocr_executed": False,
+                "broker_action": False,
+                "order_action": False,
+                "credential_access": False,
+                "live_trading_enabled": False,
+            },
+            "allowed_output": "review_only_screen_readiness_health_digest",
+            "forbidden_actions": export.get("forbidden_actions", []),
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
@@ -687,7 +794,7 @@ class ScreenMonitoringService:
             counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
         return {
             "status": "timeline_ready",
-            "stage": "V4.5-P13",
+            "stage": "V4.5-P14",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "item_count": len(ordered),
             "counts_by_type": counts_by_type,
@@ -749,7 +856,7 @@ class ScreenMonitoringService:
                     "acknowledged",
                     report_hash,
                     str(report.get("status") or "unknown"),
-                    str(report.get("stage") or "V4.5-P13"),
+                    str(report.get("stage") or "V4.5-P14"),
                     json.dumps(summary, ensure_ascii=False, default=str),
                     json.dumps(safety_matrix, ensure_ascii=False, default=str),
                     json.dumps(report, ensure_ascii=False, default=str),
@@ -1684,10 +1791,13 @@ class ScreenMonitoringService:
 
     def _without_evidence_export_runtime_fields(self, value: Any) -> Any:
         if isinstance(value, dict):
+            runtime_keys = {"generated_at", "bundle_hash"}
+            if value.get("item_type") == "readiness_audit_report" and value.get("source_id") == "current":
+                runtime_keys.add("event_ts")
             return {
                 key: self._without_evidence_export_runtime_fields(item)
                 for key, item in value.items()
-                if key not in {"generated_at", "bundle_hash"}
+                if key not in runtime_keys
             }
         if isinstance(value, list):
             return [self._without_evidence_export_runtime_fields(item) for item in value]
@@ -1796,6 +1906,32 @@ class ScreenMonitoringService:
                     }
                 )
         return differences
+
+    def _screen_health_flag(self, name: str, passed: bool, reason: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else "review_required",
+            "reason": reason,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def _screen_digest_module(
+        self,
+        name: str,
+        status: Any,
+        stage: Any,
+        live_trading_enabled: Any,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": status,
+            "stage": stage,
+            "live_trading_enabled": bool(live_trading_enabled),
+            "review_only": True,
+            "simulation_only": True,
+        }
 
     def _screen_evidence_export_safety(
         self,
