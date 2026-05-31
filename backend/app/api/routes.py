@@ -179,6 +179,19 @@ class Dataset2StagingFixPlanInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingFixPlanApprovalInput(BaseModel):
+    fix_plan_event_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_preflight"
+    note: str | None = None
+
+
+class Dataset2StagingFixPreflightInput(BaseModel):
+    approval_event_id: int | None = None
+    requested_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -853,6 +866,37 @@ def dataset2_staging_fix_plan(payload: Dataset2StagingFixPlanInput | None = None
 @router.get("/learning/dataset2/staging/fix-plans")
 def dataset2_staging_fix_plans(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_fix_plans(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/fix-plan/approval")
+def dataset2_staging_fix_plan_approval(payload: Dataset2StagingFixPlanApprovalInput | None = None) -> dict:
+    payload = payload or Dataset2StagingFixPlanApprovalInput()
+    return Dataset2TrainingReadinessService().approve_staging_fix_plan(
+        fix_plan_event_id=payload.fix_plan_event_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/fix-plan/approvals")
+def dataset2_staging_fix_plan_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_fix_plan_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/fix-preflight")
+def dataset2_staging_fix_preflight(payload: Dataset2StagingFixPreflightInput | None = None) -> dict:
+    payload = payload or Dataset2StagingFixPreflightInput()
+    return Dataset2TrainingReadinessService().staging_fix_preflight(
+        approval_event_id=payload.approval_event_id,
+        requested_by=payload.requested_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/fix-preflights")
+def dataset2_staging_fix_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_fix_preflights(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])

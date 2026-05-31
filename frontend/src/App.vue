@@ -1440,6 +1440,32 @@
           </span>
           <small>plans are review-only and do not apply cleanup</small>
         </div>
+        <div v-if="dataset2StagingFixApproval" class="report">
+          <strong>Dataset2 Fix Approval / {{ dataset2StagingFixApproval.status }}</strong>
+          <span>
+            event {{ dataset2StagingFixApproval.event_id }} /
+            fix plan {{ dataset2StagingFixApproval.fix_plan_event_id }} /
+            preflight {{ dataset2StagingFixApproval.decision.can_generate_preflight_now ? "allowed" : "blocked" }}
+          </span>
+          <span>
+            apply fixes {{ dataset2StagingFixApproval.decision.approval_allows_fix_application_now ? "allowed" : "blocked" }} /
+            staging mutation {{ dataset2StagingFixApproval.decision.mutates_staging_records_now ? "yes" : "no" }}
+          </span>
+          <small>{{ dataset2StagingFixApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2StagingFixPreflight" class="report">
+          <strong>Dataset2 Fix Preflight / {{ dataset2StagingFixPreflight.status }}</strong>
+          <span>
+            event {{ dataset2StagingFixPreflight.event_id }} /
+            checks {{ dataset2StagingFixPreflight.summary.check_count }} /
+            blocked {{ dataset2StagingFixPreflight.summary.blocked_check_count }}
+          </span>
+          <span>
+            fixes applied {{ dataset2StagingFixPreflight.decision.fixes_applied_now ? "yes" : "no" }} /
+            training {{ dataset2StagingFixPreflight.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2StagingFixPreflight.decision.next_required_action }}</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -1467,6 +1493,12 @@
           </button>
           <button data-testid="dataset2-staging-fix-plan-button" @click="planDataset2StagingFixes" :disabled="dataset2Loading">
             Dataset2 fix plan
+          </button>
+          <button data-testid="dataset2-staging-fix-approval-button" @click="approveDataset2StagingFixPlan" :disabled="dataset2Loading">
+            Dataset2 approve preflight
+          </button>
+          <button data-testid="dataset2-staging-fix-preflight-button" @click="preflightDataset2StagingFixes" :disabled="dataset2Loading">
+            Dataset2 fix preflight
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -2092,6 +2124,69 @@ type Dataset2StagingFixPlan = {
   review: {
     planned_by: string;
     note?: string | null;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2StagingFixApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  fix_plan_event_id?: number | null;
+  quality_review_id?: number | null;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    note?: string | null;
+  };
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now: boolean;
+    writes_staging_records_now: boolean;
+    writes_learning_samples_now: boolean;
+    mutates_staging_records_now: boolean;
+    approval_allows_fix_application_now: boolean;
+    can_generate_preflight_now: boolean;
+    training_started_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2StagingFixPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  approval_event_id?: number | null;
+  fix_plan_event_id?: number | null;
+  preflight_checks: Array<{
+    id: string;
+    name: string;
+    gate_name?: string;
+    status: string;
+    forbidden_actions: string[];
+    review_only: boolean;
+  }>;
+  summary: {
+    check_count: number;
+    blocked_check_count: number;
+    record_mutation_count: number;
+    action_item_count: number;
+  };
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now: boolean;
+    writes_staging_records_now: boolean;
+    writes_learning_samples_now: boolean;
+    mutates_staging_records_now: boolean;
+    fixes_applied_now: boolean;
+    training_started_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
   };
   safety_summary: Record<string, boolean>;
 };
@@ -5634,6 +5729,10 @@ const dataset2StagingQualityReview = ref<Dataset2StagingQualityReview | null>(nu
 const dataset2StagingQualityReviews = ref<Dataset2StagingQualityReview[]>([]);
 const dataset2StagingFixPlan = ref<Dataset2StagingFixPlan | null>(null);
 const dataset2StagingFixPlans = ref<Dataset2StagingFixPlan[]>([]);
+const dataset2StagingFixApproval = ref<Dataset2StagingFixApproval | null>(null);
+const dataset2StagingFixApprovals = ref<Dataset2StagingFixApproval[]>([]);
+const dataset2StagingFixPreflight = ref<Dataset2StagingFixPreflight | null>(null);
+const dataset2StagingFixPreflights = ref<Dataset2StagingFixPreflight[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -6061,6 +6160,73 @@ async function loadDataset2StagingFixPlans() {
     dataset2StagingFixPlan.value = dataset2StagingFixPlans.value[0] ?? dataset2StagingFixPlan.value;
   } catch {
     dataset2StagingFixPlans.value = [];
+  }
+}
+
+async function approveDataset2StagingFixPlan() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2StagingFixPlan.value?.event_id && !dataset2StagingFixPlan.value?.id) {
+      await planDataset2StagingFixes();
+    }
+    dataset2StagingFixApproval.value = await fetchJson<Dataset2StagingFixApproval>("/api/learning/dataset2/staging/fix-plan/approval", {
+      method: "POST",
+      body: JSON.stringify({
+        fix_plan_event_id: dataset2StagingFixPlan.value?.event_id ?? dataset2StagingFixPlan.value?.id,
+        approved_by: "dashboard",
+        approval_decision: "approved_for_preflight",
+        note: "V5.6-P6 metadata approval for preflight only"
+      })
+    });
+    await loadDataset2StagingFixApprovals();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 fix approval failed";
+    dataset2StagingFixApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function preflightDataset2StagingFixes() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2StagingFixApproval.value?.event_id && !dataset2StagingFixApproval.value?.id) {
+      await approveDataset2StagingFixPlan();
+    }
+    dataset2StagingFixPreflight.value = await fetchJson<Dataset2StagingFixPreflight>("/api/learning/dataset2/staging/fix-preflight", {
+      method: "POST",
+      body: JSON.stringify({
+        approval_event_id: dataset2StagingFixApproval.value?.event_id ?? dataset2StagingFixApproval.value?.id,
+        requested_by: "dashboard",
+        note: "V5.6-P6 deterministic preflight only"
+      })
+    });
+    await loadDataset2StagingFixPreflights();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 fix preflight failed";
+    dataset2StagingFixPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2StagingFixApprovals() {
+  try {
+    dataset2StagingFixApprovals.value = await fetchJson<Dataset2StagingFixApproval[]>("/api/learning/dataset2/staging/fix-plan/approvals?limit=5");
+    dataset2StagingFixApproval.value = dataset2StagingFixApprovals.value[0] ?? dataset2StagingFixApproval.value;
+  } catch {
+    dataset2StagingFixApprovals.value = [];
+  }
+}
+
+async function loadDataset2StagingFixPreflights() {
+  try {
+    dataset2StagingFixPreflights.value = await fetchJson<Dataset2StagingFixPreflight[]>("/api/learning/dataset2/staging/fix-preflights?limit=5");
+    dataset2StagingFixPreflight.value = dataset2StagingFixPreflights.value[0] ?? dataset2StagingFixPreflight.value;
+  } catch {
+    dataset2StagingFixPreflights.value = [];
   }
 }
 
@@ -8052,6 +8218,8 @@ onMounted(async () => {
     loadDataset2Staging(),
     loadDataset2StagingQualityReviews(),
     loadDataset2StagingFixPlans(),
+    loadDataset2StagingFixApprovals(),
+    loadDataset2StagingFixPreflights(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),

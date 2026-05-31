@@ -60,11 +60,13 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P5"
+    stage = "V5.6-P6"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
     staging_fix_plan_event_type = "dataset2_staging_fix_plan"
+    staging_fix_plan_approval_event_type = "dataset2_staging_fix_plan_approval"
+    staging_fix_preflight_event_type = "dataset2_staging_fix_preflight"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -814,6 +816,248 @@ class Dataset2TrainingReadinessService:
             )
         return plans
 
+    def approve_staging_fix_plan(
+        self,
+        fix_plan_event_id: int | None = None,
+        approved_by: str = "operator",
+        approval_decision: str = "approved_for_preflight",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        fix_plan = self._fix_plan_by_id(store, fix_plan_event_id) if fix_plan_event_id else self._latest_fix_plan(store)
+        if fix_plan is None:
+            return {
+                "schema_version": "dataset2_staging_fix_plan_approval.v1",
+                "stage": self.stage,
+                "status": "approval_blocked_missing_fix_plan",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "fix_plan_event_id": fix_plan_event_id,
+                "approval": {
+                    "approved_by": approved_by or "operator",
+                    "approval_decision": approval_decision,
+                    "note": note,
+                    "review_only": True,
+                    "simulation_only": True,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "approval_allows_fix_application_now": False,
+                    "can_generate_preflight_now": False,
+                    "training_started_now": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "generate_dataset2_staging_fix_plan_before_approval",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        allowed_decisions = {"approved_for_preflight", "rejected", "needs_revision"}
+        normalized_decision = approval_decision if approval_decision in allowed_decisions else "needs_revision"
+        can_generate_preflight = normalized_decision == "approved_for_preflight" and fix_plan.get("status") == "fix_plan_ready_for_review"
+        payload = {
+            "schema_version": "dataset2_staging_fix_plan_approval.v1",
+            "stage": self.stage,
+            "status": "fix_plan_approved_for_preflight" if can_generate_preflight else "fix_plan_not_approved_for_preflight",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "fix_plan_event_id": fix_plan.get("id"),
+            "quality_review_id": fix_plan.get("quality_review_id"),
+            "package_id": fix_plan.get("package_id"),
+            "source_fix_plan_status": fix_plan.get("status"),
+            "source_summary": fix_plan.get("summary", {}),
+            "approval": {
+                "approved_by": approved_by or "operator",
+                "approval_decision": normalized_decision,
+                "requested_decision": approval_decision,
+                "note": note,
+                "record_bodies_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "approval_allows_fix_application_now": False,
+                "can_generate_preflight_now": can_generate_preflight,
+                "training_started_now": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "run_dataset2_staging_fix_preflight"
+                    if can_generate_preflight
+                    else "revise_or_reject_dataset2_staging_fix_plan"
+                ),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_fix_plan_approval_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_fix_plan_approvals(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_fix_plan_approval_event_type, max(1, min(limit, 100))),
+        )
+        approvals: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            approvals.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return approvals
+
+    def staging_fix_preflight(
+        self,
+        approval_event_id: int | None = None,
+        requested_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        approval = self._fix_plan_approval_by_id(store, approval_event_id) if approval_event_id else self._latest_fix_plan_approval(store)
+        if approval is None or not approval.get("decision", {}).get("can_generate_preflight_now"):
+            return {
+                "schema_version": "dataset2_staging_fix_preflight.v1",
+                "stage": self.stage,
+                "status": "preflight_blocked_missing_approval",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "approval_event_id": approval_event_id,
+                "fix_plan_event_id": approval.get("fix_plan_event_id") if approval else None,
+                "preflight_checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "record_mutation_count": 0,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "fixes_applied_now": False,
+                    "training_started_now": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "record_approved_dataset2_fix_plan_before_preflight",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        fix_plan = self._fix_plan_by_id(store, int(approval["fix_plan_event_id"]))
+        checks = self._fix_preflight_checks(fix_plan or {})
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        payload = {
+            "schema_version": "dataset2_staging_fix_preflight.v1",
+            "stage": self.stage,
+            "status": "fix_preflight_ready_for_manual_execution" if checks else "fix_preflight_no_actions",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "approval_event_id": approval.get("id"),
+            "fix_plan_event_id": approval.get("fix_plan_event_id"),
+            "quality_review_id": approval.get("quality_review_id"),
+            "package_id": approval.get("package_id"),
+            "preflight_checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "record_mutation_count": 0,
+                "action_item_count": len((fix_plan or {}).get("action_items") or []),
+            },
+            "request": {
+                "requested_by": requested_by or "operator",
+                "note": note,
+                "record_bodies_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "fixes_applied_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": "manual_execute_reviewed_fix_steps_then_rerun_quality_review",
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_fix_preflight_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_fix_preflights(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_fix_preflight_event_type, max(1, min(limit, 100))),
+        )
+        preflights: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            preflights.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return preflights
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -942,6 +1186,58 @@ class Dataset2TrainingReadinessService:
         )
         return self._event_payload(row) if row else None
 
+    def _fix_plan_by_id(self, store: SQLiteStore, fix_plan_id: int | None) -> dict[str, Any] | None:
+        if fix_plan_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_fix_plan_event_type, fix_plan_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_fix_plan(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_fix_plan_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _fix_plan_approval_by_id(self, store: SQLiteStore, approval_id: int | None) -> dict[str, Any] | None:
+        if approval_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_fix_plan_approval_event_type, approval_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_fix_plan_approval(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_fix_plan_approval_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
     def _event_payload(self, row: dict[str, Any]) -> dict[str, Any]:
         payload = json.loads(row.get("payload_json") or "{}")
         return {
@@ -1052,6 +1348,106 @@ class Dataset2TrainingReadinessService:
             "acceptance_checks": acceptance_checks,
             "forbidden_actions": [
                 "modify_dataset2_source_files",
+                "write_learning_samples",
+                "start_training",
+                "create_export_file",
+                "enable_live_trading",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _fix_preflight_checks(self, fix_plan: dict[str, Any]) -> list[dict[str, Any]]:
+        checks: list[dict[str, Any]] = []
+        for item in fix_plan.get("action_items") or []:
+            gate_name = str(item.get("gate_name") or "unknown_gate")
+            if gate_name == "split_coverage":
+                checks.append(
+                    self._preflight_check(
+                        item,
+                        "time_aware_split_policy",
+                        "ready_for_manual_execution",
+                        {
+                            "policy": "sort_by_signal_date_stock_code_pattern_id_then_70_30_train_validation",
+                            "train_ratio": 0.7,
+                            "validation_ratio": 0.3,
+                            "writes_staging_records_now": False,
+                        },
+                    )
+                )
+            elif gate_name == "historical_outcomes_complete":
+                checks.append(
+                    self._preflight_check(
+                        item,
+                        "historical_outcome_join_requirements",
+                        "blocked",
+                        {
+                            "requires_operator_dataset": True,
+                            "required_fields": sorted(HISTORICAL_OUTCOME_FIELDS),
+                            "writes_staging_records_now": False,
+                        },
+                    )
+                )
+            elif gate_name == "quality_flags_cleared":
+                checks.append(
+                    self._preflight_check(
+                        item,
+                        "quality_flag_resolution_requirements",
+                        "blocked",
+                        {
+                            "requires_manual_flag_disposition": True,
+                            "quality_flag_evidence": item.get("evidence", {}),
+                            "writes_staging_records_now": False,
+                        },
+                    )
+                )
+            elif gate_name == "label_support":
+                checks.append(
+                    self._preflight_check(
+                        item,
+                        "label_support_policy_requirements",
+                        "needs_review",
+                        {
+                            "allowed_future_options": ["class_weighting", "label_consolidation", "sample_expansion"],
+                            "label_evidence": item.get("evidence", {}),
+                            "writes_staging_records_now": False,
+                        },
+                    )
+                )
+            else:
+                checks.append(
+                    self._preflight_check(
+                        item,
+                        f"{gate_name}_manual_requirements",
+                        "needs_review",
+                        {
+                            "gate_evidence": item.get("evidence", {}),
+                            "writes_staging_records_now": False,
+                        },
+                    )
+                )
+        return checks
+
+    def _preflight_check(
+        self,
+        item: dict[str, Any],
+        name: str,
+        status: str,
+        details: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "id": f"dataset2_preflight_{self._stable_hash({'item': item.get('id'), 'name': name})[:16]}",
+            "name": name,
+            "source_action_item_id": item.get("id"),
+            "gate_name": item.get("gate_name"),
+            "priority": item.get("priority"),
+            "status": status,
+            "details": details,
+            "acceptance_checks": item.get("acceptance_checks", []),
+            "forbidden_actions": [
+                "modify_dataset2_source_files",
+                "mutate_staging_records",
                 "write_learning_samples",
                 "start_training",
                 "create_export_file",
