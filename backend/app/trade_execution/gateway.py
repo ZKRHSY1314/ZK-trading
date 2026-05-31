@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P9"
+    stage = "V5.5-P10"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -62,6 +62,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_release_readiness_review",
                 "audit_ledger_migration_approval_freshness_review",
                 "audit_ledger_migration_manual_release_package_review",
+                "audit_ledger_migration_release_package_integrity_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -90,6 +91,7 @@ class TradeExecutionGatewayService:
                 "approve_release_from_summary",
                 "reuse_expired_approval_as_current",
                 "write_release_package_file",
+                "approve_release_from_integrity_review",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -783,7 +785,7 @@ class TradeExecutionGatewayService:
             {
                 "name": "credential_exposure",
                 "risk": "Broker passwords, tokens, SMS codes, cookies, account numbers, and trading PINs must never enter this API.",
-                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P9.",
+                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P10.",
                 "status": "blocked_by_design",
             },
             {
@@ -2257,6 +2259,272 @@ class TradeExecutionGatewayService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def audit_ledger_migration_release_package_integrity_review(
+        self,
+        limit: int = 50,
+        max_age_days: int = 7,
+        repeat_checks: int = 2,
+    ) -> dict[str, Any]:
+        safe_repeat_checks = max(2, min(repeat_checks, 5))
+        packages = [
+            self.audit_ledger_migration_release_package(limit=limit, max_age_days=max_age_days)
+            for _ in range(safe_repeat_checks)
+        ]
+        package = packages[0]
+        repeated_package_ids = [item.get("package_id") for item in packages]
+        manifest = package.get("manifest", {})
+        evidence = package.get("evidence", {})
+        decision = package.get("decision", {})
+        safety_summary = package.get("safety_summary", {})
+        items = manifest.get("items", [])
+        item_names = [item.get("name") for item in items]
+        required_item_names = [
+            "P4_disabled_audit_ledger_storage_plan",
+            "P5_migration_spec_verifier",
+            "P6_approval_metadata",
+            "P7_release_readiness",
+            "P8_approval_freshness",
+        ]
+        missing_items = [name for name in required_item_names if name not in item_names]
+        duplicate_items = sorted({name for name in item_names if item_names.count(name) > 1})
+        required_manual_artifacts = [
+            "reviewed_sqlite_migration_file",
+            "explicit_operator_release_approval",
+            "database_backup_and_restore_drill",
+            "rollback_plan_review",
+            "migration_unit_tests",
+            "api_smoke_tests",
+            "hash_chain_verifier_after_restore",
+            "forbidden_tracked_file_scan",
+            "separate_live_integration_review",
+        ]
+        missing_manual_artifacts = [
+            item
+            for item in required_manual_artifacts
+            if item not in manifest.get("required_manual_artifacts_before_execution", [])
+        ]
+        required_forbidden_actions = [
+            "execute_sql",
+            "run_migration_now",
+            "create_table_now",
+            "write_migration_file_now",
+            "write_audit_ledger_row_now",
+            "write_release_package_file",
+            "create_download",
+            "approve_release_now",
+            "enable_gateway_now",
+            "connect_broker",
+            "submit_order",
+            "store_credentials",
+            "screen_click",
+            "keyboard_type",
+        ]
+        missing_forbidden_actions = [
+            action for action in required_forbidden_actions if action not in package.get("forbidden_actions", [])
+        ]
+        required_false_safety_fields = [
+            "executes_sql",
+            "runs_migration_now",
+            "creates_table_now",
+            "writes_database_now",
+            "writes_audit_ledger_row_now",
+            "writes_migration_file_now",
+            "writes_file",
+            "download_created",
+            "approves_release_now",
+            "enables_gateway_now",
+            "connects_broker",
+            "places_real_trade",
+            "stores_credentials",
+        ]
+        unsafe_safety_fields = [
+            field for field in required_false_safety_fields if safety_summary.get(field) is not False
+        ]
+        recomputed_package_id = self._stable_hash(package.get("package_id_inputs", {}))
+        checks = [
+            self._release_integrity_check(
+                "package_id_recomputable",
+                recomputed_package_id == package.get("package_id"),
+                "package_id must be recomputable from package_id_inputs.",
+                {
+                    "expected_package_id": recomputed_package_id,
+                    "actual_package_id": package.get("package_id"),
+                },
+            ),
+            self._release_integrity_check(
+                "package_id_stable_across_reads",
+                len(set(repeated_package_ids)) == 1,
+                "Repeated API-only package generation must produce the same package_id when source evidence is unchanged.",
+                {"repeated_package_ids": repeated_package_ids},
+            ),
+            self._release_integrity_check(
+                "required_manifest_items_present",
+                not missing_items and not duplicate_items,
+                "Manifest must contain each required P4-P8 evidence item once.",
+                {"missing_items": missing_items, "duplicate_items": duplicate_items},
+            ),
+            self._release_integrity_check(
+                "manifest_items_are_review_only",
+                all(
+                    item.get("included") is True
+                    and item.get("review_only") is True
+                    and item.get("simulation_only") is True
+                    and item.get("live_trading_enabled") is False
+                    for item in items
+                ),
+                "Every manifest item must remain review-only, simulation-only, and live-disabled.",
+                {"item_count": len(items)},
+            ),
+            self._release_integrity_check(
+                "manual_artifacts_complete",
+                not missing_manual_artifacts,
+                "Release package must list the required manual artifacts before any future migration execution review.",
+                {"missing_manual_artifacts": missing_manual_artifacts},
+            ),
+            self._release_integrity_check(
+                "api_response_only_delivery",
+                manifest.get("delivery") == "api_response_only"
+                and manifest.get("writes_file") is False
+                and manifest.get("download_created") is False,
+                "Release package must stay API-response-only with no file write or download creation.",
+                {
+                    "delivery": manifest.get("delivery"),
+                    "writes_file": manifest.get("writes_file"),
+                    "download_created": manifest.get("download_created"),
+                },
+            ),
+            self._release_integrity_check(
+                "decision_remains_non_executable",
+                decision.get("migration_allowed_now") is False
+                and decision.get("execution_allowed_now") is False
+                and decision.get("release_approved_now") is False,
+                "Integrity review must not convert package evidence into execution, migration, or release approval.",
+                {
+                    "migration_allowed_now": decision.get("migration_allowed_now"),
+                    "execution_allowed_now": decision.get("execution_allowed_now"),
+                    "release_approved_now": decision.get("release_approved_now"),
+                },
+            ),
+            self._release_integrity_check(
+                "safety_summary_allows_no_mutation",
+                not unsafe_safety_fields,
+                "Safety summary must explicitly deny SQL, migrations, file writes, audit-ledger writes, gateway enablement, broker actions, and credentials.",
+                {"unsafe_safety_fields": unsafe_safety_fields},
+            ),
+            self._release_integrity_check(
+                "forbidden_actions_complete",
+                not missing_forbidden_actions,
+                "Forbidden actions must include execution, migration, file, broker, credential, order, and screen-control actions.",
+                {"missing_forbidden_actions": missing_forbidden_actions},
+            ),
+            self._release_integrity_check(
+                "evidence_matches_package_inputs",
+                package.get("package_id_inputs", {}).get("spec_hash") == evidence.get("spec_hash")
+                and package.get("package_id_inputs", {}).get("latest_approval_spec_hash") == evidence.get("approved_spec_hash")
+                and package.get("package_id_inputs", {}).get("release_status") == evidence.get("release_readiness_status")
+                and package.get("package_id_inputs", {}).get("approval_review_status") == evidence.get("approval_review_status"),
+                "Package inputs must trace back to the evidence object that an operator reviews.",
+                {
+                    "package_id_inputs": package.get("package_id_inputs"),
+                    "evidence": evidence,
+                },
+            ),
+            self._release_integrity_check(
+                "live_trading_disabled",
+                package.get("live_trading_enabled") is False
+                and manifest.get("live_trading_enabled") is False
+                and evidence.get("live_trading_enabled") is False
+                and decision.get("live_trading_enabled") is False
+                and not settings.enable_live_trading,
+                "Live trading must remain disabled across package, manifest, evidence, and decision.",
+                {
+                    "package_live_trading_enabled": package.get("live_trading_enabled"),
+                    "manifest_live_trading_enabled": manifest.get("live_trading_enabled"),
+                    "evidence_live_trading_enabled": evidence.get("live_trading_enabled"),
+                    "decision_live_trading_enabled": decision.get("live_trading_enabled"),
+                    "settings_live_trading_enabled": settings.enable_live_trading,
+                },
+            ),
+        ]
+        failed_checks = [check for check in checks if check["status"] == "failed"]
+        release_package_ready = package.get("status") == "release_package_ready_for_manual_review"
+        if failed_checks:
+            status = "integrity_review_failed"
+            next_required_action = "repair_release_package_integrity"
+        elif release_package_ready:
+            status = "integrity_review_passed"
+            next_required_action = "manual_release_review"
+        else:
+            status = "integrity_review_passed_release_evidence_pending"
+            next_required_action = "complete_missing_release_evidence"
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_release_package_integrity_review.v1",
+            "status": status,
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "source_package_id": package.get("package_id"),
+            "source_package_status": package.get("status"),
+            "recomputed_package_id": recomputed_package_id,
+            "repeat_checks": safe_repeat_checks,
+            "repeated_package_ids": repeated_package_ids,
+            "checks": checks,
+            "failed_checks": failed_checks,
+            "failed_check_count": len(failed_checks),
+            "manifest_summary": {
+                "item_count": len(items),
+                "required_item_names": required_item_names,
+                "missing_items": missing_items,
+                "duplicate_items": duplicate_items,
+                "missing_manual_artifacts": missing_manual_artifacts,
+                "delivery": manifest.get("delivery"),
+                "writes_file": manifest.get("writes_file"),
+                "download_created": manifest.get("download_created"),
+                "review_only": manifest.get("review_only"),
+                "simulation_only": manifest.get("simulation_only"),
+                "live_trading_enabled": manifest.get("live_trading_enabled"),
+            },
+            "decision": {
+                "package_id_stable": len(set(repeated_package_ids)) == 1,
+                "manifest_integrity_passed": not failed_checks,
+                "release_package_ready": release_package_ready,
+                "go_no_go": "ready_for_manual_release_review" if status == "integrity_review_passed" else "no_go",
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "release_approved_now": False,
+                "next_required_action": next_required_action,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "executes_sql": False,
+                "runs_migration_now": False,
+                "creates_table_now": False,
+                "writes_database_now": False,
+                "writes_audit_ledger_row_now": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "approves_release_now": False,
+                "enables_gateway_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+                "mutates_source_package": False,
+            },
+            "allowed_output": "review_only_audit_ledger_migration_release_package_integrity_review",
+            "forbidden_actions": package.get("forbidden_actions", [])
+            + [
+                "mutate_release_package",
+                "approve_release_from_integrity_review",
+                "persist_integrity_snapshot",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -2348,21 +2616,21 @@ class TradeExecutionGatewayService:
                 "passed",
                 "broker_adapter_threat_model_review_ready",
                 "future_broker_adapter_threat_model",
-                "V5.5-P9 preserves threat categories and mitigations without implementing broker connectivity.",
+                "V5.5-P10 preserves threat categories and mitigations without implementing broker connectivity.",
             ),
             self._gate(
                 "broker_adapter_interface_draft_required",
                 "passed",
                 "broker_adapter_interface_draft_review_ready",
                 "future_broker_adapter_interface_draft",
-                "V5.5-P9 preserves provider-neutral interface metadata without executable adapter methods.",
+                "V5.5-P10 preserves provider-neutral interface metadata without executable adapter methods.",
             ),
             self._gate(
                 "broker_adapter_contract_verification_required",
                 "passed",
                 "fixture_contract_verification_passed",
                 "fixture_only_broker_adapter_contract_verifier",
-                "V5.5-P9 preserves fixture contract verification with no broker connectivity.",
+                "V5.5-P10 preserves fixture contract verification with no broker connectivity.",
             ),
             self._gate(
                 "order_lifecycle_failure_fixtures_required",
@@ -2420,12 +2688,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_release_package_manifest",
                 "V5.5-P9 aggregates audit ledger migration evidence into an API-only manual release package manifest without writing files or enabling execution.",
             ),
+            self._gate(
+                "audit_ledger_migration_release_package_integrity_review_required",
+                "passed",
+                "audit_ledger_migration_release_package_integrity_review_ready",
+                "review_only_release_package_integrity_review",
+                "V5.5-P10 verifies package-id stability, manifest completeness, safety flags, and evidence traceability without approving releases or mutating package evidence.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_package_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_release_package_integrity_review_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -2453,9 +2728,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_release_readiness_ready": True,
                 "audit_ledger_migration_approval_freshness_ready": True,
                 "audit_ledger_migration_manual_release_package_ready": True,
+                "audit_ledger_migration_release_package_integrity_review_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "review_audit_ledger_migration_manual_release_package",
+                "next_required_action": "review_audit_ledger_migration_release_package_integrity",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -2576,6 +2852,12 @@ class TradeExecutionGatewayService:
             {
                 "name": "AuditLedgerMigrationManualReleasePackageManifest",
                 "status": "review_manual_release_package_defined",
+                "required_before": "any_manual_audit_ledger_migration_release",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationReleasePackageIntegrityReview",
+                "status": "review_release_package_integrity_defined",
                 "required_before": "any_manual_audit_ledger_migration_release",
                 "review_only": True,
             },
@@ -2782,6 +3064,23 @@ class TradeExecutionGatewayService:
             "generated_at": generated_at,
             "safety_passed": safety_passed,
             "included": True,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _release_integrity_check(
+        self,
+        name: str,
+        passed: bool,
+        reason: str,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else "failed",
+            "reason": reason,
+            "details": details or {},
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
