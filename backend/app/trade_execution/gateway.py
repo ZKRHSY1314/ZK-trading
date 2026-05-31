@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P15"
+    stage = "V5.5-P16"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -68,6 +68,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_evidence_comparison",
                 "audit_ledger_migration_manual_release_health_digest",
                 "audit_ledger_migration_manual_release_health_digest_history_retention_proposal",
+                "audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -102,6 +103,9 @@ class TradeExecutionGatewayService:
                 "persist_manual_release_evidence_comparison",
                 "persist_manual_release_health_digest",
                 "persist_manual_release_health_digest_history",
+                "create_manual_release_health_digest_history_table",
+                "run_manual_release_health_digest_history_migration",
+                "write_manual_release_health_digest_history_migration_file",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -3654,6 +3658,237 @@ class TradeExecutionGatewayService:
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
         }
+
+    def audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist(
+        self,
+        baseline_evidence: dict[str, Any] | None = None,
+        candidate_evidence: dict[str, Any] | None = None,
+        limit: int = 50,
+        max_age_days: int = 7,
+        repeat_checks: int = 2,
+    ) -> dict[str, Any]:
+        proposal_payload = self.audit_ledger_migration_manual_release_health_digest_history_retention_proposal(
+            baseline_evidence=baseline_evidence,
+            candidate_evidence=candidate_evidence,
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        proposal = proposal_payload.get("proposal", {})
+        required_fields = list(proposal.get("required_fields", []))
+        excluded_fields = list(proposal.get("excluded_fields", []))
+        sensitive_exclusions = [
+            "raw_manual_release_evidence",
+            "artifact_file_contents",
+            "broker_credentials",
+            "orders",
+            "plaintext_secrets",
+        ]
+        metadata_json_fields = {
+            "module_statuses",
+            "attention_item_names",
+            "failed_check_names",
+            "health_flags",
+            "summary",
+            "safety_summary",
+        }
+        integer_fields = {"recommended_retention_days", "max_records_per_day"}
+        field_mapping = [
+            {
+                "source_field": field,
+                "target_field": field,
+                "storage": "metadata_json" if field in metadata_json_fields else "integer" if field in integer_fields else "text",
+                "required": True,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+            for field in required_fields
+        ]
+        migration_plan = {
+            "target_table": "manual_release_health_digest_history",
+            "source_schema": proposal_payload.get("schema_version"),
+            "source_proposal_id": proposal_payload.get("proposal_id"),
+            "source_digest_stage": proposal_payload.get("current_digest_summary", {}).get("digest_stage"),
+            "migration_type": "future_reviewed_sqlite_metadata_table",
+            "table_exists_now": False,
+            "create_table_now": False,
+            "backfill_now": False,
+            "writes_database_now": False,
+            "writes_migration_file_now": False,
+            "apply_automatically": False,
+            "operator_review_required": True,
+            "rollback_required": True,
+            "test_required": True,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        checks = [
+            self._manual_release_digest_history_gate(
+                "proposal_available",
+                proposal_payload.get("status") == "history_retention_proposal_ready",
+                "P16 readiness requires the P15 digest history retention proposal to be available and ready.",
+            ),
+            self._manual_release_digest_history_gate(
+                "target_table_defined",
+                "health_digest_history" in migration_plan["target_table"],
+                "A future target table name must be explicit before drafting any reviewed migration spec.",
+            ),
+            self._manual_release_digest_history_gate(
+                "required_fields_defined",
+                len(required_fields) >= 10,
+                "Future history migration must map the minimum digest metadata fields.",
+            ),
+            self._manual_release_digest_history_gate(
+                "sensitive_fields_excluded",
+                all(field in excluded_fields for field in sensitive_exclusions),
+                "Future migration must exclude raw evidence, artifact contents, credentials, orders, and secrets.",
+            ),
+            self._manual_release_digest_history_gate(
+                "retention_policy_defined",
+                proposal.get("recommended_retention_days", 0) > 0 and proposal.get("max_records_per_day", 0) > 0,
+                "Retention limits must be defined before a future table can be reviewed.",
+            ),
+            self._manual_release_digest_history_gate(
+                "dedupe_key_defined",
+                bool(proposal.get("dedupe_key")),
+                "A deterministic dedupe key must exist before any future history persistence review.",
+            ),
+            self._manual_release_digest_history_gate(
+                "manual_operator_review_required",
+                proposal.get("operator_review_required") is True and proposal.get("apply_automatically") is False,
+                "Future migration must require manual operator review and must not apply automatically.",
+            ),
+            self._manual_release_digest_history_gate(
+                "migration_file_required",
+                False,
+                "A concrete migration file is intentionally not written in P16 and must be drafted in a later reviewed stage.",
+                status_if_false="review_required",
+            ),
+            self._manual_release_digest_history_gate(
+                "rollback_plan_required",
+                False,
+                "A concrete rollback plan is intentionally not attached in P16 and must be reviewed before migration execution.",
+                status_if_false="review_required",
+            ),
+            self._manual_release_digest_history_gate(
+                "test_plan_required",
+                False,
+                "A concrete migration test plan is intentionally not attached in P16 and must be reviewed before migration execution.",
+                status_if_false="review_required",
+            ),
+            self._manual_release_digest_history_gate(
+                "persistence_not_enabled_now",
+                migration_plan["writes_database_now"] is False and migration_plan["create_table_now"] is False,
+                "P16 must remain metadata-only and must not create tables or write history rows.",
+            ),
+            self._manual_release_digest_history_gate(
+                "live_trading_disabled",
+                settings.enable_live_trading is False and proposal_payload.get("live_trading_enabled") is False,
+                "Live trading must stay disabled while reviewing future digest history migration readiness.",
+            ),
+        ]
+        blocked_checks = [check for check in checks if check["status"] == "blocked"]
+        review_required_checks = [check for check in checks if check["status"] == "review_required"]
+        checklist_id = self._stable_hash(
+            {
+                "source_proposal_id": proposal_payload.get("proposal_id"),
+                "target_table": migration_plan["target_table"],
+                "field_mapping": [item["target_field"] for item in field_mapping],
+                "check_statuses": {check["name"]: check["status"] for check in checks},
+            }
+        )
+        status = "history_migration_readiness_review_ready" if not blocked_checks else "history_migration_readiness_blocked"
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist.v1",
+            "status": status,
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "checklist_id": checklist_id,
+            "source_proposal": {
+                "proposal_id": proposal_payload.get("proposal_id"),
+                "status": proposal_payload.get("status"),
+                "schema_version": proposal_payload.get("schema_version"),
+                "allowed_output": proposal_payload.get("allowed_output"),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "migration_plan": migration_plan,
+            "field_mapping": field_mapping,
+            "excluded_fields": excluded_fields,
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "passed_check_count": sum(1 for check in checks if check["status"] == "passed"),
+                "review_required_count": len(review_required_checks),
+                "blocked_check_count": len(blocked_checks),
+                "field_mapping_count": len(field_mapping),
+                "excluded_field_count": len(excluded_fields),
+                "migration_allowed_now": False,
+                "manual_review_required": True,
+            },
+            "decision": {
+                "migration_readiness_review_ready": not blocked_checks,
+                "history_persistence_enabled_now": False,
+                "can_create_table_now": False,
+                "can_write_history_row_now": False,
+                "can_run_migration_now": False,
+                "can_write_migration_file_now": False,
+                "release_approved_now": False,
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "gateway_can_execute": False,
+                "go_no_go": "ready_for_future_migration_spec_review" if not blocked_checks else "no_go",
+                "next_required_action": "draft_review_only_history_migration_spec",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "persists_manual_release_health_digest": False,
+                "persists_manual_release_health_digest_history": False,
+                "persists_manual_release_evidence": False,
+                "persists_manual_release_evidence_comparison": False,
+                "history_persistence_enabled_now": False,
+                "writes_database_now": False,
+                "creates_table_now": False,
+                "writes_history_row_now": False,
+                "executes_sql": False,
+                "runs_migration_now": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "executes_commands": False,
+                "records_manual_review_now": False,
+                "approves_release_now": False,
+                "enables_gateway_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+            },
+            "allowed_output": "review_only_manual_release_health_digest_history_migration_readiness_checklist",
+            "forbidden_actions": [
+                "create_history_table",
+                "write_history_row",
+                "run_history_migration",
+                "write_migration_file",
+                "persist_manual_release_health_digest_history",
+                "persist_manual_release_health_digest",
+                "persist_manual_release_evidence",
+                "execute_sql",
+                "approve_release_from_migration_readiness",
+                "enable_gateway_from_migration_readiness",
+                "connect_broker_from_migration_readiness",
+                "create_history_download",
+                "write_history_file",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -3859,12 +4094,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_release_health_digest_history_retention_proposal",
                 "V5.5-P15 proposes metadata-only future health digest history retention without creating tables, writing records, or running migrations.",
             ),
+            self._gate(
+                "audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist_required",
+                "passed",
+                "audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist_ready",
+                "review_only_manual_release_health_digest_history_migration_readiness_checklist",
+                "V5.5-P16 checks future health digest history migration readiness without creating tables, writing rows, writing files, or running migrations.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_retention_proposal_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -3898,9 +4140,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_evidence_comparison_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_retention_proposal_ready": True,
+                "audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_retention_proposal",
+                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -4058,6 +4301,12 @@ class TradeExecutionGatewayService:
                 "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryRetentionProposal",
                 "status": "review_manual_release_health_digest_history_retention_proposal_defined",
                 "required_before": "any_manual_release_health_digest_history_persistence",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryMigrationReadinessChecklist",
+                "status": "review_manual_release_health_digest_history_migration_readiness_checklist_defined",
+                "required_before": "any_manual_release_health_digest_history_migration_spec",
                 "review_only": True,
             },
         ]
@@ -4348,10 +4597,11 @@ class TradeExecutionGatewayService:
         name: str,
         passed: bool,
         reason: str,
+        status_if_false: str = "blocked",
     ) -> dict[str, Any]:
         return {
             "name": name,
-            "status": "passed" if passed else "blocked",
+            "status": "passed" if passed else status_if_false,
             "reason": reason,
             "review_only": True,
             "simulation_only": True,
