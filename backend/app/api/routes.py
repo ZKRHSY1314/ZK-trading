@@ -149,6 +149,11 @@ def trade_execution_gateway_audit_evidence_schema() -> dict:
     return TradeExecutionGatewayService().audit_evidence_schema()
 
 
+@router.get("/trade-execution-gateway/risk-gate-contract")
+def trade_execution_gateway_risk_gate_contract() -> dict:
+    return TradeExecutionGatewayService().risk_gate_contract()
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()

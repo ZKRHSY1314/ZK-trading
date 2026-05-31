@@ -183,6 +183,10 @@
 - [ ] V5.0-P1 exposes `GET /api/trade-execution-gateway/audit-evidence-schema` as review-only metadata for future append-only audit evidence.
 - [ ] V5.0-P1 dashboard shows confirmation TTL, required operator inputs, forbidden sensitive inputs, audit fields, immutability rules, and no-execution/no-persistence decisions.
 - [ ] V5.0-P1 must keep `contract_allows_execution_now=false`, `schema_allows_execution_now=false`, `writes_database_now=false`, `migration_allowed_now=false`, and `live_trading_enabled=false`.
+- [ ] V5.0-P2 exposes `GET /api/trade-execution-gateway/risk-gate-contract` as review-only metadata for future portfolio and symbol risk gates.
+- [ ] V5.0-P2 risk gate contract covers total exposure, single position, daily loss, drawdown, consecutive loss cooldown, new positions per day, market regime, quote quality, limit-up/down, liquidity, T+1, lifecycle, and manual stop flags.
+- [ ] V5.0-P2 dashboard shows portfolio/symbol gates, hard-block statuses, required evidence hashes, and explicit no manual/AI override behavior.
+- [ ] V5.0-P2 must keep `contract_allows_execution_now=false`, `gateway_can_execute=false`, `places_real_trade=false`, `connects_broker=false`, and `live_trading_enabled=false`.
 
 ## 14. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:

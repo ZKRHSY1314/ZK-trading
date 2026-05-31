@@ -4,12 +4,13 @@ from datetime import datetime
 from typing import Any
 
 from app.config import settings
+from app.risk.portfolio import DEFAULT_LIMITS
 
 
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.0-P1"
+    stage = "V5.0-P2"
 
     def capabilities(self) -> dict[str, Any]:
         gates = self.review_gates()["gates"]
@@ -38,6 +39,7 @@ class TradeExecutionGatewayService:
                 "rollback_plan_review",
                 "manual_confirmation_contract_review",
                 "audit_evidence_schema_review",
+                "portfolio_symbol_risk_gate_contract_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -211,6 +213,156 @@ class TradeExecutionGatewayService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def risk_gate_contract(self) -> dict[str, Any]:
+        portfolio_gates = [
+            self._risk_gate(
+                "total_exposure",
+                "max_total_exposure",
+                DEFAULT_LIMITS["max_total_exposure"],
+                "blocked",
+                "Stop all new entries when total portfolio exposure reaches the limit.",
+            ),
+            self._risk_gate(
+                "single_position",
+                "max_single_position",
+                DEFAULT_LIMITS["max_single_position"],
+                "blocked",
+                "Block add-on or new exposure when one symbol reaches the single-position limit.",
+            ),
+            self._risk_gate(
+                "max_daily_loss",
+                "max_daily_loss",
+                DEFAULT_LIMITS["max_daily_loss"],
+                "blocked",
+                "Stop new entries when daily simulated loss reaches the future gateway threshold.",
+            ),
+            self._risk_gate(
+                "max_drawdown_stop",
+                "max_drawdown_stop",
+                DEFAULT_LIMITS["max_drawdown_stop"],
+                "blocked",
+                "Stop new entries when drawdown reaches the future gateway threshold.",
+            ),
+            self._risk_gate(
+                "consecutive_loss_cooldown",
+                "consecutive_loss_cooldown",
+                DEFAULT_LIMITS["consecutive_loss_cooldown"],
+                "blocked",
+                "Require cooldown after consecutive losing outcomes before any future order review.",
+            ),
+            self._risk_gate(
+                "max_new_positions_per_day",
+                "max_new_positions_per_day",
+                DEFAULT_LIMITS["max_new_positions_per_day"],
+                "blocked",
+                "Block additional new positions once the daily new-position count reaches the limit.",
+            ),
+            self._risk_gate(
+                "market_regime",
+                "no_extreme_risk_new_entries",
+                "extreme_risk blocks; weak reduces size",
+                "blocked_or_reduced",
+                "Extreme market regime must block new entries; weak regime may only reduce future size.",
+            ),
+        ]
+        symbol_gates = [
+            self._risk_gate(
+                "symbol_price_quality",
+                "fresh_reliable_quote_required",
+                "quality_status not stale/degraded/missing",
+                "blocked",
+                "Block review if quote evidence is stale, missing, degraded, or fallback-only.",
+            ),
+            self._risk_gate(
+                "limit_up_down_state",
+                "no_unexecutable_limit_state",
+                "limit-up buy and limit-down sell are blocked",
+                "blocked",
+                "Respect A-share limit-up/limit-down execution realism before future execution review.",
+            ),
+            self._risk_gate(
+                "liquidity_participation",
+                "max_participation_rate",
+                0.005,
+                "blocked_or_partial",
+                "Reject or reduce future action if expected participation exceeds liquidity limits.",
+            ),
+            self._risk_gate(
+                "t_plus_1",
+                "same_day_sell_blocked",
+                "T+1 compliance required",
+                "blocked",
+                "Block same-day sell review for positions that would violate A-share T+1.",
+            ),
+            self._risk_gate(
+                "candidate_lifecycle",
+                "review_state_required",
+                "approved_review_or_simulation_only",
+                "blocked",
+                "Future actions require candidate lifecycle evidence and cannot bypass review states.",
+            ),
+            self._risk_gate(
+                "manual_stop_flags",
+                "no_operator_or_system_stop_flag",
+                "no stop_new_entries flag",
+                "blocked",
+                "Operator stops, degraded providers, and risk stop flags override return-seeking logic.",
+            ),
+        ]
+        return {
+            "schema_version": "trade_execution_risk_gate_contract.v1",
+            "status": "risk_gate_contract_review_ready",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "contract_name": "PortfolioSymbolRiskGateContract",
+            "contract_state": "defined_for_review_only",
+            "portfolio_gates": portfolio_gates,
+            "symbol_gates": symbol_gates,
+            "ordering": [
+                "system_safety_flags",
+                "data_quality",
+                "portfolio_risk",
+                "symbol_risk",
+                "manual_confirmation",
+                "audit_evidence",
+                "rollback_readiness",
+            ],
+            "hard_block_statuses": ["blocked", "blocked_or_partial", "blocked_or_reduced"],
+            "required_evidence_hashes": [
+                "portfolio_risk_snapshot_hash",
+                "symbol_risk_snapshot_hash",
+                "market_data_quality_hash",
+                "candidate_lifecycle_hash",
+                "manual_confirmation_hash",
+                "audit_schema_hash",
+            ],
+            "decision": {
+                "contract_ready_for_review": True,
+                "contract_allows_execution_now": False,
+                "risk_gate_can_override_manual_confirmation": True,
+                "requires_fresh_risk_snapshot": True,
+                "requires_future_rollback_runbook": True,
+                "next_required_action": "design_review_only_rollback_runbook",
+            },
+            "integration_notes": {
+                "source_portfolio_limits": "app.risk.portfolio.DEFAULT_LIMITS",
+                "risk_posture_if_blocked": "stop_new_entries",
+                "manual_confirmation_override_allowed": False,
+                "ai_override_allowed": False,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "risk_contract_ready": True,
+                "gateway_can_execute": False,
+                "places_real_trade": False,
+                "connects_broker": False,
+            },
+            "allowed_output": "review_only_trade_execution_risk_gate_contract",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -257,10 +409,10 @@ class TradeExecutionGatewayService:
             ),
             self._gate(
                 "risk_gate_contract_required",
-                "review_required",
-                "not_implemented",
+                "passed",
+                "risk_gate_contract_review_ready",
                 "portfolio_and_symbol_risk_contract",
-                "A future gateway must bind portfolio risk, symbol risk, cooldowns, and rollback before execution.",
+                "V5.0-P2 defines review-only portfolio and symbol risk gates; they still cannot execute trades.",
             ),
             self._gate(
                 "audit_and_rollback_required",
@@ -282,10 +434,10 @@ class TradeExecutionGatewayService:
             "decision": {
                 "gateway_can_execute": False,
                 "manual_confirmation_contract_ready": True,
-                "risk_contract_ready": False,
+                "risk_contract_ready": True,
                 "audit_contract_ready": True,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "design_portfolio_risk_gate_and_rollback_contract",
+                "next_required_action": "design_review_only_rollback_runbook",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -303,7 +455,7 @@ class TradeExecutionGatewayService:
             },
             {
                 "name": "PortfolioRiskGateContract",
-                "status": "not_implemented",
+                "status": "review_contract_defined",
                 "required_before": "any_gateway_enablement",
                 "review_only": True,
             },
@@ -348,6 +500,27 @@ class TradeExecutionGatewayService:
             "sensitive": sensitive,
             "required": True,
             "review_only": True,
+        }
+
+    def _risk_gate(
+        self,
+        name: str,
+        source_limit: str,
+        limit: Any,
+        failure_status: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "source_limit": source_limit,
+            "limit": limit,
+            "failure_status": failure_status,
+            "reason": reason,
+            "manual_override_allowed": False,
+            "ai_override_allowed": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
         }
 
     def _gate(

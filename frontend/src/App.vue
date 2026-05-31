@@ -771,13 +771,14 @@
           <button class="disabled-live" disabled>实盘执行未启用</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P1" }}</span>
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P2" }}</span>
           <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
           <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
           <span>凭证存储 {{ tradeGatewayCapabilities?.credential_storage_enabled ? "开启" : "关闭" }}</span>
           <span>人工确认 {{ tradeGatewayManualContract?.status ?? "未加载" }}</span>
           <span>审计Schema {{ tradeGatewayAuditSchema?.status ?? "未加载" }}</span>
+          <span>风险契约 {{ tradeGatewayRiskContract?.status ?? "未加载" }}</span>
           <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
           <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
           <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
@@ -808,6 +809,21 @@
             <span>{{ tradeGatewayAuditSchema.fields.map((item) => item.name).join(" / ") }}</span>
             <small>{{ tradeGatewayAuditSchema.immutability_rules.join(" / ") }}</small>
           </div>
+          <div v-if="tradeGatewayRiskContract" class="score-item">
+            <strong>Risk Gate / {{ tradeGatewayRiskContract.status }}</strong>
+            <span>{{ tradeGatewayRiskContract.contract_state }} / {{ tradeGatewayRiskContract.allowed_output }}</span>
+            <small>执行 {{ tradeGatewayRiskContract.decision.contract_allows_execution_now ? "允许" : "禁止" }} / 风险可覆盖人工确认 {{ tradeGatewayRiskContract.decision.risk_gate_can_override_manual_confirmation ? "是" : "否" }}</small>
+          </div>
+          <div v-if="tradeGatewayRiskContract" class="score-item">
+            <strong>Portfolio Gates</strong>
+            <span>{{ tradeGatewayRiskContract.portfolio_gates.map((item) => `${item.name}:${item.failure_status}`).join(" / ") }}</span>
+            <small>人工覆盖 {{ tradeGatewayRiskContract.integration_notes.manual_confirmation_override_allowed ? "允许" : "禁止" }} / AI覆盖 {{ tradeGatewayRiskContract.integration_notes.ai_override_allowed ? "允许" : "禁止" }}</small>
+          </div>
+          <div v-if="tradeGatewayRiskContract" class="score-item">
+            <strong>Symbol Gates</strong>
+            <span>{{ tradeGatewayRiskContract.symbol_gates.map((item) => `${item.name}:${item.failure_status}`).join(" / ") }}</span>
+            <small>{{ tradeGatewayRiskContract.required_evidence_hashes.join(" / ") }}</small>
+          </div>
           <div
             v-for="component in tradeGatewayCapabilities.required_future_components"
             :key="component.name"
@@ -834,7 +850,7 @@
           <div class="score-item">
             <strong>Forbidden Modes</strong>
             <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
-            <small>这些能力在 V5.0-P1 只能作为阻断项展示。</small>
+            <small>这些能力在 V5.0-P2 只能作为阻断项展示。</small>
           </div>
         </div>
         <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
@@ -1642,6 +1658,51 @@ type TradeGatewayAuditSchema = {
     schema_persistence_enabled_now: boolean;
     migration_allowed_now: boolean;
     next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+  allowed_output: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayRiskGate = {
+  name: string;
+  source_limit: string;
+  limit: string | number;
+  failure_status: string;
+  reason: string;
+  manual_override_allowed: boolean;
+  ai_override_allowed: boolean;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayRiskContract = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  contract_name: string;
+  contract_state: string;
+  portfolio_gates: TradeGatewayRiskGate[];
+  symbol_gates: TradeGatewayRiskGate[];
+  ordering: string[];
+  hard_block_statuses: string[];
+  required_evidence_hashes: string[];
+  decision: {
+    contract_ready_for_review: boolean;
+    contract_allows_execution_now: boolean;
+    risk_gate_can_override_manual_confirmation: boolean;
+    requires_fresh_risk_snapshot: boolean;
+    requires_future_rollback_runbook: boolean;
+    next_required_action: string;
+  };
+  integration_notes: {
+    source_portfolio_limits: string;
+    risk_posture_if_blocked: string;
+    manual_confirmation_override_allowed: boolean;
+    ai_override_allowed: boolean;
   };
   safety_summary: Record<string, boolean>;
   allowed_output: string;
@@ -3225,6 +3286,7 @@ const tradeGatewayCapabilities = ref<TradeGatewayCapabilities | null>(null);
 const tradeGatewayReviewGates = ref<TradeGatewayReviewGates | null>(null);
 const tradeGatewayManualContract = ref<TradeGatewayManualContract | null>(null);
 const tradeGatewayAuditSchema = ref<TradeGatewayAuditSchema | null>(null);
+const tradeGatewayRiskContract = ref<TradeGatewayRiskContract | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -3660,16 +3722,18 @@ async function loadTradeExecutionGateway() {
   tradeGatewayLoading.value = true;
   error.value = "";
   try {
-    const [capabilitiesData, gatesData, manualContractData, auditSchemaData] = await Promise.all([
+    const [capabilitiesData, gatesData, manualContractData, auditSchemaData, riskContractData] = await Promise.all([
       fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
       fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates"),
       fetchJson<TradeGatewayManualContract>("/api/trade-execution-gateway/manual-confirmation-contract"),
-      fetchJson<TradeGatewayAuditSchema>("/api/trade-execution-gateway/audit-evidence-schema")
+      fetchJson<TradeGatewayAuditSchema>("/api/trade-execution-gateway/audit-evidence-schema"),
+      fetchJson<TradeGatewayRiskContract>("/api/trade-execution-gateway/risk-gate-contract")
     ]);
     tradeGatewayCapabilities.value = capabilitiesData;
     tradeGatewayReviewGates.value = gatesData;
     tradeGatewayManualContract.value = manualContractData;
     tradeGatewayAuditSchema.value = auditSchemaData;
+    tradeGatewayRiskContract.value = riskContractData;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
   } finally {

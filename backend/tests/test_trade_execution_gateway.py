@@ -5,7 +5,7 @@ from app.trade_execution.gateway import TradeExecutionGatewayService
 def test_trade_execution_gateway_capabilities_are_review_only():
     data = TradeExecutionGatewayService().capabilities()
 
-    assert data["stage"] == "V5.0-P1"
+    assert data["stage"] == "V5.0-P2"
     assert data["status"] == "review_only_ready"
     assert data["gateway_enabled"] is False
     assert data["execution_enabled"] is False
@@ -18,9 +18,11 @@ def test_trade_execution_gateway_capabilities_are_review_only():
     assert data["simulation_only"] is True
     assert "architecture_review" in data["allowed_modes"]
     assert "manual_confirmation_contract_review" in data["allowed_modes"]
+    assert "portfolio_symbol_risk_gate_contract_review" in data["allowed_modes"]
     assert "place_real_trade" in data["forbidden_modes"]
     components = {item["name"]: item for item in data["required_future_components"]}
     assert components["ManualConfirmationContract"]["status"] == "review_contract_defined"
+    assert components["PortfolioRiskGateContract"]["status"] == "review_contract_defined"
     assert components["ExecutionAuditLedger"]["status"] == "review_schema_defined_not_persisted"
     assert data["safety_summary"]["places_real_trade"] is False
     assert data["safety_summary"]["connects_broker"] is False
@@ -30,16 +32,17 @@ def test_trade_execution_gateway_review_gates_require_future_contracts():
     data = TradeExecutionGatewayService().review_gates()
     gates = {gate["name"]: gate for gate in data["gates"]}
 
-    assert data["stage"] == "V5.0-P1"
+    assert data["stage"] == "V5.0-P2"
     assert data["status"] == "review_required"
     assert gates["live_trading_disabled"]["status"] == "passed"
     assert gates["broker_adapter_absent"]["status"] == "passed"
     assert gates["credential_storage_absent"]["status"] == "passed"
     assert gates["human_confirmation_required"]["status"] == "passed"
-    assert gates["risk_gate_contract_required"]["status"] == "review_required"
+    assert gates["risk_gate_contract_required"]["status"] == "passed"
     assert gates["audit_and_rollback_required"]["value"] == "audit_schema_review_ready_without_rollback"
     assert data["decision"]["gateway_can_execute"] is False
     assert data["decision"]["manual_confirmation_contract_ready"] is True
+    assert data["decision"]["risk_contract_ready"] is True
     assert data["decision"]["audit_contract_ready"] is True
     assert data["decision"]["live_trading_enabled"] is False
     assert data["safety_summary"]["real_money_execution_enabled"] is False
@@ -50,7 +53,7 @@ def test_manual_confirmation_contract_is_review_only():
     input_names = {item["name"] for item in data["required_operator_inputs"]}
 
     assert data["schema_version"] == "trade_execution_manual_confirmation_contract.v1"
-    assert data["stage"] == "V5.0-P1"
+    assert data["stage"] == "V5.0-P2"
     assert data["status"] == "confirmation_contract_review_ready"
     assert data["contract_state"] == "defined_for_review_only"
     assert "operator_id" in input_names
@@ -70,7 +73,7 @@ def test_audit_evidence_schema_is_not_persisted_or_migrated():
     fields = {item["name"]: item for item in data["fields"]}
 
     assert data["schema_version"] == "trade_execution_audit_evidence_schema.v1"
-    assert data["stage"] == "V5.0-P1"
+    assert data["stage"] == "V5.0-P2"
     assert data["status"] == "audit_schema_review_ready"
     assert data["storage_state"] == "not_persisted"
     assert data["target_future_table"] == "trade_execution_audit_ledger"
@@ -86,6 +89,30 @@ def test_audit_evidence_schema_is_not_persisted_or_migrated():
     assert data["decision"]["migration_allowed_now"] is False
     assert data["safety_summary"]["runs_migration_now"] is False
     assert data["safety_summary"]["writes_database_now"] is False
+
+
+def test_risk_gate_contract_is_review_only_and_blocks_overrides():
+    data = TradeExecutionGatewayService().risk_gate_contract()
+    portfolio_gates = {item["name"]: item for item in data["portfolio_gates"]}
+    symbol_gates = {item["name"]: item for item in data["symbol_gates"]}
+
+    assert data["schema_version"] == "trade_execution_risk_gate_contract.v1"
+    assert data["stage"] == "V5.0-P2"
+    assert data["status"] == "risk_gate_contract_review_ready"
+    assert data["contract_state"] == "defined_for_review_only"
+    assert portfolio_gates["total_exposure"]["limit"] == 0.60
+    assert portfolio_gates["single_position"]["limit"] == 0.20
+    assert portfolio_gates["max_daily_loss"]["failure_status"] == "blocked"
+    assert symbol_gates["symbol_price_quality"]["failure_status"] == "blocked"
+    assert symbol_gates["limit_up_down_state"]["manual_override_allowed"] is False
+    assert "portfolio_risk_snapshot_hash" in data["required_evidence_hashes"]
+    assert data["decision"]["contract_ready_for_review"] is True
+    assert data["decision"]["contract_allows_execution_now"] is False
+    assert data["decision"]["risk_gate_can_override_manual_confirmation"] is True
+    assert data["integration_notes"]["manual_confirmation_override_allowed"] is False
+    assert data["integration_notes"]["ai_override_allowed"] is False
+    assert data["safety_summary"]["gateway_can_execute"] is False
+    assert data["safety_summary"]["places_real_trade"] is False
 
 
 def test_trade_execution_gateway_blocks_if_live_trading_flag_is_enabled():
@@ -107,20 +134,25 @@ def test_trade_execution_gateway_api_smoke(client):
     gates_resp = client.get("/api/trade-execution-gateway/review-gates")
     contract_resp = client.get("/api/trade-execution-gateway/manual-confirmation-contract")
     audit_schema_resp = client.get("/api/trade-execution-gateway/audit-evidence-schema")
+    risk_contract_resp = client.get("/api/trade-execution-gateway/risk-gate-contract")
     health_resp = client.get("/health")
 
     assert caps_resp.status_code == 200
     assert gates_resp.status_code == 200
     assert contract_resp.status_code == 200
     assert audit_schema_resp.status_code == 200
+    assert risk_contract_resp.status_code == 200
     assert health_resp.status_code == 200
     assert caps_resp.json()["status"] == "review_only_ready"
     assert caps_resp.json()["execution_enabled"] is False
     assert caps_resp.json()["broker_adapter_enabled"] is False
     assert gates_resp.json()["decision"]["gateway_can_execute"] is False
     assert gates_resp.json()["decision"]["manual_confirmation_contract_ready"] is True
+    assert gates_resp.json()["decision"]["risk_contract_ready"] is True
     assert contract_resp.json()["decision"]["contract_allows_execution_now"] is False
     assert audit_schema_resp.json()["writes_database_now"] is False
     assert audit_schema_resp.json()["decision"]["migration_allowed_now"] is False
+    assert risk_contract_resp.json()["decision"]["contract_allows_execution_now"] is False
+    assert risk_contract_resp.json()["integration_notes"]["ai_override_allowed"] is False
     assert gates_resp.json()["blocked_gate_count"] == 0
     assert health_resp.json()["live_trading_enabled"] is False
