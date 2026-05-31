@@ -720,6 +720,13 @@ def screen_monitoring_provider_replay_runs(limit: int = 20) -> list[dict]:
     return ScreenMonitoringService().list_provider_replay_runs(limit=limit)
 
 
+@router.get("/screen-monitoring/readiness-audit")
+def screen_monitoring_readiness_audit(limit: int = 20) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().screen_readiness_audit_report(limit=limit)
+
+
 @router.post("/screen-monitoring/provider-config-proposals")
 def screen_monitoring_provider_config_proposal(
     input_data: ScreenProviderConfigProposalInput | None = None,

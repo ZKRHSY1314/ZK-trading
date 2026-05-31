@@ -130,6 +130,9 @@
 - [ ] V4.5-P7 exposes `/api/screen-monitoring/provider-replay` for simulated provider-readiness scenario replay.
 - [ ] V4.5-P7 replay uses only stored config proposals, fixture capabilities, and readiness metadata; it must not write env, execute commands, inspect windows, capture pixels, or run OCR.
 - [ ] V4.5-P7 dashboard shows replay runs, passed/blocked step counts, scenario name, and live-trading-disabled evidence.
+- [ ] V4.5-P8 exposes `/api/screen-monitoring/readiness-audit` as a consolidated screen-readiness evidence report.
+- [ ] V4.5-P8 audit report combines provider readiness, artifact retention/review queue, config proposals, replay runs, latest session, and recent observations.
+- [ ] V4.5-P8 dashboard shows report status, blocked checks, pending review counts, and safety matrix without enabling capture, OCR, broker, order, credential, or screen-click controls.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

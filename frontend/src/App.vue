@@ -210,6 +210,9 @@
           <button data-testid="screen-provider-replay-button" @click="runScreenProviderReplay" :disabled="screenMonitoringLoading">
             运行 Provider Replay
           </button>
+          <button data-testid="screen-readiness-audit-button" @click="refreshScreenReadinessAudit" :disabled="screenMonitoringLoading">
+            生成 Readiness Audit
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -222,6 +225,7 @@
           <span>Artifact {{ screenArtifactReviews.length }}</span>
           <span>配置提案 {{ screenProviderConfigProposals.length }}</span>
           <span>Replay {{ screenProviderReplayRuns.length }}</span>
+          <span>Audit {{ screenReadinessAudit?.status ?? "未加载" }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -289,6 +293,20 @@
             <strong>Provider Replay / {{ screenProviderReplayResult.status }}</strong>
             <span>步骤 {{ screenProviderReplayResult.summary.step_count }} / 通过 {{ screenProviderReplayResult.summary.passed_count }} / 阻断 {{ screenProviderReplayResult.summary.blocked_count }}</span>
             <small>{{ screenProviderReplayResult.summary.allowed_output }} / live trading disabled</small>
+          </div>
+          <div v-if="screenReadinessAudit" class="score-item">
+            <strong>Readiness Audit / {{ screenReadinessAudit.status }}</strong>
+            <span>检查阻断 {{ screenReadinessAudit.summary.blocked_check_count }} / Artifact待审 {{ screenReadinessAudit.summary.artifact_pending_count }} / 配置待审 {{ screenReadinessAudit.summary.config_pending_count }}</span>
+            <small>{{ screenReadinessAudit.summary.allowed_output }} / 安全 {{ screenReadinessAudit.summary.safety_passed ? "通过" : "需复核" }}</small>
+          </div>
+          <div
+            v-for="item in screenReadinessAudit?.safety_matrix.slice(0, 6) ?? []"
+            :key="item.name"
+            class="score-item"
+          >
+            <strong>{{ item.name }} / {{ item.status }}</strong>
+            <span>{{ item.reason }}</span>
+            <small>review-only / simulation-only / live trading disabled</small>
           </div>
           <div v-if="screenObservationResult" class="score-item">
             <strong>Latest Observation / {{ screenObservationResult.app_status }}</strong>
@@ -1974,6 +1992,52 @@ type ScreenProviderReplayRun = {
   created_at: string;
 };
 
+type ScreenReadinessAuditReport = {
+  status: string;
+  stage: string;
+  generated_at: string;
+  summary: {
+    readiness_status: string;
+    active_provider: string;
+    provider_status: string;
+    ready_check_count: number;
+    blocked_check_count: number;
+    observation_count: number;
+    observation_warning_count: number;
+    artifact_review_count: number;
+    artifact_pending_count: number;
+    config_proposal_count: number;
+    config_pending_count: number;
+    provider_replay_count: number;
+    provider_replay_blocked_count: number;
+    safety_passed: boolean;
+    allowed_output: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  blockers: Array<{
+    source: string;
+    name?: string;
+    reason?: string;
+    status?: string;
+  }>;
+  evidence: Record<string, any>;
+  safety_matrix: Array<{
+    name: string;
+    status: string;
+    reason: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  next_safe_steps: string[];
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2210,6 +2274,7 @@ const screenProviderConfigProposals = ref<ScreenProviderConfigProposal[]>([]);
 const screenProviderConfigProposalResult = ref<ScreenProviderConfigProposal | null>(null);
 const screenProviderReplayRuns = ref<ScreenProviderReplayRun[]>([]);
 const screenProviderReplayResult = ref<ScreenProviderReplayRun | null>(null);
+const screenReadinessAudit = ref<ScreenReadinessAuditReport | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3157,7 +3222,8 @@ async function loadScreenMonitoring() {
       artifactPolicyData,
       artifactReviewsData,
       providerConfigProposalsData,
-      providerReplayRunsData
+      providerReplayRunsData,
+      readinessAuditData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3167,7 +3233,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenArtifactPolicy>("/api/screen-monitoring/artifact-policy"),
       fetchJson<ScreenArtifactReview[]>("/api/screen-monitoring/artifact-reviews?limit=20"),
       fetchJson<ScreenProviderConfigProposal[]>("/api/screen-monitoring/provider-config-proposals?limit=20"),
-      fetchJson<ScreenProviderReplayRun[]>("/api/screen-monitoring/provider-replay?limit=20")
+      fetchJson<ScreenProviderReplayRun[]>("/api/screen-monitoring/provider-replay?limit=20"),
+      fetchJson<ScreenReadinessAuditReport>("/api/screen-monitoring/readiness-audit?limit=20")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3178,6 +3245,7 @@ async function loadScreenMonitoring() {
     screenArtifactReviews.value = artifactReviewsData;
     screenProviderConfigProposals.value = providerConfigProposalsData;
     screenProviderReplayRuns.value = providerReplayRunsData;
+    screenReadinessAudit.value = readinessAuditData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3188,7 +3256,22 @@ async function loadScreenMonitoring() {
     screenArtifactReviews.value = [];
     screenProviderConfigProposals.value = [];
     screenProviderReplayRuns.value = [];
+    screenReadinessAudit.value = null;
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function refreshScreenReadinessAudit() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenReadinessAudit.value = await fetchJson<ScreenReadinessAuditReport>(
+      "/api/screen-monitoring/readiness-audit?limit=20"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Readiness audit 生成失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

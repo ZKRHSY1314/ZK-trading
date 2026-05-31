@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P7",
+            "stage": "V4.5-P8",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -53,6 +53,7 @@ class ScreenMonitoringService:
                 "provider_readiness_runbook",
                 "provider_config_proposal",
                 "provider_readiness_replay",
+                "screen_readiness_audit_report",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -137,7 +138,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P7",
+            "stage": "V4.5-P8",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -177,6 +178,111 @@ class ScreenMonitoringService:
                 ],
             },
             "next_safe_steps": self._readiness_next_steps(provider, configured, allowed_windows),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def screen_readiness_audit_report(self, limit: int = 20) -> dict[str, Any]:
+        safe_limit = max(1, min(limit, 100))
+        capabilities = self.capabilities()
+        readiness = self.provider_readiness_runbook()
+        policy = self.artifact_retention_policy()
+        session = self.latest_session()
+        observations = self.list_observations(limit=safe_limit)
+        artifact_reviews = self.list_artifact_reviews(limit=safe_limit)
+        proposals = self.list_provider_config_proposals(limit=safe_limit)
+        replay_runs = self.list_provider_replay_runs(limit=safe_limit)
+        readiness_checks = readiness.get("checks") or []
+        readiness_blocked = [item for item in readiness_checks if item.get("status") != "ready"]
+        artifact_pending = [item for item in artifact_reviews if item.get("review_status") == "pending_review"]
+        proposal_pending = [item for item in proposals if item.get("status") == "pending_review"]
+        replay_blocked = [item for item in replay_runs if item.get("status") != "replay_passed"]
+        observation_warnings = sum(len(item.get("warnings") or []) for item in observations)
+        safety_matrix = self._screen_audit_safety_matrix(capabilities, readiness, policy, observations, artifact_reviews, proposals, replay_runs)
+        blockers = [
+            {
+                "source": "provider_readiness",
+                "name": item.get("name"),
+                "reason": item.get("reason"),
+                "status": item.get("status"),
+            }
+            for item in readiness_blocked
+        ]
+        blockers.extend(
+            {
+                "source": "provider_replay",
+                "name": item.get("scenario_name"),
+                "reason": "scenario replay did not pass all checks",
+                "status": item.get("status"),
+            }
+            for item in replay_blocked[:5]
+        )
+        status = "review_required" if blockers or artifact_pending or proposal_pending else "readiness_evidence_clean"
+        summary = {
+            "readiness_status": readiness.get("status"),
+            "active_provider": readiness.get("active_provider"),
+            "provider_status": readiness.get("provider_status"),
+            "ready_check_count": sum(1 for item in readiness_checks if item.get("status") == "ready"),
+            "blocked_check_count": len(readiness_blocked),
+            "observation_count": len(observations),
+            "observation_warning_count": observation_warnings,
+            "artifact_review_count": len(artifact_reviews),
+            "artifact_pending_count": len(artifact_pending),
+            "config_proposal_count": len(proposals),
+            "config_pending_count": len(proposal_pending),
+            "provider_replay_count": len(replay_runs),
+            "provider_replay_blocked_count": len(replay_blocked),
+            "safety_passed": all(item["status"] == "passed" for item in safety_matrix),
+            "allowed_output": "review_only_screen_readiness_report",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+        return {
+            "status": status,
+            "stage": "V4.5-P8",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "summary": summary,
+            "blockers": blockers[:20],
+            "evidence": {
+                "capabilities": {
+                    "status": capabilities.get("status"),
+                    "stage": capabilities.get("stage"),
+                    "capture_provider": capabilities.get("capture_provider"),
+                    "provider_status": capabilities.get("provider_status"),
+                    "allowed_modes": capabilities.get("allowed_modes"),
+                    "forbidden_modes": capabilities.get("forbidden_modes"),
+                    "review_only": True,
+                    "simulation_only": True,
+                    "live_trading_enabled": False,
+                },
+                "provider_readiness": readiness,
+                "artifact_policy": policy,
+                "latest_session": session,
+                "recent_observations": observations,
+                "artifact_reviews": artifact_reviews,
+                "config_proposals": proposals,
+                "provider_replay_runs": replay_runs,
+            },
+            "safety_matrix": safety_matrix,
+            "next_safe_steps": self._screen_audit_next_steps(
+                blockers,
+                artifact_pending,
+                proposal_pending,
+                replay_runs,
+            ),
+            "forbidden_actions": [
+                "screen_click",
+                "keyboard_type",
+                "real_pixel_capture",
+                "pixel_storage",
+                "ocr_execution",
+                "broker_action",
+                "order_action",
+                "credential_access",
+                "live_auto_trading",
+            ],
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
@@ -980,6 +1086,95 @@ class ScreenMonitoringService:
             "simulation_only": True,
             "live_trading_enabled": False,
         }
+
+    def _screen_audit_safety_matrix(
+        self,
+        capabilities: dict[str, Any],
+        readiness: dict[str, Any],
+        policy: dict[str, Any],
+        observations: list[dict[str, Any]],
+        artifact_reviews: list[dict[str, Any]],
+        proposals: list[dict[str, Any]],
+        replay_runs: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            self._screen_audit_safety_check(
+                "live_trading_disabled",
+                not settings.enable_live_trading
+                and not bool(capabilities.get("live_trading_enabled"))
+                and not bool(readiness.get("live_trading_enabled")),
+                "screen readiness report must never enable live trading",
+            ),
+            self._screen_audit_safety_check(
+                "pixel_capture_blocked",
+                not bool(policy.get("pixel_data_stored"))
+                and all(not bool(item.get("raw_payload", {}).get("pixel_data_stored")) for item in observations),
+                "audit evidence is metadata-only; no pixel data may be stored",
+            ),
+            self._screen_audit_safety_check(
+                "ocr_execution_blocked",
+                not bool(policy.get("ocr_executed"))
+                and all(not bool(item.get("raw_payload", {}).get("ocr_executed")) for item in observations),
+                "OCR must remain blocked in V4.5 readiness reporting",
+            ),
+            self._screen_audit_safety_check(
+                "artifact_reviews_are_audit_only",
+                all(item.get("live_trading_enabled") is False for item in artifact_reviews),
+                "artifact accept/reject decisions are audit status only",
+            ),
+            self._screen_audit_safety_check(
+                "config_proposals_do_not_apply",
+                all(
+                    not bool((item.get("proposal") or {}).get("writes_env"))
+                    and not bool((item.get("proposal") or {}).get("executes_commands"))
+                    and not bool((item.get("proposal") or {}).get("apply_automatically"))
+                    for item in proposals
+                ),
+                "provider config proposals must not write env, execute commands, or apply automatically",
+            ),
+            self._screen_audit_safety_check(
+                "provider_replays_are_review_only",
+                all(
+                    item.get("review_only") is True
+                    and item.get("simulation_only") is True
+                    and item.get("live_trading_enabled") is False
+                    and not any(bool(step.get("real_screen_capture")) for step in item.get("steps", []))
+                    for item in replay_runs
+                ),
+                "provider replay runs must preserve review-only metadata and block capture",
+            ),
+        ]
+
+    def _screen_audit_safety_check(self, name: str, passed: bool, reason: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else "blocked",
+            "reason": reason,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def _screen_audit_next_steps(
+        self,
+        blockers: list[dict[str, Any]],
+        artifact_pending: list[dict[str, Any]],
+        proposal_pending: list[dict[str, Any]],
+        replay_runs: list[dict[str, Any]],
+    ) -> list[str]:
+        steps: list[str] = []
+        if blockers:
+            steps.append("Review blocked readiness checks before any further screen provider changes.")
+        if proposal_pending:
+            steps.append("Accept or reject pending local-safe config proposals; do not apply them through the API.")
+        if artifact_pending:
+            steps.append("Review pending artifact metadata and mark accepted/rejected for audit only.")
+        if not replay_runs:
+            steps.append("Run provider-readiness replay after generating or reviewing a local-safe config proposal.")
+        if not steps:
+            steps.append("Keep using fixture/manual observations until a separate harmless-window provider stage is reviewed.")
+        steps.append("Confirm /health keeps live_trading_enabled=false before every screen monitoring workflow.")
+        return steps
 
     def _safety_blocks(self, payload: dict[str, Any]) -> list[str]:
         blocked_terms = (
