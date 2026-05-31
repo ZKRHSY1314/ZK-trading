@@ -771,7 +771,7 @@
           <button class="disabled-live" disabled>实盘执行未启用</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.5-P4" }}</span>
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.5-P5" }}</span>
           <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
           <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
@@ -790,6 +790,7 @@
           <span>失败场景 {{ tradeGatewayOrderFailureFixtures?.status ?? "未加载" }}</span>
           <span>Runbook映射 {{ tradeGatewayOrderRunbookMapping?.status ?? "未加载" }}</span>
           <span>审计账本计划 {{ tradeGatewayAuditStoragePlan?.status ?? "未加载" }}</span>
+          <span>迁移规格校验 {{ tradeGatewayAuditMigrationSpecVerification?.status ?? "未加载" }}</span>
           <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
           <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
           <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
@@ -945,6 +946,16 @@
             <span>{{ tradeGatewayAuditStoragePlan.hash_chain_policy.algorithm }} / {{ tradeGatewayAuditStoragePlan.redaction_policy.excluded_sensitive_fields.join(" / ") }}</span>
             <small>create table {{ tradeGatewayAuditStoragePlan.decision.can_create_table_now ? "yes" : "no" }} / migration {{ tradeGatewayAuditStoragePlan.decision.can_run_migration_now ? "yes" : "no" }} / audit row {{ tradeGatewayAuditStoragePlan.decision.can_write_audit_row_now ? "yes" : "no" }}</small>
           </div>
+          <div v-if="tradeGatewayAuditMigrationSpecVerification" class="score-item">
+            <strong>Audit Ledger Migration Spec / {{ tradeGatewayAuditMigrationSpecVerification.status }}</strong>
+            <span>{{ tradeGatewayAuditMigrationSpecVerification.target_table }} / {{ tradeGatewayAuditMigrationSpecVerification.verification_state }}</span>
+            <small>failed {{ tradeGatewayAuditMigrationSpecVerification.failed_count }} / executes SQL {{ tradeGatewayAuditMigrationSpecVerification.summary.executes_sql ? "yes" : "no" }} / writes file {{ tradeGatewayAuditMigrationSpecVerification.summary.writes_migration_file_now ? "yes" : "no" }}</small>
+          </div>
+          <div v-if="tradeGatewayAuditMigrationSpecVerification" class="score-item">
+            <strong>Migration Spec Checks</strong>
+            <span>{{ tradeGatewayAuditMigrationSpecVerification.checks.map((item) => `${item.name}:${item.status}`).join(" / ") }}</span>
+            <small>create table {{ tradeGatewayAuditMigrationSpecVerification.decision.can_create_table_now ? "yes" : "no" }} / audit row {{ tradeGatewayAuditMigrationSpecVerification.decision.can_write_audit_row_now ? "yes" : "no" }}</small>
+          </div>
           <div
             v-for="component in tradeGatewayCapabilities.required_future_components"
             :key="component.name"
@@ -971,7 +982,7 @@
           <div class="score-item">
             <strong>Forbidden Modes</strong>
             <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
-            <small>这些能力在 V5.5-P4 只能作为阻断项展示。</small>
+            <small>这些能力在 V5.5-P5 只能作为阻断项展示。</small>
           </div>
         </div>
         <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
@@ -1714,6 +1725,7 @@ type TradeGatewayReviewGates = {
     order_lifecycle_failure_fixtures_ready: boolean;
     order_failure_runbook_mapping_ready: boolean;
     disabled_audit_ledger_storage_plan_ready: boolean;
+    audit_ledger_migration_spec_dry_run_ready: boolean;
     ready_for_live_enablement: boolean;
     live_trading_enabled: boolean;
     next_required_action: string;
@@ -2296,6 +2308,64 @@ type TradeGatewayAuditStoragePlan = {
     can_write_migration_file_now: boolean;
     requires_operator_approval_before_migration: boolean;
     requires_dry_run_verifier_before_migration: boolean;
+    ready_for_live_enablement: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+  allowed_output: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayAuditMigrationSpecVerification = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  verification_state: string;
+  target_table: string;
+  spec_hash: string;
+  spec_excerpt: string;
+  checks: {
+    name: string;
+    status: string;
+    reason: string;
+    details: Record<string, any>;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }[];
+  missing_columns: string[];
+  missing_indexes: string[];
+  dangerous_matches: string[];
+  sensitive_matches: string[];
+  failed_count: number;
+  migration_allowed_now: boolean;
+  forbidden_actions: string[];
+  summary: {
+    required_column_count: number;
+    covered_column_count: number;
+    proposed_index_count: number;
+    covered_index_count: number;
+    dangerous_match_count: number;
+    sensitive_match_count: number;
+    executes_sql: boolean;
+    creates_table_now: boolean;
+    writes_database_now: boolean;
+    runs_migration_now: boolean;
+    writes_migration_file_now: boolean;
+    records_audit_rows_now: boolean;
+  };
+  decision: {
+    spec_verification_ready_for_review: boolean;
+    spec_verification_passed: boolean;
+    can_execute_sql_now: boolean;
+    can_create_table_now: boolean;
+    can_run_migration_now: boolean;
+    can_write_migration_file_now: boolean;
+    can_write_audit_row_now: boolean;
+    requires_operator_approval_before_migration: boolean;
     ready_for_live_enablement: boolean;
     next_required_action: string;
   };
@@ -3893,6 +3963,7 @@ const tradeGatewayBrokerContractVerification = ref<TradeGatewayBrokerContractVer
 const tradeGatewayOrderFailureFixtures = ref<TradeGatewayOrderFailureFixtures | null>(null);
 const tradeGatewayOrderRunbookMapping = ref<TradeGatewayOrderRunbookMapping | null>(null);
 const tradeGatewayAuditStoragePlan = ref<TradeGatewayAuditStoragePlan | null>(null);
+const tradeGatewayAuditMigrationSpecVerification = ref<TradeGatewayAuditMigrationSpecVerification | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -4344,7 +4415,8 @@ async function loadTradeExecutionGateway() {
       brokerContractVerificationData,
       orderFailureFixturesData,
       orderRunbookMappingData,
-      auditStoragePlanData
+      auditStoragePlanData,
+      auditMigrationSpecVerificationData
     ] = await Promise.all([
       fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
       fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates"),
@@ -4361,7 +4433,15 @@ async function loadTradeExecutionGateway() {
       fetchJson<TradeGatewayBrokerContractVerification>("/api/trade-execution-gateway/broker-adapter-contract-verification"),
       fetchJson<TradeGatewayOrderFailureFixtures>("/api/trade-execution-gateway/order-lifecycle-failure-fixtures"),
       fetchJson<TradeGatewayOrderRunbookMapping>("/api/trade-execution-gateway/order-failure-runbook-mapping"),
-      fetchJson<TradeGatewayAuditStoragePlan>("/api/trade-execution-gateway/audit-ledger-storage-plan")
+      fetchJson<TradeGatewayAuditStoragePlan>("/api/trade-execution-gateway/audit-ledger-storage-plan"),
+      fetchJson<TradeGatewayAuditMigrationSpecVerification>(
+        "/api/trade-execution-gateway/audit-ledger-migration-spec/verify",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spec_text: null })
+        }
+      )
     ]);
     tradeGatewayCapabilities.value = capabilitiesData;
     tradeGatewayReviewGates.value = gatesData;
@@ -4379,6 +4459,7 @@ async function loadTradeExecutionGateway() {
     tradeGatewayOrderFailureFixtures.value = orderFailureFixturesData;
     tradeGatewayOrderRunbookMapping.value = orderRunbookMappingData;
     tradeGatewayAuditStoragePlan.value = auditStoragePlanData;
+    tradeGatewayAuditMigrationSpecVerification.value = auditMigrationSpecVerificationData;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
   } finally {

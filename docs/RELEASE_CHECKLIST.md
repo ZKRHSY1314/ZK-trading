@@ -224,6 +224,10 @@
 - [ ] V5.5-P4 defines planned columns, proposed indexes, hash-chain policy, retention policy, redaction policy, migration preconditions, rollback requirements, and blocked storage actions.
 - [ ] V5.5-P4 dashboard shows target future table, disabled storage state, column/index counts, excluded sensitive fields, and no-create/no-migration/no-audit-row evidence.
 - [ ] V5.5-P4 must keep `can_create_table_now=false`, `can_write_audit_row_now=false`, `can_run_migration_now=false`, `can_write_migration_file_now=false`, `writes_database_now=false`, `records_audit_rows_now=false`, and `live_trading_enabled=false`.
+- [ ] V5.5-P5 exposes `POST /api/trade-execution-gateway/audit-ledger-migration-spec/verify` as an in-memory dry-run verifier for future audit ledger migration specs.
+- [ ] V5.5-P5 verifier checks target table, guarded create-table shape, required columns, proposed indexes, hash-chain fields, safety flags, sensitive field exclusion, dangerous SQL terms, and disabled live-trading state.
+- [ ] V5.5-P5 dashboard shows migration spec status, failed check count, per-check result, target table, no-SQL, no-file, no-table, no-audit-row, and no-live-trading evidence.
+- [ ] V5.5-P5 must keep `executes_sql=false`, `can_execute_sql_now=false`, `can_create_table_now=false`, `can_write_audit_row_now=false`, `can_run_migration_now=false`, `can_write_migration_file_now=false`, `writes_database_now=false`, `records_audit_rows_now=false`, and `live_trading_enabled=false`.
 
 ## 15. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:

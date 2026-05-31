@@ -118,6 +118,10 @@ class ScreenDigestMigrationSpecApprovalInput(BaseModel):
     note: str | None = None
 
 
+class TradeAuditLedgerMigrationSpecInput(BaseModel):
+    spec_text: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -207,6 +211,14 @@ def trade_execution_gateway_order_failure_runbook_mapping() -> dict:
 @router.get("/trade-execution-gateway/audit-ledger-storage-plan")
 def trade_execution_gateway_audit_ledger_storage_plan() -> dict:
     return TradeExecutionGatewayService().audit_ledger_storage_plan()
+
+
+@router.post("/trade-execution-gateway/audit-ledger-migration-spec/verify")
+def trade_execution_gateway_audit_ledger_migration_spec_verify(
+    input_data: TradeAuditLedgerMigrationSpecInput | None = None,
+) -> dict:
+    payload = input_data or TradeAuditLedgerMigrationSpecInput()
+    return TradeExecutionGatewayService().verify_audit_ledger_migration_spec(spec_text=payload.spec_text)
 
 
 @router.get("/automation/capabilities")

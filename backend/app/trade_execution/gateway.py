@@ -12,7 +12,7 @@ from app.risk.portfolio import DEFAULT_LIMITS
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P4"
+    stage = "V5.5-P5"
 
     def capabilities(self) -> dict[str, Any]:
         gates = self.review_gates()["gates"]
@@ -53,6 +53,7 @@ class TradeExecutionGatewayService:
                 "order_lifecycle_failure_fixture_review",
                 "order_failure_runbook_mapping_review",
                 "disabled_audit_ledger_storage_plan_review",
+                "audit_ledger_migration_spec_dry_run_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -75,6 +76,8 @@ class TradeExecutionGatewayService:
                 "create_audit_ledger_table",
                 "write_audit_ledger_row",
                 "run_audit_ledger_migration",
+                "execute_sql",
+                "write_migration_file",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -746,7 +749,7 @@ class TradeExecutionGatewayService:
                 "gateway_can_execute": False,
                 "api_can_enable_gateway": False,
                 "api_can_record_release_approval": False,
-                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
+                "next_required_action": "collect_operator_approval_for_verified_audit_ledger_spec",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -768,7 +771,7 @@ class TradeExecutionGatewayService:
             {
                 "name": "credential_exposure",
                 "risk": "Broker passwords, tokens, SMS codes, cookies, account numbers, and trading PINs must never enter this API.",
-                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P4.",
+                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P5.",
                 "status": "blocked_by_design",
             },
             {
@@ -835,7 +838,7 @@ class TradeExecutionGatewayService:
                 "account_read_allowed_now": False,
                 "order_execution_allowed_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
+                "next_required_action": "collect_operator_approval_for_verified_audit_ledger_spec",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -899,7 +902,7 @@ class TradeExecutionGatewayService:
                 "adapter_can_execute_now": False,
                 "adapter_can_read_account_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
+                "next_required_action": "collect_operator_approval_for_verified_audit_ledger_spec",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1017,7 +1020,7 @@ class TradeExecutionGatewayService:
                 "adapter_can_read_account_now": False,
                 "credentials_allowed_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
+                "next_required_action": "collect_operator_approval_for_verified_audit_ledger_spec",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1120,7 +1123,7 @@ class TradeExecutionGatewayService:
                 "requires_broker_connection": False,
                 "requires_credentials": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
+                "next_required_action": "collect_operator_approval_for_verified_audit_ledger_spec",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1266,7 +1269,7 @@ class TradeExecutionGatewayService:
                 "requires_broker_connection": False,
                 "requires_credentials": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
+                "next_required_action": "collect_operator_approval_for_verified_audit_ledger_spec",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1382,7 +1385,7 @@ class TradeExecutionGatewayService:
                 "requires_operator_approval_before_migration": True,
                 "requires_dry_run_verifier_before_migration": True,
                 "ready_for_live_enablement": False,
-                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
+                "next_required_action": "collect_operator_approval_for_verified_audit_ledger_spec",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1396,6 +1399,182 @@ class TradeExecutionGatewayService:
                 "places_real_trade": False,
             },
             "allowed_output": "review_only_disabled_audit_ledger_storage_plan",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def verify_audit_ledger_migration_spec(self, spec_text: str | None = None) -> dict[str, Any]:
+        storage_plan = self.audit_ledger_storage_plan()
+        target_table = storage_plan["target_future_table"]
+        required_columns = [str(item["name"]) for item in storage_plan["planned_columns"]]
+        proposed_indexes = [str(item["name"]) for item in storage_plan["proposed_indexes"]]
+        spec = spec_text if spec_text is not None else self._default_audit_ledger_migration_spec(storage_plan)
+        normalized = " ".join(spec.lower().split())
+        dangerous_terms = [
+            " drop ",
+            " delete ",
+            " insert ",
+            " update ",
+            " alter ",
+            " pragma ",
+            " attach ",
+            " detach ",
+            " vacuum ",
+            " replace ",
+            " truncate ",
+            " execute ",
+        ]
+        sensitive_terms = [
+            *storage_plan["redaction_policy"]["excluded_sensitive_fields"],
+            "broker_credentials",
+            "trading_password",
+            "plaintext_secret",
+            "account_funds",
+            "live_positions",
+            "sms_code",
+        ]
+        missing_columns = [column for column in required_columns if column.lower() not in normalized]
+        missing_indexes = [index for index in proposed_indexes if index.lower() not in normalized]
+        dangerous_matches = [term.strip() for term in dangerous_terms if term in f" {normalized} "]
+        sensitive_matches = [term for term in sensitive_terms if term.lower() in normalized]
+        checks = [
+            self._migration_spec_check(
+                "spec_text_present",
+                bool(spec.strip()),
+                "migration spec text must be provided or generated from the disabled safe default",
+            ),
+            self._migration_spec_check(
+                "target_table_named",
+                target_table.lower() in normalized,
+                "spec must name the future audit ledger target table",
+            ),
+            self._migration_spec_check(
+                "create_table_shape_present",
+                "create table" in normalized and "if not exists" in normalized,
+                "dry-run spec may describe guarded CREATE TABLE shape but must not execute it",
+            ),
+            self._migration_spec_check(
+                "required_columns_covered",
+                not missing_columns,
+                "spec must cover every disabled storage-plan column",
+                {"missing_columns": missing_columns},
+            ),
+            self._migration_spec_check(
+                "proposed_indexes_covered",
+                not missing_indexes,
+                "spec should cover every disabled storage-plan index",
+                {"missing_indexes": missing_indexes},
+            ),
+            self._migration_spec_check(
+                "hash_chain_columns_present",
+                {"previous_event_hash", "event_hash"} <= set(required_columns)
+                and "previous_event_hash" in normalized
+                and "event_hash" in normalized,
+                "spec must preserve previous/current event hash chain columns",
+            ),
+            self._migration_spec_check(
+                "safety_flags_column_present",
+                "safety_flags_json" in normalized,
+                "spec must preserve review_only/simulation_only/live_trading_enabled=false evidence",
+            ),
+            self._migration_spec_check(
+                "sensitive_fields_absent",
+                not sensitive_matches,
+                "spec must not include broker credentials, trading PINs, SMS codes, account numbers, raw secrets, funds, or positions",
+                {"sensitive_matches": sensitive_matches},
+            ),
+            self._migration_spec_check(
+                "dangerous_sql_absent",
+                not dangerous_matches,
+                "dry-run verifier rejects destructive, mutating, attachment, pragma, or execution SQL terms",
+                {"dangerous_matches": dangerous_matches},
+            ),
+            self._migration_spec_check(
+                "storage_plan_disabled",
+                storage_plan["decision"]["can_create_table_now"] is False
+                and storage_plan["decision"]["can_run_migration_now"] is False
+                and storage_plan["summary"]["writes_database_now"] is False,
+                "verification must not change disabled storage-plan posture",
+            ),
+            self._migration_spec_check(
+                "operator_approval_required",
+                storage_plan["decision"]["requires_operator_approval_before_migration"] is True,
+                "future migration still requires operator approval",
+            ),
+            self._migration_spec_check(
+                "live_trading_disabled",
+                not settings.enable_live_trading and storage_plan["live_trading_enabled"] is False,
+                "migration spec verification must preserve disabled live-trading state",
+            ),
+        ]
+        failed = [item for item in checks if item["status"] != "passed"]
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_spec_verifier.v1",
+            "status": "spec_verification_passed" if not failed else "spec_verification_failed",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "verification_state": "dry_run_in_memory_only",
+            "target_table": target_table,
+            "spec_hash": hashlib.sha256(spec.encode("utf-8")).hexdigest(),
+            "spec_excerpt": spec[:800],
+            "checks": checks,
+            "missing_columns": missing_columns,
+            "missing_indexes": missing_indexes,
+            "dangerous_matches": dangerous_matches,
+            "sensitive_matches": sensitive_matches,
+            "failed_count": len(failed),
+            "migration_allowed_now": False,
+            "forbidden_actions": [
+                "execute_sql",
+                "create_table",
+                "alter_table",
+                "run_migration",
+                "write_migration_file",
+                "write_audit_row",
+                "connect_broker",
+                "submit_order",
+                "store_credentials",
+            ],
+            "summary": {
+                "required_column_count": len(required_columns),
+                "covered_column_count": len(required_columns) - len(missing_columns),
+                "proposed_index_count": len(proposed_indexes),
+                "covered_index_count": len(proposed_indexes) - len(missing_indexes),
+                "dangerous_match_count": len(dangerous_matches),
+                "sensitive_match_count": len(sensitive_matches),
+                "executes_sql": False,
+                "creates_table_now": False,
+                "writes_database_now": False,
+                "runs_migration_now": False,
+                "writes_migration_file_now": False,
+                "records_audit_rows_now": False,
+            },
+            "decision": {
+                "spec_verification_ready_for_review": True,
+                "spec_verification_passed": not failed,
+                "can_execute_sql_now": False,
+                "can_create_table_now": False,
+                "can_run_migration_now": False,
+                "can_write_migration_file_now": False,
+                "can_write_audit_row_now": False,
+                "requires_operator_approval_before_migration": True,
+                "ready_for_live_enablement": False,
+                "next_required_action": "collect_operator_approval_for_verified_audit_ledger_spec",
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "dry_run_verifier_only": True,
+                "executes_sql": False,
+                "creates_table_now": False,
+                "writes_database_now": False,
+                "runs_migration_now": False,
+                "writes_migration_file_now": False,
+                "records_audit_rows_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+            },
+            "allowed_output": "review_only_audit_ledger_migration_spec_verifier",
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -1492,21 +1671,21 @@ class TradeExecutionGatewayService:
                 "passed",
                 "broker_adapter_threat_model_review_ready",
                 "future_broker_adapter_threat_model",
-                "V5.5-P4 preserves threat categories and mitigations without implementing broker connectivity.",
+                "V5.5-P5 preserves threat categories and mitigations without implementing broker connectivity.",
             ),
             self._gate(
                 "broker_adapter_interface_draft_required",
                 "passed",
                 "broker_adapter_interface_draft_review_ready",
                 "future_broker_adapter_interface_draft",
-                "V5.5-P4 preserves provider-neutral interface metadata without executable adapter methods.",
+                "V5.5-P5 preserves provider-neutral interface metadata without executable adapter methods.",
             ),
             self._gate(
                 "broker_adapter_contract_verification_required",
                 "passed",
                 "fixture_contract_verification_passed",
                 "fixture_only_broker_adapter_contract_verifier",
-                "V5.5-P4 preserves fixture contract verification with no broker connectivity.",
+                "V5.5-P5 preserves fixture contract verification with no broker connectivity.",
             ),
             self._gate(
                 "order_lifecycle_failure_fixtures_required",
@@ -1529,12 +1708,19 @@ class TradeExecutionGatewayService:
                 "review_only_audit_ledger_storage_plan",
                 "V5.5-P4 defines future audit ledger storage without creating tables, writing rows, or running migrations.",
             ),
+            self._gate(
+                "audit_ledger_migration_spec_dry_run_required",
+                "passed",
+                "audit_ledger_migration_spec_dry_run_passed",
+                "review_only_audit_ledger_migration_spec_verifier",
+                "V5.5-P5 verifies the future audit ledger migration spec in memory without executing SQL or writing files.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "disabled_audit_ledger_storage_plan_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_spec_dry_run_passed" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -1557,9 +1743,10 @@ class TradeExecutionGatewayService:
                 "order_lifecycle_failure_fixtures_ready": True,
                 "order_failure_runbook_mapping_ready": True,
                 "disabled_audit_ledger_storage_plan_ready": True,
+                "audit_ledger_migration_spec_dry_run_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
+                "next_required_action": "collect_operator_approval_for_verified_audit_ledger_spec",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -1651,6 +1838,12 @@ class TradeExecutionGatewayService:
                 "name": "DisabledAuditLedgerStoragePlan",
                 "status": "review_storage_plan_defined_not_persisted",
                 "required_before": "any_audit_ledger_migration",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationSpecDryRunVerifier",
+                "status": "review_dry_run_spec_verifier_defined",
+                "required_before": "any_audit_ledger_migration_approval",
                 "review_only": True,
             },
         ]
@@ -1806,6 +1999,42 @@ class TradeExecutionGatewayService:
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
         }
+
+    def _migration_spec_check(
+        self,
+        name: str,
+        passed: bool,
+        reason: str,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else "failed",
+            "reason": reason,
+            "details": details or {},
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _default_audit_ledger_migration_spec(self, storage_plan: dict[str, Any]) -> str:
+        columns = ",\n  ".join(
+            f"{item['name']} {item['type']}{'' if item['nullable'] else ' NOT NULL'}"
+            for item in storage_plan["planned_columns"]
+        )
+        indexes = "\n".join(
+            f"CREATE {'UNIQUE ' if item['unique'] else ''}INDEX IF NOT EXISTS {item['name']} "
+            f"ON {storage_plan['target_future_table']} ({', '.join(item['columns'])});"
+            for item in storage_plan["proposed_indexes"]
+        )
+        return (
+            f"CREATE TABLE IF NOT EXISTS {storage_plan['target_future_table']} (\n"
+            f"  {columns},\n"
+            "  CHECK (safety_flags_json LIKE '%live_trading_enabled%')\n"
+            ");\n"
+            f"{indexes}\n"
+            "-- Dry-run review text only. API does not run this text."
+        )
 
     def _stable_hash(self, payload: dict[str, Any]) -> str:
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
