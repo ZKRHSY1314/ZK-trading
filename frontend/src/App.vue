@@ -186,6 +186,49 @@
         </div>
       </article>
 <article class="panel wide">
+        <h2>V4.5 屏幕只读监控</h2>
+        <p class="review-only-banner">只记录交易软件屏幕观测证据；不截图实采集、不 OCR、不点击、不输入、不下单。</p>
+        <div class="actions">
+          <button data-testid="mock-screen-observation-button" @click="recordMockScreenObservation" :disabled="screenMonitoringLoading">
+            {{ screenMonitoringLoading ? "记录中" : "记录只读观测样本" }}
+          </button>
+          <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
+        </div>
+        <div class="metrics">
+          <span>阶段 {{ screenMonitoringCapabilities?.stage ?? "V4.5-P0" }}</span>
+          <span>采集 {{ screenMonitoringCapabilities?.capture_provider ?? "manual_or_mock_only" }}</span>
+          <span>OCR {{ screenMonitoringCapabilities?.ocr_provider ?? "not_configured" }}</span>
+          <span>观测 {{ screenObservations.length }}</span>
+          <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
+          <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
+        </div>
+        <div v-if="screenMonitoringCapabilities" class="score-list">
+          <div class="score-item">
+            <strong>Read-only Guardrails / {{ screenMonitoringCapabilities.status }}</strong>
+            <span>{{ screenMonitoringCapabilities.allowed_modes.join(" / ") }}</span>
+            <small>禁止 {{ screenMonitoringCapabilities.forbidden_modes.join(" / ") }}</small>
+          </div>
+          <div v-if="screenMonitoringSession && screenMonitoringSession.status !== 'empty'" class="score-item">
+            <strong>Session #{{ screenMonitoringSession.id }} / {{ screenMonitoringSession.status }}</strong>
+            <span>观测 {{ screenMonitoringSession.summary.observation_count }} / 警告 {{ screenMonitoringSession.summary.warning_count }}</span>
+            <small>{{ screenMonitoringSession.window_title ?? "未记录窗口" }} / live trading disabled</small>
+          </div>
+          <div v-if="screenObservationResult" class="score-item">
+            <strong>Latest Observation / {{ screenObservationResult.app_status }}</strong>
+            <span>置信度 {{ screenObservationResult.confidence }} / 插入 {{ screenObservationResult.inserted ? "是" : "去重" }}</span>
+            <small>{{ screenObservationResult.observed_at }} / {{ screenObservationResult.source }}</small>
+          </div>
+        </div>
+        <div v-if="screenObservations.length" class="score-list">
+          <div v-for="item in screenObservations.slice(0, 5)" :key="item.id" class="score-item">
+            <strong>{{ item.app_status }} / {{ item.source }}</strong>
+            <span>{{ item.window_title ?? "未记录窗口" }} / 识别项 {{ item.detected_items.length }} / 警告 {{ item.warnings.length }}</span>
+            <small>{{ item.observed_at }} / read-only evidence</small>
+          </div>
+        </div>
+        <p v-else>暂无屏幕观测证据。V4.5-P0 仅支持 mock/manual 观测记录，不控制交易软件。</p>
+      </article>
+<article class="panel wide">
         <h2>V2.0 可信度证据面板</h2>
         <p class="review-only-banner">所有内容仅用于历史回测、模拟风控、告警复核和 AI 参数提案审查，不连接券商，不产生实盘订单。</p>
         <div class="actions">
@@ -1564,6 +1607,61 @@ type RealtimeCycleRun = {
   created_at: string;
 };
 
+type ScreenMonitoringCapabilities = {
+  status: string;
+  stage: string;
+  capture_provider: string;
+  ocr_provider: string;
+  allowed_modes: string[];
+  forbidden_modes: string[];
+  default_session_name: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type ScreenObservation = {
+  id: number;
+  session_id?: number | null;
+  source: string;
+  app_status: string;
+  window_title?: string | null;
+  observed_at: string;
+  confidence: number;
+  detected_items: Array<Record<string, any>>;
+  warnings: string[];
+  raw_payload: Record<string, any>;
+  artifact_ref?: string | null;
+  dedupe_key: string;
+  inserted?: boolean;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type ScreenMonitoringSession = {
+  id?: number;
+  name?: string;
+  status: string;
+  source?: string;
+  window_title?: string | null;
+  started_at?: string;
+  completed_at?: string | null;
+  summary: {
+    observation_count: number;
+    status_counts: Record<string, number>;
+    warning_count: number;
+    read_only: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  observations: ScreenObservation[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -1784,6 +1882,11 @@ const realtimeMonitoringSync = ref<RealtimeMonitoringSyncResult | null>(null);
 const realtimeCycleResult = ref<RealtimeCycleResult | null>(null);
 const realtimeCycleRuns = ref<RealtimeCycleRun[]>([]);
 const realtimeLoading = ref(false);
+const screenMonitoringCapabilities = ref<ScreenMonitoringCapabilities | null>(null);
+const screenMonitoringSession = ref<ScreenMonitoringSession | null>(null);
+const screenObservations = ref<ScreenObservation[]>([]);
+const screenObservationResult = ref<ScreenObservation | null>(null);
+const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
 const marketRegime = ref<MarketRegimeData | null>(null);
@@ -2718,6 +2821,42 @@ async function runRealtimeReplay() {
   }
 }
 
+async function loadScreenMonitoring() {
+  screenMonitoringLoading.value = true;
+  try {
+    const [capabilitiesData, sessionData, observationsData] = await Promise.all([
+      fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
+      fetchJson<ScreenMonitoringSession>("/api/screen-monitoring/sessions/latest"),
+      fetchJson<ScreenObservation[]>("/api/screen-monitoring/observations?limit=20")
+    ]);
+    screenMonitoringCapabilities.value = capabilitiesData;
+    screenMonitoringSession.value = sessionData;
+    screenObservations.value = observationsData;
+  } catch (err) {
+    screenMonitoringCapabilities.value = null;
+    screenMonitoringSession.value = null;
+    screenObservations.value = [];
+    error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function recordMockScreenObservation() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenObservationResult.value = await fetchJson<ScreenObservation>("/api/screen-monitoring/observations/mock", {
+      method: "POST"
+    });
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "屏幕只读观测记录失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
 async function loadBacktestRuns() {
   try {
     backtestRuns.value = await fetchJson<BacktestRunItem[]>("/api/backtest/runs?limit=10");
@@ -3001,6 +3140,7 @@ onMounted(async () => {
     loadPriceReadinessReports(),
     loadPriceReadinessSummary(),
     loadRealtimeData(),
+    loadScreenMonitoring(),
     loadBacktestRuns(),
     loadMarketRegime(),
     loadPortfolioRisk(),

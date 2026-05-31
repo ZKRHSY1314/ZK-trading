@@ -787,6 +787,43 @@ CREATE TABLE IF NOT EXISTS realtime_cycle_runs (
 CREATE INDEX IF NOT EXISTS idx_realtime_cycle_runs_created ON realtime_cycle_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_realtime_cycle_runs_status ON realtime_cycle_runs(status);
 
+CREATE TABLE IF NOT EXISTS screen_monitoring_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    source TEXT NOT NULL,
+    window_title TEXT,
+    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT,
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    review_only INTEGER NOT NULL DEFAULT 1,
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS screen_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER REFERENCES screen_monitoring_sessions(id) ON DELETE SET NULL,
+    source TEXT NOT NULL,
+    app_status TEXT NOT NULL,
+    window_title TEXT,
+    observed_at TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0,
+    detected_items_json TEXT NOT NULL DEFAULT '[]',
+    warnings_json TEXT NOT NULL DEFAULT '[]',
+    raw_payload_json TEXT NOT NULL DEFAULT '{}',
+    artifact_ref TEXT,
+    dedupe_key TEXT UNIQUE,
+    review_only INTEGER NOT NULL DEFAULT 1,
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_screen_observations_session ON screen_observations(session_id);
+CREATE INDEX IF NOT EXISTS idx_screen_observations_observed ON screen_observations(observed_at);
+CREATE INDEX IF NOT EXISTS idx_screen_observations_status ON screen_observations(app_status);
+
 CREATE TABLE IF NOT EXISTS historical_backtest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     config_json TEXT NOT NULL,
@@ -1024,6 +1061,8 @@ KNOWLEDGE_TABLES = [
     "realtime_market_events",
     "realtime_provider_health",
     "realtime_cycle_runs",
+    "screen_observations",
+    "screen_monitoring_sessions",
     "historical_backtest_runs",
     "historical_backtest_trades",
     "historical_backtest_closed_trades",

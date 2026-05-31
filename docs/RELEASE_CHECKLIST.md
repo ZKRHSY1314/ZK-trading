@@ -103,7 +103,15 @@
 - [ ] V4.0-P5 keeps recurring-job creation outside backend APIs; Codex app automation must be suggested/reviewed before enablement.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
-## 12. Desired Workday Schedule Cadence
+## 12. V4.5 Screen Read-only Monitoring Milestone
+- [ ] V4.5-P0 exposes `/api/screen-monitoring/capabilities`, `/sessions/latest`, `/observations`, and `/observations/mock`.
+- [ ] V4.5-P0 persists read-only screen monitoring sessions and observation evidence without screenshot/OCR capture by default.
+- [ ] V4.5-P0 safety blocks any payload terms that look like click, keyboard, broker, order, credential, or live-trading action requests.
+- [ ] V4.5-P0 dashboard shows read-only guardrails, latest session summary, observations, and disabled live-trading status.
+- [ ] V4.5-P0 remains manual/mock only until a separately reviewed screenshot/OCR provider is configured.
+- [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
+
+## 13. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
 - **10:00 AM:** First cycle (Candidate scan, morning momentum check).
 - **1:00 PM (13:00):** Mid-day cycle (Trend persistence, early reversals).

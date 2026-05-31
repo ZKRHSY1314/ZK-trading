@@ -56,6 +56,25 @@ class CodeEvolutionReviewInput(BaseModel):
     note: str | None = None
 
 
+class ScreenMonitoringSessionInput(BaseModel):
+    name: str = "screen_readonly_watch"
+    source: str = "manual_or_mock"
+    window_title: str | None = None
+
+
+class ScreenObservationInput(BaseModel):
+    session_id: int | None = None
+    source: str = "mock"
+    app_status: str = "unknown"
+    window_title: str | None = None
+    confidence: float = 0.0
+    detected_items: list[dict] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    raw_payload: dict = Field(default_factory=dict)
+    artifact_ref: str | None = None
+    observed_at: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -633,6 +652,69 @@ def realtime_replay(symbol: str | None = None, limit: int = 100) -> dict:
     from app.realtime.service import RealtimeMarketService
 
     return RealtimeMarketService().replay(symbol=symbol, limit=limit)
+
+
+@router.get("/screen-monitoring/capabilities")
+def screen_monitoring_capabilities() -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().capabilities()
+
+
+@router.post("/screen-monitoring/sessions")
+def start_screen_monitoring_session(input_data: ScreenMonitoringSessionInput | None = None) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenMonitoringSessionInput()
+    return ScreenMonitoringService().start_session(
+        name=payload.name,
+        source=payload.source,
+        window_title=payload.window_title,
+    )
+
+
+@router.get("/screen-monitoring/sessions/latest")
+def latest_screen_monitoring_session() -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().latest_session()
+
+
+@router.get("/screen-monitoring/observations")
+def screen_monitoring_observations(limit: int = 20) -> list[dict]:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().list_observations(limit=limit)
+
+
+@router.post("/screen-monitoring/observations/mock")
+def record_mock_screen_observation(input_data: ScreenObservationInput | None = None) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenObservationInput(
+        source="mock",
+        app_status="online",
+        window_title="Mock Trading Client",
+        confidence=0.75,
+        detected_items=[
+            {"type": "window_status", "value": "online"},
+            {"type": "readonly_banner", "value": "simulation_only"},
+        ],
+        warnings=[],
+        raw_payload={"fixture": True, "read_only": True},
+    )
+    return ScreenMonitoringService().record_observation(
+        session_id=payload.session_id,
+        source=payload.source,
+        app_status=payload.app_status,
+        window_title=payload.window_title,
+        confidence=payload.confidence,
+        detected_items=payload.detected_items,
+        warnings=payload.warnings,
+        raw_payload=payload.raw_payload,
+        artifact_ref=payload.artifact_ref,
+        observed_at=payload.observed_at,
+    )
 
 
 @router.post("/data/daily-bars/refresh")
