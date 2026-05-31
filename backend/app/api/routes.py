@@ -244,6 +244,11 @@ def trade_execution_gateway_audit_ledger_migration_spec_approvals(limit: int = 2
     return TradeExecutionGatewayService().list_audit_ledger_migration_spec_approvals(limit=limit)
 
 
+@router.get("/trade-execution-gateway/audit-ledger-migration-release-readiness")
+def trade_execution_gateway_audit_ledger_migration_release_readiness(limit: int = 50) -> dict:
+    return TradeExecutionGatewayService().audit_ledger_migration_release_readiness(limit=limit)
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()

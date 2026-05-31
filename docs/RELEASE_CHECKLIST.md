@@ -232,6 +232,10 @@
 - [ ] V5.5-P6 approval writes only an existing `events` metadata record when the dry-run verifier passed; failed specs return `approval_blocked` and are not recorded.
 - [ ] V5.5-P6 dashboard shows approval metadata status/history, event id, approval effect, no-SQL, no-table, no-migration, no-file, no-audit-ledger-row, and disabled live-trading evidence.
 - [ ] V5.5-P6 must keep `migration_allowed_now=false`, `writes_audit_ledger_row_now=false`, `creates_table_now=false`, `runs_migration_now=false`, `executes_sql=false`, `writes_migration_file_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
+- [ ] V5.5-P7 exposes `GET /api/trade-execution-gateway/audit-ledger-migration-release-readiness` as a review-only release-readiness summary over the disabled storage plan, dry-run verifier, and approval metadata.
+- [ ] V5.5-P7 release readiness reports go/no-go evidence, matching approval/spec hashes, remaining manual release requirements, review-required gates, and safety evidence while keeping `migration_allowed_now=false`.
+- [ ] V5.5-P7 dashboard shows migration release-readiness status, go/no-go, approval count, gate count, no-migration, no-SQL, no-audit-ledger-row, no-release-approval, and disabled live-trading evidence.
+- [ ] V5.5-P7 must keep `release_approved_now=false`, `migration_allowed_now=false`, `executes_sql=false`, `runs_migration_now=false`, `writes_audit_ledger_row_now=false`, `writes_migration_file_now=false`, `enables_gateway_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
 
 ## 15. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
