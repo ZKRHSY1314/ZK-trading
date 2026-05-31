@@ -771,11 +771,13 @@
           <button class="disabled-live" disabled>实盘执行未启用</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P0" }}</span>
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P1" }}</span>
           <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
           <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
           <span>凭证存储 {{ tradeGatewayCapabilities?.credential_storage_enabled ? "开启" : "关闭" }}</span>
+          <span>人工确认 {{ tradeGatewayManualContract?.status ?? "未加载" }}</span>
+          <span>审计Schema {{ tradeGatewayAuditSchema?.status ?? "未加载" }}</span>
           <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
           <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
           <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
@@ -785,6 +787,26 @@
             <strong>Gateway / {{ tradeGatewayCapabilities.status }}</strong>
             <span>{{ tradeGatewayCapabilities.current_output }}</span>
             <small>review-only {{ tradeGatewayCapabilities.review_only ? "是" : "否" }} / simulation-only {{ tradeGatewayCapabilities.simulation_only ? "是" : "否" }}</small>
+          </div>
+          <div v-if="tradeGatewayManualContract" class="score-item">
+            <strong>Manual Confirmation / {{ tradeGatewayManualContract.status }}</strong>
+            <span>{{ tradeGatewayManualContract.contract_state }} / TTL {{ tradeGatewayManualContract.expiry_policy.confirmation_ttl_seconds }}s</span>
+            <small>执行 {{ tradeGatewayManualContract.decision.contract_allows_execution_now ? "允许" : "禁止" }} / {{ tradeGatewayManualContract.allowed_output }}</small>
+          </div>
+          <div v-if="tradeGatewayManualContract" class="score-item">
+            <strong>Confirmation Inputs</strong>
+            <span>{{ tradeGatewayManualContract.required_operator_inputs.map((item) => item.name).join(" / ") }}</span>
+            <small>禁止输入 {{ tradeGatewayManualContract.forbidden_inputs.join(" / ") }}</small>
+          </div>
+          <div v-if="tradeGatewayAuditSchema" class="score-item">
+            <strong>Audit Evidence / {{ tradeGatewayAuditSchema.status }}</strong>
+            <span>{{ tradeGatewayAuditSchema.target_future_table }} / {{ tradeGatewayAuditSchema.storage_state }}</span>
+            <small>写库 {{ tradeGatewayAuditSchema.writes_database_now ? "是" : "否" }} / 迁移 {{ tradeGatewayAuditSchema.decision.migration_allowed_now ? "允许" : "禁止" }}</small>
+          </div>
+          <div v-if="tradeGatewayAuditSchema" class="score-item">
+            <strong>Audit Fields</strong>
+            <span>{{ tradeGatewayAuditSchema.fields.map((item) => item.name).join(" / ") }}</span>
+            <small>{{ tradeGatewayAuditSchema.immutability_rules.join(" / ") }}</small>
           </div>
           <div
             v-for="component in tradeGatewayCapabilities.required_future_components"
@@ -812,7 +834,7 @@
           <div class="score-item">
             <strong>Forbidden Modes</strong>
             <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
-            <small>这些能力在 V5.0-P0 只能作为阻断项展示。</small>
+            <small>这些能力在 V5.0-P1 只能作为阻断项展示。</small>
           </div>
         </div>
         <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
@@ -1548,6 +1570,81 @@ type TradeGatewayReviewGates = {
     next_required_action: string;
   };
   safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayManualContract = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  contract_name: string;
+  contract_state: string;
+  required_operator_inputs: {
+    name: string;
+    type: string;
+    sensitive: boolean;
+    storage_policy: string;
+    required_phrase?: string;
+    reason: string;
+  }[];
+  required_preconditions: string[];
+  expiry_policy: {
+    confirmation_ttl_seconds: number;
+    expires_on_price_or_risk_change: boolean;
+    requires_reconfirmation_after_expiry: boolean;
+  };
+  dual_control_policy: {
+    second_reviewer_required_for_high_risk: boolean;
+    high_risk_triggers: string[];
+  };
+  decision: {
+    contract_ready_for_review: boolean;
+    contract_allows_execution_now: boolean;
+    requires_future_risk_contract: boolean;
+    requires_future_audit_storage: boolean;
+    requires_future_rollback_runbook: boolean;
+    next_required_action: string;
+  };
+  forbidden_inputs: string[];
+  safety_summary: Record<string, boolean>;
+  allowed_output: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayAuditSchema = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  schema_name: string;
+  schema_state: string;
+  storage_state: string;
+  target_future_table: string;
+  create_table_now: boolean;
+  writes_database_now: boolean;
+  fields: {
+    name: string;
+    type: string;
+    description: string;
+    sensitive: boolean;
+    required: boolean;
+    review_only: boolean;
+  }[];
+  immutability_rules: string[];
+  excluded_sensitive_fields: string[];
+  minimum_evidence_before_future_execution_review: string[];
+  decision: {
+    schema_ready_for_review: boolean;
+    schema_allows_execution_now: boolean;
+    schema_persistence_enabled_now: boolean;
+    migration_allowed_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+  allowed_output: string;
   review_only: boolean;
   simulation_only: boolean;
   live_trading_enabled: boolean;
@@ -3126,6 +3223,8 @@ const agentTasks = ref<AgentTask[]>([]);
 const agentAudit = ref<any[]>([]);
 const tradeGatewayCapabilities = ref<TradeGatewayCapabilities | null>(null);
 const tradeGatewayReviewGates = ref<TradeGatewayReviewGates | null>(null);
+const tradeGatewayManualContract = ref<TradeGatewayManualContract | null>(null);
+const tradeGatewayAuditSchema = ref<TradeGatewayAuditSchema | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -3561,12 +3660,16 @@ async function loadTradeExecutionGateway() {
   tradeGatewayLoading.value = true;
   error.value = "";
   try {
-    const [capabilitiesData, gatesData] = await Promise.all([
+    const [capabilitiesData, gatesData, manualContractData, auditSchemaData] = await Promise.all([
       fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
-      fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates")
+      fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates"),
+      fetchJson<TradeGatewayManualContract>("/api/trade-execution-gateway/manual-confirmation-contract"),
+      fetchJson<TradeGatewayAuditSchema>("/api/trade-execution-gateway/audit-evidence-schema")
     ]);
     tradeGatewayCapabilities.value = capabilitiesData;
     tradeGatewayReviewGates.value = gatesData;
+    tradeGatewayManualContract.value = manualContractData;
+    tradeGatewayAuditSchema.value = auditSchemaData;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
   } finally {

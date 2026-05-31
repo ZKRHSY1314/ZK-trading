@@ -179,6 +179,10 @@
 - [ ] V5.0-P0 reports future manual-confirmation, risk-gate, audit-ledger, and rollback contracts as required before any real-money integration.
 - [ ] V5.0-P0 dashboard shows gateway status, forbidden modes, future components, and safety gates while keeping `gateway_enabled=false`, `execution_enabled=false`, `broker_adapter_enabled=false`, `credential_storage_enabled=false`, and `live_trading_enabled=false`.
 - [ ] V5.0-P0 must not add broker login, account/funds read, credential storage, real trade placement/cancel/modify, screen-click trading, or live auto-trading routes.
+- [ ] V5.0-P1 exposes `GET /api/trade-execution-gateway/manual-confirmation-contract` as review-only metadata for future human confirmation evidence.
+- [ ] V5.0-P1 exposes `GET /api/trade-execution-gateway/audit-evidence-schema` as review-only metadata for future append-only audit evidence.
+- [ ] V5.0-P1 dashboard shows confirmation TTL, required operator inputs, forbidden sensitive inputs, audit fields, immutability rules, and no-execution/no-persistence decisions.
+- [ ] V5.0-P1 must keep `contract_allows_execution_now=false`, `schema_allows_execution_now=false`, `writes_database_now=false`, `migration_allowed_now=false`, and `live_trading_enabled=false`.
 
 ## 14. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:

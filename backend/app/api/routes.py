@@ -139,6 +139,16 @@ def trade_execution_gateway_review_gates() -> dict:
     return TradeExecutionGatewayService().review_gates()
 
 
+@router.get("/trade-execution-gateway/manual-confirmation-contract")
+def trade_execution_gateway_manual_confirmation_contract() -> dict:
+    return TradeExecutionGatewayService().manual_confirmation_contract()
+
+
+@router.get("/trade-execution-gateway/audit-evidence-schema")
+def trade_execution_gateway_audit_evidence_schema() -> dict:
+    return TradeExecutionGatewayService().audit_evidence_schema()
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()
