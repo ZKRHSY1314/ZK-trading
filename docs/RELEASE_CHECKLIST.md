@@ -92,6 +92,9 @@
 - [ ] V4.0-P2 exposes a scheduler-safe realtime cycle for refresh -> monitoring sync -> replay.
 - [ ] V4.0-P2 replay summaries include signal counts, quality counts, latency stats, strongest simulated signals, and ordering evidence.
 - [ ] V4.0-P2 CLI mode `realtime-cycle` calls local API only and remains review-only/simulation-only.
+- [ ] V4.0-P3 persists realtime-cycle run evidence with symbols, provider, refresh status, alert counts, replay event count, fallback state, summary JSON, and steps JSON.
+- [ ] V4.0-P3 API smoke covers `/api/realtime/cycles` and `/api/realtime/cycles/latest`.
+- [ ] V4.0-P3 dashboard shows recent realtime-cycle run history without adding broker/order/credential/screen-click controls.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 12. Desired Workday Schedule Cadence

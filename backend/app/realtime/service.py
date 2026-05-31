@@ -253,16 +253,18 @@ class RealtimeMarketService:
         refresh_limit: int = 20,
         sync_limit: int = 100,
         replay_limit: int = 100,
+        persist: bool = True,
     ) -> dict[str, Any]:
         from app.realtime.monitoring_bridge import RealtimeMonitoringBridge
 
-        refresh = self.refresh_symbols(symbols=symbols, limit=refresh_limit)
+        requested_symbols = self._normalize_symbols(symbols, refresh_limit)
+        refresh = self.refresh_symbols(symbols=requested_symbols, limit=refresh_limit)
         sync = RealtimeMonitoringBridge().sync(limit=sync_limit)
         replay = self.replay(limit=replay_limit)
         status = "completed"
         if refresh.get("fallback_required") or sync.get("created_alert_count", 0) > 0:
             status = "review_required"
-        return {
+        result = {
             "status": status,
             "steps": {
                 "refresh": refresh,
@@ -282,6 +284,40 @@ class RealtimeMarketService:
             "simulation_only": True,
             "live_trading_enabled": False,
         }
+        if persist:
+            result["run_id"] = self._persist_cycle_run(requested_symbols, result)
+        return result
+
+    def list_cycle_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.store.fetch_all(
+            """
+            SELECT *
+            FROM realtime_cycle_runs
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 200)),),
+        )
+        return [self._cycle_run_model(row) for row in rows]
+
+    def latest_cycle_run(self) -> dict[str, Any]:
+        row = self.store.fetch_one(
+            """
+            SELECT *
+            FROM realtime_cycle_runs
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+        if not row:
+            return {
+                "status": "empty",
+                "message": "No realtime cycle run has been recorded.",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            }
+        return self._cycle_run_model(row)
 
     def replay(self, symbol: str | None = None, limit: int = 100) -> dict[str, Any]:
         events = list(reversed(self.list_events(symbol=symbol, limit=limit)))
@@ -432,6 +468,42 @@ class RealtimeMarketService:
                 ),
             )
 
+    def _persist_cycle_run(self, symbols: list[str], result: dict[str, Any]) -> int:
+        summary = result.get("summary", {})
+        steps = result.get("steps", {})
+        refresh = steps.get("refresh", {})
+        sync = steps.get("monitoring_sync", {})
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO realtime_cycle_runs(
+                    status, symbols_json, provider, refresh_status, monitoring_session_id,
+                    refreshed_count, refresh_failed_count, created_alert_count,
+                    replay_event_count, fallback_required, summary_json, steps_json,
+                    review_only, simulation_only, live_trading_enabled
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    result["status"],
+                    json.dumps(symbols, ensure_ascii=False),
+                    refresh.get("provider"),
+                    refresh.get("status"),
+                    sync.get("session_id"),
+                    int(summary.get("refreshed_count") or 0),
+                    int(summary.get("refresh_failed_count") or 0),
+                    int(summary.get("created_alert_count") or 0),
+                    int(summary.get("replay_event_count") or 0),
+                    1 if summary.get("fallback_required") else 0,
+                    json.dumps(summary, ensure_ascii=False, default=str),
+                    json.dumps(steps, ensure_ascii=False, default=str),
+                    1,
+                    1,
+                    0,
+                ),
+            )
+            return int(cursor.lastrowid)
+
     def _event_model(self, row: dict[str, Any] | None) -> dict[str, Any]:
         if not row:
             return {}
@@ -460,6 +532,17 @@ class RealtimeMarketService:
             "simulation_only": True,
             "live_trading_enabled": False,
         }
+
+    def _cycle_run_model(self, row: dict[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        item["symbols"] = self._decode_json(item.pop("symbols_json", "[]"))
+        item["summary"] = self._decode_json(item.pop("summary_json", "{}"))
+        item["steps"] = self._decode_json(item.pop("steps_json", "{}"))
+        item["fallback_required"] = bool(item.get("fallback_required"))
+        item["review_only"] = bool(item.get("review_only"))
+        item["simulation_only"] = bool(item.get("simulation_only"))
+        item["live_trading_enabled"] = bool(item.get("live_trading_enabled"))
+        return item
 
     def _decode_json(self, value: Any) -> Any:
         if not isinstance(value, str):

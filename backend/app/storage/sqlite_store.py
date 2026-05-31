@@ -764,6 +764,29 @@ CREATE TABLE IF NOT EXISTS realtime_provider_health (
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS realtime_cycle_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL,
+    symbols_json TEXT NOT NULL DEFAULT '[]',
+    provider TEXT,
+    refresh_status TEXT,
+    monitoring_session_id INTEGER REFERENCES monitoring_sessions(id) ON DELETE SET NULL,
+    refreshed_count INTEGER NOT NULL DEFAULT 0,
+    refresh_failed_count INTEGER NOT NULL DEFAULT 0,
+    created_alert_count INTEGER NOT NULL DEFAULT 0,
+    replay_event_count INTEGER NOT NULL DEFAULT 0,
+    fallback_required INTEGER NOT NULL DEFAULT 0,
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    steps_json TEXT NOT NULL DEFAULT '{}',
+    review_only INTEGER NOT NULL DEFAULT 1,
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_cycle_runs_created ON realtime_cycle_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_realtime_cycle_runs_status ON realtime_cycle_runs(status);
+
 CREATE TABLE IF NOT EXISTS historical_backtest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     config_json TEXT NOT NULL,
@@ -1000,6 +1023,7 @@ KNOWLEDGE_TABLES = [
     "daily_bar_cache",
     "realtime_market_events",
     "realtime_provider_health",
+    "realtime_cycle_runs",
     "historical_backtest_runs",
     "historical_backtest_trades",
     "historical_backtest_closed_trades",

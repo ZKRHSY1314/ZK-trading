@@ -567,6 +567,20 @@ def realtime_events(symbol: str | None = None, limit: int = 50) -> list[dict]:
     return RealtimeMarketService().list_events(symbol=symbol, limit=limit)
 
 
+@router.get("/realtime/cycles")
+def realtime_cycles(limit: int = 20) -> list[dict]:
+    from app.realtime.service import RealtimeMarketService
+
+    return RealtimeMarketService().list_cycle_runs(limit=limit)
+
+
+@router.get("/realtime/cycles/latest")
+def realtime_latest_cycle() -> dict:
+    from app.realtime.service import RealtimeMarketService
+
+    return RealtimeMarketService().latest_cycle_run()
+
+
 @router.post("/realtime/refresh")
 def realtime_refresh(symbols: str = "SZ002081,SZ002115", limit: int = 20) -> dict:
     from app.realtime.service import RealtimeMarketService

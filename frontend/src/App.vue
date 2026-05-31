@@ -108,9 +108,16 @@
             <small>review-only / live trading disabled</small>
           </div>
           <div v-if="realtimeCycleResult" class="score-item">
-            <strong>Realtime Cycle / {{ realtimeCycleResult.status }}</strong>
+            <strong>Realtime Cycle / {{ realtimeCycleResult.status }} / #{{ realtimeCycleResult.run_id ?? "new" }}</strong>
             <span>刷新 {{ realtimeCycleResult.summary.refreshed_count }} / 失败 {{ realtimeCycleResult.summary.refresh_failed_count }} / Replay {{ realtimeCycleResult.summary.replay_event_count }}</span>
             <small>提醒 {{ realtimeCycleResult.summary.created_alert_count }} / fallback {{ realtimeCycleResult.summary.fallback_required ? "required" : "not required" }}</small>
+          </div>
+        </div>
+        <div v-if="realtimeCycleRuns.length" class="score-list">
+          <div v-for="run in realtimeCycleRuns.slice(0, 5)" :key="run.id" class="score-item">
+            <strong>Cycle #{{ run.id }} / {{ run.status }}</strong>
+            <span>刷新 {{ run.refreshed_count }} / 失败 {{ run.refresh_failed_count }} / 提醒 {{ run.created_alert_count }} / Replay {{ run.replay_event_count }}</span>
+            <small>{{ run.created_at }} / provider {{ run.provider ?? "disabled" }} / fallback {{ run.fallback_required ? "required" : "not required" }}</small>
           </div>
         </div>
         <div v-if="realtimeHealth.length" class="score-list">
@@ -1424,6 +1431,7 @@ type RealtimeMonitoringSyncResult = {
 };
 
 type RealtimeCycleResult = {
+  run_id?: number;
   status: string;
   steps: {
     refresh: RealtimeRefreshResult;
@@ -1442,6 +1450,26 @@ type RealtimeCycleResult = {
   review_only: boolean;
   simulation_only: boolean;
   live_trading_enabled: boolean;
+};
+
+type RealtimeCycleRun = {
+  id: number;
+  status: string;
+  symbols: string[];
+  provider?: string | null;
+  refresh_status?: string | null;
+  monitoring_session_id?: number | null;
+  refreshed_count: number;
+  refresh_failed_count: number;
+  created_alert_count: number;
+  replay_event_count: number;
+  fallback_required: boolean;
+  summary: RealtimeCycleResult["summary"];
+  steps: Record<string, any>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+  created_at: string;
 };
 
 type BacktestRunItem = {
@@ -1660,6 +1688,7 @@ const realtimeReplay = ref<RealtimeReplay | null>(null);
 const realtimeRefreshResult = ref<RealtimeRefreshResult | null>(null);
 const realtimeMonitoringSync = ref<RealtimeMonitoringSyncResult | null>(null);
 const realtimeCycleResult = ref<RealtimeCycleResult | null>(null);
+const realtimeCycleRuns = ref<RealtimeCycleRun[]>([]);
 const realtimeLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -2493,21 +2522,24 @@ async function runDailyBarRefresh() {
 async function loadRealtimeData() {
   realtimeLoading.value = true;
   try {
-    const [capabilitiesData, healthData, snapshotData, eventsData] = await Promise.all([
+    const [capabilitiesData, healthData, snapshotData, eventsData, cycleRunsData] = await Promise.all([
       fetchJson<RealtimeCapabilities>("/api/realtime/capabilities"),
       fetchJson<RealtimeProviderHealth[]>("/api/realtime/provider-health"),
       fetchJson<RealtimeSnapshot>("/api/realtime/snapshot/SZ002081"),
-      fetchJson<RealtimeEvent[]>("/api/realtime/events?limit=20")
+      fetchJson<RealtimeEvent[]>("/api/realtime/events?limit=20"),
+      fetchJson<RealtimeCycleRun[]>("/api/realtime/cycles?limit=10")
     ]);
     realtimeCapabilities.value = capabilitiesData;
     realtimeHealth.value = healthData;
     realtimeSnapshot.value = snapshotData;
     realtimeEvents.value = eventsData;
+    realtimeCycleRuns.value = cycleRunsData;
   } catch (err) {
     realtimeCapabilities.value = null;
     realtimeHealth.value = [];
     realtimeSnapshot.value = null;
     realtimeEvents.value = [];
+    realtimeCycleRuns.value = [];
     error.value = err instanceof Error ? err.message : "实时行情状态加载失败";
   } finally {
     realtimeLoading.value = false;

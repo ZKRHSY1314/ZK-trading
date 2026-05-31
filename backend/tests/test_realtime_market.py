@@ -10,6 +10,7 @@ def _reset_realtime(store) -> None:
         conn.execute("DELETE FROM monitoring_alerts")
         conn.execute("DELETE FROM monitoring_events")
         conn.execute("DELETE FROM monitoring_sessions")
+        conn.execute("DELETE FROM realtime_cycle_runs")
         conn.execute("DELETE FROM realtime_market_events")
         conn.execute("DELETE FROM realtime_provider_health")
 
@@ -229,6 +230,13 @@ def test_realtime_cycle_runs_refresh_sync_and_replay_summary(test_db):
     assert result["summary"]["signal_counts"]["momentum_up"] == 1
     assert result["steps"]["replay"]["summary"]["symbol_count"] == 1
     assert result["live_trading_enabled"] is False
+    assert isinstance(result["run_id"], int)
+    latest = cycle_service.latest_cycle_run()
+    runs = cycle_service.list_cycle_runs(limit=5)
+    assert latest["id"] == result["run_id"]
+    assert latest["summary"]["created_alert_count"] == 1
+    assert latest["symbols"] == ["SZ002081"]
+    assert len(runs) == 1
 
 
 def test_realtime_replay_orders_events_and_generates_signals(test_db):
@@ -273,6 +281,8 @@ def test_realtime_api_smoke(client, test_db):
     sync_resp = client.post("/api/realtime/monitoring-sync?limit=5")
     alerts_resp = client.get("/api/monitoring/alerts?limit=5")
     cycle_resp = client.post("/api/realtime/cycle?symbols=SZ002081,SZ002115&refresh_limit=5&sync_limit=5&replay_limit=5")
+    cycles_resp = client.get("/api/realtime/cycles?limit=5")
+    latest_cycle_resp = client.get("/api/realtime/cycles/latest")
     replay_resp = client.post("/api/realtime/replay?symbol=SZ002081&limit=5")
 
     assert capabilities_resp.status_code == 200
@@ -283,6 +293,8 @@ def test_realtime_api_smoke(client, test_db):
     assert sync_resp.status_code == 200
     assert alerts_resp.status_code == 200
     assert cycle_resp.status_code == 200
+    assert cycles_resp.status_code == 200
+    assert latest_cycle_resp.status_code == 200
     assert replay_resp.status_code == 200
     assert snapshot_resp.json()["event"]["symbol"] == "SZ002081"
     assert events_resp.json()
@@ -290,5 +302,7 @@ def test_realtime_api_smoke(client, test_db):
     assert sync_resp.json()["simulation_only"] is True
     assert isinstance(alerts_resp.json(), list)
     assert cycle_resp.json()["summary"]["fallback_required"] is True
+    assert cycles_resp.json()[0]["id"] == cycle_resp.json()["run_id"]
+    assert latest_cycle_resp.json()["id"] == cycle_resp.json()["run_id"]
     assert replay_resp.json()["simulation_only"] is True
     assert client.get("/health").json()["live_trading_enabled"] is False
