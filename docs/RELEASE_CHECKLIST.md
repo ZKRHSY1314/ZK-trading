@@ -136,6 +136,9 @@
 - [ ] V4.5-P9 exposes `/api/screen-monitoring/readiness-audit/acknowledge` and `/api/screen-monitoring/readiness-audit/acknowledgements`.
 - [ ] V4.5-P9 acknowledgement records a hash and summary of the current audit report as audit status only.
 - [ ] V4.5-P9 dashboard shows acknowledgement status/history without applying config, enabling screenshots/OCR, controlling windows, or changing live-trading state.
+- [ ] V4.5-P10 exposes `/api/screen-monitoring/readiness-timeline` as a chronological read-only evidence timeline.
+- [ ] V4.5-P10 timeline combines observations, artifact reviews, provider config proposals, provider replay runs, current audit report, and audit acknowledgements.
+- [ ] V4.5-P10 dashboard shows timeline items and safety flags without adding any capture, OCR, broker, order, credential, screen-click, or live-trading controls.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

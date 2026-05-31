@@ -750,6 +750,13 @@ def screen_monitoring_readiness_audit_acknowledgements(limit: int = 20) -> list[
     return ScreenMonitoringService().list_screen_readiness_audit_acknowledgements(limit=limit)
 
 
+@router.get("/screen-monitoring/readiness-timeline")
+def screen_monitoring_readiness_timeline(limit: int = 50) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().screen_readiness_timeline(limit=limit)
+
+
 @router.post("/screen-monitoring/provider-config-proposals")
 def screen_monitoring_provider_config_proposal(
     input_data: ScreenProviderConfigProposalInput | None = None,

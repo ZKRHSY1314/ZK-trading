@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P9",
+            "stage": "V4.5-P10",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -55,6 +55,7 @@ class ScreenMonitoringService:
                 "provider_readiness_replay",
                 "screen_readiness_audit_report",
                 "screen_readiness_audit_acknowledgement",
+                "screen_readiness_timeline",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -139,7 +140,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P9",
+            "stage": "V4.5-P10",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -242,7 +243,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P9",
+            "stage": "V4.5-P10",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -273,6 +274,131 @@ class ScreenMonitoringService:
                 proposal_pending,
                 replay_runs,
             ),
+            "forbidden_actions": [
+                "screen_click",
+                "keyboard_type",
+                "real_pixel_capture",
+                "pixel_storage",
+                "ocr_execution",
+                "broker_action",
+                "order_action",
+                "credential_access",
+                "live_auto_trading",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def screen_readiness_timeline(self, limit: int = 50) -> dict[str, Any]:
+        safe_limit = max(1, min(limit, 200))
+        report = self.screen_readiness_audit_report(limit=min(safe_limit, 50))
+        items: list[dict[str, Any]] = [
+            self._timeline_item(
+                "readiness_audit_report",
+                "current",
+                report.get("generated_at"),
+                f"Readiness audit / {report.get('status')}",
+                str(report.get("status") or "unknown"),
+                {
+                    "stage": report.get("stage"),
+                    "blocked_check_count": report.get("summary", {}).get("blocked_check_count", 0),
+                    "artifact_pending_count": report.get("summary", {}).get("artifact_pending_count", 0),
+                    "config_pending_count": report.get("summary", {}).get("config_pending_count", 0),
+                    "allowed_output": report.get("summary", {}).get("allowed_output"),
+                },
+            )
+        ]
+        for observation in self.list_observations(limit=safe_limit):
+            items.append(
+                self._timeline_item(
+                    "screen_observation",
+                    observation.get("id"),
+                    observation.get("observed_at") or observation.get("created_at"),
+                    f"{observation.get('app_status')} / {observation.get('source')}",
+                    str(observation.get("app_status") or "unknown"),
+                    {
+                        "window_title": observation.get("window_title"),
+                        "warning_count": len(observation.get("warnings") or []),
+                        "artifact_ref": observation.get("artifact_ref"),
+                    },
+                )
+            )
+        for review in self.list_artifact_reviews(limit=safe_limit):
+            items.append(
+                self._timeline_item(
+                    "artifact_review",
+                    review.get("id"),
+                    review.get("updated_at") or review.get("created_at"),
+                    f"Artifact review / {review.get('review_status')}",
+                    str(review.get("review_status") or "unknown"),
+                    {
+                        "artifact_status": review.get("artifact_status"),
+                        "artifact_ref": review.get("artifact_ref"),
+                        "decision_effect": review.get("retention_policy", {}).get("review_queue", {}).get("decision_effect"),
+                    },
+                )
+            )
+        for proposal in self.list_provider_config_proposals(limit=safe_limit):
+            items.append(
+                self._timeline_item(
+                    "provider_config_proposal",
+                    proposal.get("id"),
+                    proposal.get("updated_at") or proposal.get("created_at"),
+                    f"Provider config proposal / {proposal.get('status')}",
+                    str(proposal.get("status") or "unknown"),
+                    {
+                        "provider": proposal.get("provider"),
+                        "target_window_title": proposal.get("target_window_title"),
+                        "writes_env": bool(proposal.get("proposal", {}).get("writes_env")),
+                        "executes_commands": bool(proposal.get("proposal", {}).get("executes_commands")),
+                    },
+                )
+            )
+        for run in self.list_provider_replay_runs(limit=safe_limit):
+            items.append(
+                self._timeline_item(
+                    "provider_replay_run",
+                    run.get("id"),
+                    run.get("created_at"),
+                    f"Provider replay / {run.get('status')}",
+                    str(run.get("status") or "unknown"),
+                    {
+                        "scenario_name": run.get("scenario_name"),
+                        "proposal_id": run.get("proposal_id"),
+                        "passed_count": run.get("summary", {}).get("passed_count", 0),
+                        "blocked_count": run.get("summary", {}).get("blocked_count", 0),
+                    },
+                )
+            )
+        for ack in self.list_screen_readiness_audit_acknowledgements(limit=safe_limit):
+            items.append(
+                self._timeline_item(
+                    "readiness_audit_acknowledgement",
+                    ack.get("id"),
+                    ack.get("updated_at") or ack.get("created_at"),
+                    f"Readiness audit acknowledged / {ack.get('acknowledged_by')}",
+                    str(ack.get("status") or "unknown"),
+                    {
+                        "report_status": ack.get("report_status"),
+                        "report_stage": ack.get("report_stage"),
+                        "acknowledgement_effect": ack.get("acknowledgement_effect"),
+                    },
+                )
+            )
+        ordered = sorted(items, key=lambda item: item["event_ts"] or "", reverse=True)[:safe_limit]
+        counts_by_type: dict[str, int] = {}
+        for item in ordered:
+            item_type = str(item["item_type"])
+            counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
+        return {
+            "status": "timeline_ready",
+            "stage": "V4.5-P10",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "item_count": len(ordered),
+            "counts_by_type": counts_by_type,
+            "items": ordered,
+            "allowed_output": "review_only_screen_readiness_timeline",
             "forbidden_actions": [
                 "screen_click",
                 "keyboard_type",
@@ -329,7 +455,7 @@ class ScreenMonitoringService:
                     "acknowledged",
                     report_hash,
                     str(report.get("status") or "unknown"),
-                    str(report.get("stage") or "V4.5-P9"),
+                    str(report.get("stage") or "V4.5-P10"),
                     json.dumps(summary, ensure_ascii=False, default=str),
                     json.dumps(safety_matrix, ensure_ascii=False, default=str),
                     json.dumps(report, ensure_ascii=False, default=str),
@@ -1256,6 +1382,36 @@ class ScreenMonitoringService:
         }
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _timeline_item(
+        self,
+        item_type: str,
+        source_id: Any,
+        event_ts: Any,
+        title: str,
+        status: str,
+        summary: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "id": f"{item_type}:{source_id}",
+            "item_type": item_type,
+            "source_id": source_id,
+            "event_ts": str(event_ts or ""),
+            "title": title,
+            "status": status,
+            "summary": summary or {},
+            "writes_env": False,
+            "executes_commands": False,
+            "real_screen_capture": False,
+            "pixel_data_stored": False,
+            "ocr_executed": False,
+            "broker_action": False,
+            "order_action": False,
+            "credential_access": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
 
     def _screen_audit_next_steps(
         self,

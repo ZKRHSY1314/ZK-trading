@@ -216,6 +216,9 @@
           <button data-testid="screen-readiness-ack-button" @click="acknowledgeScreenReadinessAudit" :disabled="screenMonitoringLoading">
             确认 Audit 已审阅
           </button>
+          <button data-testid="screen-readiness-timeline-button" @click="refreshScreenReadinessTimeline" :disabled="screenMonitoringLoading">
+            刷新 Timeline
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -230,6 +233,7 @@
           <span>Replay {{ screenProviderReplayRuns.length }}</span>
           <span>Audit {{ screenReadinessAudit?.status ?? "未加载" }}</span>
           <span>确认 {{ screenReadinessAuditAcks.length }}</span>
+          <span>Timeline {{ screenReadinessTimeline?.item_count ?? 0 }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -364,6 +368,13 @@
             <strong>Audit Ack #{{ ack.id }} / {{ ack.status }}</strong>
             <span>{{ ack.acknowledged_by }} / {{ ack.report_status }} / {{ ack.report_stage }}</span>
             <small>{{ ack.updated_at }} / {{ ack.acknowledgement_effect }} / 不启用截图或实盘</small>
+          </div>
+        </div>
+        <div v-if="screenReadinessTimeline?.items.length" class="score-list">
+          <div v-for="item in screenReadinessTimeline.items.slice(0, 8)" :key="item.id" class="score-item">
+            <strong>{{ item.item_type }} / {{ item.status }}</strong>
+            <span>{{ item.title }}</span>
+            <small>{{ item.event_ts }} / 写 env {{ item.writes_env ? "是" : "否" }} / OCR {{ item.ocr_executed ? "执行" : "关闭" }} / live trading disabled</small>
           </div>
         </div>
         <p v-if="!screenObservations.length">暂无屏幕观测证据。V4.5 仅支持 mock、fixture、截图预检和 artifact 元数据复核，不控制交易软件。</p>
@@ -2081,6 +2092,39 @@ type ScreenReadinessAuditAck = {
   updated_at: string;
 };
 
+type ScreenReadinessTimeline = {
+  status: string;
+  stage: string;
+  generated_at: string;
+  item_count: number;
+  counts_by_type: Record<string, number>;
+  items: Array<{
+    id: string;
+    item_type: string;
+    source_id?: string | number | null;
+    event_ts: string;
+    title: string;
+    status: string;
+    summary: Record<string, any>;
+    writes_env: boolean;
+    executes_commands: boolean;
+    real_screen_capture: boolean;
+    pixel_data_stored: boolean;
+    ocr_executed: boolean;
+    broker_action: boolean;
+    order_action: boolean;
+    credential_access: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2320,6 +2364,7 @@ const screenProviderReplayResult = ref<ScreenProviderReplayRun | null>(null);
 const screenReadinessAudit = ref<ScreenReadinessAuditReport | null>(null);
 const screenReadinessAuditAcks = ref<ScreenReadinessAuditAck[]>([]);
 const screenReadinessAuditAckResult = ref<ScreenReadinessAuditAck | null>(null);
+const screenReadinessTimeline = ref<ScreenReadinessTimeline | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3269,7 +3314,8 @@ async function loadScreenMonitoring() {
       providerConfigProposalsData,
       providerReplayRunsData,
       readinessAuditData,
-      readinessAuditAcksData
+      readinessAuditAcksData,
+      readinessTimelineData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3281,7 +3327,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenProviderConfigProposal[]>("/api/screen-monitoring/provider-config-proposals?limit=20"),
       fetchJson<ScreenProviderReplayRun[]>("/api/screen-monitoring/provider-replay?limit=20"),
       fetchJson<ScreenReadinessAuditReport>("/api/screen-monitoring/readiness-audit?limit=20"),
-      fetchJson<ScreenReadinessAuditAck[]>("/api/screen-monitoring/readiness-audit/acknowledgements?limit=20")
+      fetchJson<ScreenReadinessAuditAck[]>("/api/screen-monitoring/readiness-audit/acknowledgements?limit=20"),
+      fetchJson<ScreenReadinessTimeline>("/api/screen-monitoring/readiness-timeline?limit=40")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3294,6 +3341,7 @@ async function loadScreenMonitoring() {
     screenProviderReplayRuns.value = providerReplayRunsData;
     screenReadinessAudit.value = readinessAuditData;
     screenReadinessAuditAcks.value = readinessAuditAcksData;
+    screenReadinessTimeline.value = readinessTimelineData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3306,6 +3354,7 @@ async function loadScreenMonitoring() {
     screenProviderReplayRuns.value = [];
     screenReadinessAudit.value = null;
     screenReadinessAuditAcks.value = [];
+    screenReadinessTimeline.value = null;
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -3344,6 +3393,20 @@ async function acknowledgeScreenReadinessAudit() {
     await loadScreenMonitoring();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Readiness audit 确认失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function refreshScreenReadinessTimeline() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenReadinessTimeline.value = await fetchJson<ScreenReadinessTimeline>(
+      "/api/screen-monitoring/readiness-timeline?limit=40"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Readiness timeline 刷新失败";
   } finally {
     screenMonitoringLoading.value = false;
   }
