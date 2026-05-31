@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P11",
+            "stage": "V4.5-P12",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -57,6 +57,7 @@ class ScreenMonitoringService:
                 "screen_readiness_audit_acknowledgement",
                 "screen_readiness_timeline",
                 "screen_readiness_evidence_export",
+                "screen_readiness_evidence_verifier",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -141,7 +142,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P11",
+            "stage": "V4.5-P12",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -244,7 +245,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P11",
+            "stage": "V4.5-P12",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -301,7 +302,7 @@ class ScreenMonitoringService:
         evidence_bundle = {
             "schema_version": "screen_readiness_evidence_export.v1",
             "status": "export_ready",
-            "stage": "V4.5-P11",
+            "stage": "V4.5-P12",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "bundle_scope": [
                 "capabilities",
@@ -347,6 +348,196 @@ class ScreenMonitoringService:
         }
         evidence_bundle["bundle_hash"] = self._screen_evidence_export_hash(evidence_bundle)
         return evidence_bundle
+
+    def verify_screen_readiness_evidence_export(self, limit: int = 50) -> dict[str, Any]:
+        bundle = self.screen_readiness_evidence_export(limit=limit)
+        checks = [
+            self._screen_evidence_check(
+                "schema_version",
+                bundle.get("schema_version") == "screen_readiness_evidence_export.v1",
+                bundle.get("schema_version"),
+                "screen_readiness_evidence_export.v1",
+                "export schema must be recognized before manual archive/review",
+            ),
+            self._screen_evidence_check(
+                "bundle_hash_recomputable",
+                bundle.get("bundle_hash") == self._screen_evidence_export_hash(bundle),
+                bundle.get("bundle_hash"),
+                self._screen_evidence_export_hash(bundle),
+                "bundle hash must be reproducible after removing runtime timestamps",
+            ),
+            self._screen_evidence_check(
+                "api_response_only",
+                bundle.get("export_metadata", {}).get("delivery") == "api_response_only",
+                bundle.get("export_metadata", {}).get("delivery"),
+                "api_response_only",
+                "verifier must not approve file writes or downloads",
+            ),
+            self._screen_evidence_check(
+                "no_file_write",
+                bundle.get("export_metadata", {}).get("writes_file") is False
+                and bundle.get("safety", {}).get("writes_file") is False,
+                {
+                    "metadata": bundle.get("export_metadata", {}).get("writes_file"),
+                    "safety": bundle.get("safety", {}).get("writes_file"),
+                },
+                False,
+                "evidence export is review material only and must not write files",
+            ),
+            self._screen_evidence_check(
+                "no_download",
+                bundle.get("export_metadata", {}).get("download_created") is False
+                and bundle.get("safety", {}).get("download_created") is False,
+                {
+                    "metadata": bundle.get("export_metadata", {}).get("download_created"),
+                    "safety": bundle.get("safety", {}).get("download_created"),
+                },
+                False,
+                "operator archive is manual; API must not create downloads",
+            ),
+            self._screen_evidence_check(
+                "no_command_or_env_write",
+                bundle.get("safety", {}).get("executes_commands") is False
+                and bundle.get("safety", {}).get("writes_env") is False,
+                {
+                    "executes_commands": bundle.get("safety", {}).get("executes_commands"),
+                    "writes_env": bundle.get("safety", {}).get("writes_env"),
+                },
+                False,
+                "verifier must not approve command execution or env mutation",
+            ),
+            self._screen_evidence_check(
+                "no_capture_or_ocr",
+                bundle.get("safety", {}).get("real_screen_capture") is False
+                and bundle.get("safety", {}).get("pixel_data_stored") is False
+                and bundle.get("safety", {}).get("ocr_executed") is False,
+                {
+                    "real_screen_capture": bundle.get("safety", {}).get("real_screen_capture"),
+                    "pixel_data_stored": bundle.get("safety", {}).get("pixel_data_stored"),
+                    "ocr_executed": bundle.get("safety", {}).get("ocr_executed"),
+                },
+                False,
+                "P12 verifier must remain metadata-only",
+            ),
+            self._screen_evidence_check(
+                "no_broker_or_order",
+                bundle.get("safety", {}).get("broker_action") is False
+                and bundle.get("safety", {}).get("order_action") is False
+                and bundle.get("safety", {}).get("credential_access") is False,
+                {
+                    "broker_action": bundle.get("safety", {}).get("broker_action"),
+                    "order_action": bundle.get("safety", {}).get("order_action"),
+                    "credential_access": bundle.get("safety", {}).get("credential_access"),
+                },
+                False,
+                "screen evidence must never authorize broker, order, or credential operations",
+            ),
+            self._screen_evidence_check(
+                "live_trading_disabled_everywhere",
+                bundle.get("live_trading_enabled") is False
+                and bundle.get("capabilities", {}).get("live_trading_enabled") is False
+                and bundle.get("provider_readiness", {}).get("live_trading_enabled") is False
+                and bundle.get("readiness_audit_report", {}).get("live_trading_enabled") is False
+                and bundle.get("readiness_timeline", {}).get("live_trading_enabled") is False
+                and bundle.get("export_metadata", {}).get("live_trading_enabled") is False
+                and bundle.get("safety", {}).get("live_trading_enabled") is False,
+                {
+                    "bundle": bundle.get("live_trading_enabled"),
+                    "capabilities": bundle.get("capabilities", {}).get("live_trading_enabled"),
+                    "provider_readiness": bundle.get("provider_readiness", {}).get("live_trading_enabled"),
+                    "readiness_audit_report": bundle.get("readiness_audit_report", {}).get("live_trading_enabled"),
+                    "readiness_timeline": bundle.get("readiness_timeline", {}).get("live_trading_enabled"),
+                    "export_metadata": bundle.get("export_metadata", {}).get("live_trading_enabled"),
+                    "safety": bundle.get("safety", {}).get("live_trading_enabled"),
+                },
+                False,
+                "all nested evidence must keep live trading disabled",
+            ),
+            self._screen_evidence_check(
+                "required_bundle_sections_present",
+                all(section in bundle for section in bundle.get("bundle_scope", []))
+                and self._screen_required_paths_present(
+                    bundle,
+                    [
+                        "capabilities.allowed_modes",
+                        "provider_readiness.checks",
+                        "readiness_audit_report.safety_matrix",
+                        "readiness_audit_acknowledgements",
+                        "readiness_timeline.items",
+                        "export_metadata.allowed_output",
+                        "safety.allowed_output",
+                    ],
+                ),
+                bundle.get("bundle_scope"),
+                "all scoped sections and safety paths present",
+                "manual reviewers need complete evidence, not a partial bundle",
+            ),
+            self._screen_evidence_check(
+                "forbidden_actions_declared",
+                self._screen_forbidden_actions_covered(bundle),
+                bundle.get("forbidden_actions"),
+                [
+                    "write_env",
+                    "execute_command",
+                    "screen_click",
+                    "keyboard_type",
+                    "real_pixel_capture",
+                    "ocr_execution",
+                    "broker_action",
+                    "order_action",
+                    "credential_access",
+                    "live_auto_trading",
+                ],
+                "export must explicitly declare blocked dangerous actions",
+            ),
+            self._screen_evidence_check(
+                "review_and_simulation_only",
+                bundle.get("review_only") is True
+                and bundle.get("simulation_only") is True
+                and bundle.get("export_metadata", {}).get("review_only") is True
+                and bundle.get("export_metadata", {}).get("simulation_only") is True,
+                {
+                    "bundle_review_only": bundle.get("review_only"),
+                    "bundle_simulation_only": bundle.get("simulation_only"),
+                    "metadata_review_only": bundle.get("export_metadata", {}).get("review_only"),
+                    "metadata_simulation_only": bundle.get("export_metadata", {}).get("simulation_only"),
+                },
+                True,
+                "verifier output is evidence for review and simulation only",
+            ),
+        ]
+        failed = [item for item in checks if item["status"] != "passed"]
+        return {
+            "schema_version": "screen_readiness_evidence_verifier.v1",
+            "status": "verification_passed" if not failed else "verification_failed",
+            "stage": "V4.5-P12",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "export_bundle_hash": bundle.get("bundle_hash"),
+            "verified_export_stage": bundle.get("stage"),
+            "check_count": len(checks),
+            "passed_count": len(checks) - len(failed),
+            "failed_count": len(failed),
+            "checks": checks,
+            "failed_checks": failed,
+            "safety_summary": {
+                "writes_file": False,
+                "download_created": False,
+                "executes_commands": False,
+                "writes_env": False,
+                "real_screen_capture": False,
+                "pixel_data_stored": False,
+                "ocr_executed": False,
+                "broker_action": False,
+                "order_action": False,
+                "credential_access": False,
+                "live_trading_enabled": False,
+            },
+            "allowed_output": "review_only_screen_readiness_evidence_verifier",
+            "forbidden_actions": bundle.get("forbidden_actions", []),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
 
     def screen_readiness_timeline(self, limit: int = 50) -> dict[str, Any]:
         safe_limit = max(1, min(limit, 200))
@@ -451,7 +642,7 @@ class ScreenMonitoringService:
             counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
         return {
             "status": "timeline_ready",
-            "stage": "V4.5-P11",
+            "stage": "V4.5-P12",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "item_count": len(ordered),
             "counts_by_type": counts_by_type,
@@ -513,7 +704,7 @@ class ScreenMonitoringService:
                     "acknowledged",
                     report_hash,
                     str(report.get("status") or "unknown"),
-                    str(report.get("stage") or "V4.5-P11"),
+                    str(report.get("stage") or "V4.5-P12"),
                     json.dumps(summary, ensure_ascii=False, default=str),
                     json.dumps(safety_matrix, ensure_ascii=False, default=str),
                     json.dumps(report, ensure_ascii=False, default=str),
@@ -1456,6 +1647,50 @@ class ScreenMonitoringService:
         if isinstance(value, list):
             return [self._without_evidence_export_runtime_fields(item) for item in value]
         return value
+
+    def _screen_evidence_check(
+        self,
+        name: str,
+        passed: bool,
+        value: Any,
+        expected: Any,
+        reason: str,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else "failed",
+            "value": value,
+            "expected": expected,
+            "reason": reason,
+            "severity": "blocker" if not passed else "info",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def _screen_required_paths_present(self, bundle: dict[str, Any], paths: list[str]) -> bool:
+        for path in paths:
+            current: Any = bundle
+            for part in path.split("."):
+                if not isinstance(current, dict) or part not in current:
+                    return False
+                current = current[part]
+        return True
+
+    def _screen_forbidden_actions_covered(self, bundle: dict[str, Any]) -> bool:
+        required = {
+            "write_env",
+            "execute_command",
+            "screen_click",
+            "keyboard_type",
+            "real_pixel_capture",
+            "ocr_execution",
+            "broker_action",
+            "order_action",
+            "credential_access",
+            "live_auto_trading",
+        }
+        return required.issubset(set(bundle.get("forbidden_actions") or []))
 
     def _screen_evidence_export_safety(
         self,

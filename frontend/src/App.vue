@@ -222,6 +222,9 @@
           <button data-testid="screen-readiness-export-button" @click="refreshScreenReadinessExport" :disabled="screenMonitoringLoading">
             生成 Evidence Export
           </button>
+          <button data-testid="screen-readiness-verify-button" @click="verifyScreenReadinessExport" :disabled="screenMonitoringLoading">
+            校验证据包
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -238,6 +241,7 @@
           <span>确认 {{ screenReadinessAuditAcks.length }}</span>
           <span>Timeline {{ screenReadinessTimeline?.item_count ?? 0 }}</span>
           <span>Export {{ screenReadinessExport?.status ?? "未生成" }}</span>
+          <span>Verify {{ screenReadinessVerification?.status ?? "未校验" }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -320,6 +324,11 @@
             <strong>Evidence Export / {{ screenReadinessExport.status }}</strong>
             <span>{{ screenReadinessExport.export_metadata.allowed_output }} / {{ screenReadinessExport.export_metadata.delivery }}</span>
             <small>{{ screenReadinessExport.bundle_hash.slice(0, 16) }} / 写文件 {{ screenReadinessExport.safety.writes_file ? "是" : "否" }} / OCR {{ screenReadinessExport.safety.ocr_executed ? "执行" : "关闭" }}</small>
+          </div>
+          <div v-if="screenReadinessVerification" class="score-item">
+            <strong>Evidence Verifier / {{ screenReadinessVerification.status }}</strong>
+            <span>{{ screenReadinessVerification.passed_count }}/{{ screenReadinessVerification.check_count }} checks / {{ screenReadinessVerification.allowed_output }}</span>
+            <small>{{ screenReadinessVerification.export_bundle_hash.slice(0, 16) }} / 失败 {{ screenReadinessVerification.failed_count }} / 实盘 {{ screenReadinessVerification.live_trading_enabled ? "开启" : "关闭" }}</small>
           </div>
           <div
             v-for="item in screenReadinessAudit?.safety_matrix.slice(0, 6) ?? []"
@@ -2179,6 +2188,58 @@ type ScreenReadinessEvidenceExport = {
   live_trading_enabled: boolean;
 };
 
+type ScreenReadinessVerification = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  export_bundle_hash: string;
+  verified_export_stage: string;
+  check_count: number;
+  passed_count: number;
+  failed_count: number;
+  checks: Array<{
+    name: string;
+    status: string;
+    value: unknown;
+    expected: unknown;
+    reason: string;
+    severity: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  failed_checks: Array<{
+    name: string;
+    status: string;
+    value: unknown;
+    expected: unknown;
+    reason: string;
+    severity: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  safety_summary: {
+    writes_file: boolean;
+    download_created: boolean;
+    executes_commands: boolean;
+    writes_env: boolean;
+    real_screen_capture: boolean;
+    pixel_data_stored: boolean;
+    ocr_executed: boolean;
+    broker_action: boolean;
+    order_action: boolean;
+    credential_access: boolean;
+    live_trading_enabled: boolean;
+  };
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2420,6 +2481,7 @@ const screenReadinessAuditAcks = ref<ScreenReadinessAuditAck[]>([]);
 const screenReadinessAuditAckResult = ref<ScreenReadinessAuditAck | null>(null);
 const screenReadinessTimeline = ref<ScreenReadinessTimeline | null>(null);
 const screenReadinessExport = ref<ScreenReadinessEvidenceExport | null>(null);
+const screenReadinessVerification = ref<ScreenReadinessVerification | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3371,7 +3433,8 @@ async function loadScreenMonitoring() {
       readinessAuditData,
       readinessAuditAcksData,
       readinessTimelineData,
-      readinessExportData
+      readinessExportData,
+      readinessVerificationData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3385,7 +3448,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenReadinessAuditReport>("/api/screen-monitoring/readiness-audit?limit=20"),
       fetchJson<ScreenReadinessAuditAck[]>("/api/screen-monitoring/readiness-audit/acknowledgements?limit=20"),
       fetchJson<ScreenReadinessTimeline>("/api/screen-monitoring/readiness-timeline?limit=40"),
-      fetchJson<ScreenReadinessEvidenceExport>("/api/screen-monitoring/readiness-export?limit=40")
+      fetchJson<ScreenReadinessEvidenceExport>("/api/screen-monitoring/readiness-export?limit=40"),
+      fetchJson<ScreenReadinessVerification>("/api/screen-monitoring/readiness-export/verify?limit=40")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3400,6 +3464,7 @@ async function loadScreenMonitoring() {
     screenReadinessAuditAcks.value = readinessAuditAcksData;
     screenReadinessTimeline.value = readinessTimelineData;
     screenReadinessExport.value = readinessExportData;
+    screenReadinessVerification.value = readinessVerificationData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3414,6 +3479,7 @@ async function loadScreenMonitoring() {
     screenReadinessAuditAcks.value = [];
     screenReadinessTimeline.value = null;
     screenReadinessExport.value = null;
+    screenReadinessVerification.value = null;
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -3480,6 +3546,20 @@ async function refreshScreenReadinessExport() {
     );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Readiness evidence export 生成失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function verifyScreenReadinessExport() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenReadinessVerification.value = await fetchJson<ScreenReadinessVerification>(
+      "/api/screen-monitoring/readiness-export/verify?limit=40"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Readiness evidence verifier 校验失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

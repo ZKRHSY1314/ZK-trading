@@ -764,6 +764,13 @@ def screen_monitoring_readiness_export(limit: int = 50) -> dict:
     return ScreenMonitoringService().screen_readiness_evidence_export(limit=limit)
 
 
+@router.get("/screen-monitoring/readiness-export/verify")
+def screen_monitoring_readiness_export_verify(limit: int = 50) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().verify_screen_readiness_evidence_export(limit=limit)
+
+
 @router.post("/screen-monitoring/provider-config-proposals")
 def screen_monitoring_provider_config_proposal(
     input_data: ScreenProviderConfigProposalInput | None = None,
