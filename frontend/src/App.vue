@@ -771,7 +771,7 @@
           <button class="disabled-live" disabled>实盘执行未启用</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P2" }}</span>
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P3" }}</span>
           <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
           <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
@@ -779,6 +779,8 @@
           <span>人工确认 {{ tradeGatewayManualContract?.status ?? "未加载" }}</span>
           <span>审计Schema {{ tradeGatewayAuditSchema?.status ?? "未加载" }}</span>
           <span>风险契约 {{ tradeGatewayRiskContract?.status ?? "未加载" }}</span>
+          <span>回滚 {{ tradeGatewayRollbackRunbook?.status ?? "未加载" }}</span>
+          <span>Pre-live {{ tradeGatewayPreLivePackage?.status ?? "未加载" }}</span>
           <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
           <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
           <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
@@ -824,6 +826,26 @@
             <span>{{ tradeGatewayRiskContract.symbol_gates.map((item) => `${item.name}:${item.failure_status}`).join(" / ") }}</span>
             <small>{{ tradeGatewayRiskContract.required_evidence_hashes.join(" / ") }}</small>
           </div>
+          <div v-if="tradeGatewayRollbackRunbook" class="score-item">
+            <strong>Rollback Runbook / {{ tradeGatewayRollbackRunbook.status }}</strong>
+            <span>{{ tradeGatewayRollbackRunbook.trigger_events.join(" / ") }}</span>
+            <small>执行命令 {{ tradeGatewayRollbackRunbook.safety_summary.executes_commands ? "是" : "否" }} / 写库 {{ tradeGatewayRollbackRunbook.safety_summary.writes_database_now ? "是" : "否" }}</small>
+          </div>
+          <div v-if="tradeGatewayRollbackRunbook" class="score-item">
+            <strong>Rollback Steps</strong>
+            <span>{{ tradeGatewayRollbackRunbook.rollback_steps.map((item) => `${item.step}:${item.owner}`).join(" / ") }}</span>
+            <small>当前仅供人工审查，不会冻结、改状态或执行本地命令。</small>
+          </div>
+          <div v-if="tradeGatewayPreLivePackage" class="score-item">
+            <strong>Pre-live Review / {{ tradeGatewayPreLivePackage.status }}</strong>
+            <span>{{ tradeGatewayPreLivePackage.package_id.slice(0, 16) }} / {{ tradeGatewayPreLivePackage.package_state }}</span>
+            <small>可启用实盘 {{ tradeGatewayPreLivePackage.decision.ready_for_live_enablement ? "是" : "否" }} / gateway execute {{ tradeGatewayPreLivePackage.decision.gateway_can_execute ? "允许" : "禁止" }}</small>
+          </div>
+          <div v-if="tradeGatewayPreLivePackage" class="score-item">
+            <strong>Pre-live Manifest</strong>
+            <span>{{ tradeGatewayPreLivePackage.manifest.map((item) => `${item.name}:${item.status}`).join(" / ") }}</span>
+            <small>{{ tradeGatewayPreLivePackage.required_manual_artifacts.slice(0, 3).join(" / ") }}</small>
+          </div>
           <div
             v-for="component in tradeGatewayCapabilities.required_future_components"
             :key="component.name"
@@ -850,7 +872,7 @@
           <div class="score-item">
             <strong>Forbidden Modes</strong>
             <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
-            <small>这些能力在 V5.0-P2 只能作为阻断项展示。</small>
+            <small>这些能力在 V5.0-P3 只能作为阻断项展示。</small>
           </div>
         </div>
         <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
@@ -1582,6 +1604,9 @@ type TradeGatewayReviewGates = {
     manual_confirmation_contract_ready: boolean;
     risk_contract_ready: boolean;
     audit_contract_ready: boolean;
+    rollback_runbook_ready: boolean;
+    pre_live_package_ready: boolean;
+    ready_for_live_enablement: boolean;
     live_trading_enabled: boolean;
     next_required_action: string;
   };
@@ -1703,6 +1728,67 @@ type TradeGatewayRiskContract = {
     risk_posture_if_blocked: string;
     manual_confirmation_override_allowed: boolean;
     ai_override_allowed: boolean;
+  };
+  safety_summary: Record<string, boolean>;
+  allowed_output: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayRollbackRunbook = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  runbook_name: string;
+  runbook_state: string;
+  trigger_events: string[];
+  rollback_steps: {
+    step: string;
+    owner: string;
+    evidence_required: string;
+    executes_commands: boolean;
+  }[];
+  recovery_requirements: string[];
+  decision: {
+    runbook_ready_for_review: boolean;
+    runbook_allows_execution_now: boolean;
+    requires_manual_postmortem: boolean;
+    ready_for_live_enablement: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+  allowed_output: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayPreLivePackage = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  package_id: string;
+  package_state: string;
+  manifest: {
+    name: string;
+    schema_version: string;
+    status: string;
+    stage: string;
+    included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }[];
+  required_manual_artifacts: string[];
+  included_safety_evidence: Record<string, string | number | boolean>;
+  decision: {
+    package_ready_for_manual_review: boolean;
+    ready_for_live_enablement: boolean;
+    gateway_can_execute: boolean;
+    requires_operator_release_review: boolean;
+    requires_separate_live_integration_plan: boolean;
+    next_required_action: string;
   };
   safety_summary: Record<string, boolean>;
   allowed_output: string;
@@ -3287,6 +3373,8 @@ const tradeGatewayReviewGates = ref<TradeGatewayReviewGates | null>(null);
 const tradeGatewayManualContract = ref<TradeGatewayManualContract | null>(null);
 const tradeGatewayAuditSchema = ref<TradeGatewayAuditSchema | null>(null);
 const tradeGatewayRiskContract = ref<TradeGatewayRiskContract | null>(null);
+const tradeGatewayRollbackRunbook = ref<TradeGatewayRollbackRunbook | null>(null);
+const tradeGatewayPreLivePackage = ref<TradeGatewayPreLivePackage | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -3722,18 +3810,30 @@ async function loadTradeExecutionGateway() {
   tradeGatewayLoading.value = true;
   error.value = "";
   try {
-    const [capabilitiesData, gatesData, manualContractData, auditSchemaData, riskContractData] = await Promise.all([
+    const [
+      capabilitiesData,
+      gatesData,
+      manualContractData,
+      auditSchemaData,
+      riskContractData,
+      rollbackRunbookData,
+      preLivePackageData
+    ] = await Promise.all([
       fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
       fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates"),
       fetchJson<TradeGatewayManualContract>("/api/trade-execution-gateway/manual-confirmation-contract"),
       fetchJson<TradeGatewayAuditSchema>("/api/trade-execution-gateway/audit-evidence-schema"),
-      fetchJson<TradeGatewayRiskContract>("/api/trade-execution-gateway/risk-gate-contract")
+      fetchJson<TradeGatewayRiskContract>("/api/trade-execution-gateway/risk-gate-contract"),
+      fetchJson<TradeGatewayRollbackRunbook>("/api/trade-execution-gateway/rollback-runbook"),
+      fetchJson<TradeGatewayPreLivePackage>("/api/trade-execution-gateway/pre-live-review-package")
     ]);
     tradeGatewayCapabilities.value = capabilitiesData;
     tradeGatewayReviewGates.value = gatesData;
     tradeGatewayManualContract.value = manualContractData;
     tradeGatewayAuditSchema.value = auditSchemaData;
     tradeGatewayRiskContract.value = riskContractData;
+    tradeGatewayRollbackRunbook.value = rollbackRunbookData;
+    tradeGatewayPreLivePackage.value = preLivePackageData;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
   } finally {

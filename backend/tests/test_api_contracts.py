@@ -26,27 +26,36 @@ def test_trade_execution_gateway_capabilities(client):
     resp = client.get("/api/trade-execution-gateway/capabilities")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["stage"] == "V5.0-P2"
+    assert data["stage"] == "V5.0-P3"
     assert data["review_only"] is True
     assert data["simulation_only"] is True
     assert data["execution_enabled"] is False
     assert data["live_trading_enabled"] is False
 
-def test_trade_execution_gateway_p1_p2_contracts(client):
+def test_trade_execution_gateway_p1_p3_contracts(client):
     contract_resp = client.get("/api/trade-execution-gateway/manual-confirmation-contract")
     audit_resp = client.get("/api/trade-execution-gateway/audit-evidence-schema")
     risk_resp = client.get("/api/trade-execution-gateway/risk-gate-contract")
+    rollback_resp = client.get("/api/trade-execution-gateway/rollback-runbook")
+    pre_live_resp = client.get("/api/trade-execution-gateway/pre-live-review-package")
     assert contract_resp.status_code == 200
     assert audit_resp.status_code == 200
     assert risk_resp.status_code == 200
-    assert contract_resp.json()["stage"] == "V5.0-P2"
+    assert rollback_resp.status_code == 200
+    assert pre_live_resp.status_code == 200
+    assert contract_resp.json()["stage"] == "V5.0-P3"
     assert contract_resp.json()["decision"]["contract_allows_execution_now"] is False
-    assert audit_resp.json()["stage"] == "V5.0-P2"
+    assert audit_resp.json()["stage"] == "V5.0-P3"
     assert audit_resp.json()["writes_database_now"] is False
     assert audit_resp.json()["decision"]["schema_persistence_enabled_now"] is False
-    assert risk_resp.json()["stage"] == "V5.0-P2"
+    assert risk_resp.json()["stage"] == "V5.0-P3"
     assert risk_resp.json()["decision"]["contract_allows_execution_now"] is False
     assert risk_resp.json()["integration_notes"]["manual_confirmation_override_allowed"] is False
+    assert rollback_resp.json()["stage"] == "V5.0-P3"
+    assert rollback_resp.json()["decision"]["runbook_allows_execution_now"] is False
+    assert pre_live_resp.json()["stage"] == "V5.0-P3"
+    assert pre_live_resp.json()["decision"]["ready_for_live_enablement"] is False
+    assert pre_live_resp.json()["decision"]["gateway_can_execute"] is False
 
 def test_learning_summary(client):
     resp = client.get("/api/learning/summary")

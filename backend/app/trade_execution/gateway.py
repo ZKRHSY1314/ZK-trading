@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from typing import Any
 
@@ -10,7 +12,7 @@ from app.risk.portfolio import DEFAULT_LIMITS
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.0-P2"
+    stage = "V5.0-P3"
 
     def capabilities(self) -> dict[str, Any]:
         gates = self.review_gates()["gates"]
@@ -40,6 +42,8 @@ class TradeExecutionGatewayService:
                 "manual_confirmation_contract_review",
                 "audit_evidence_schema_review",
                 "portfolio_symbol_risk_gate_contract_review",
+                "rollback_runbook_review",
+                "pre_live_review_package_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -124,10 +128,10 @@ class TradeExecutionGatewayService:
             "decision": {
                 "contract_ready_for_review": True,
                 "contract_allows_execution_now": False,
-                "requires_future_risk_contract": True,
+                "requires_future_risk_contract": False,
                 "requires_future_audit_storage": True,
-                "requires_future_rollback_runbook": True,
-                "next_required_action": "review_portfolio_and_symbol_risk_gate_contract",
+                "requires_future_rollback_runbook": False,
+                "next_required_action": "review_pre_live_package",
             },
             "forbidden_inputs": [
                 "broker_password",
@@ -198,7 +202,7 @@ class TradeExecutionGatewayService:
                 "schema_allows_execution_now": False,
                 "schema_persistence_enabled_now": False,
                 "migration_allowed_now": False,
-                "next_required_action": "design_review_only_risk_gate_contract",
+                "next_required_action": "review_pre_live_package",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -341,8 +345,8 @@ class TradeExecutionGatewayService:
                 "contract_allows_execution_now": False,
                 "risk_gate_can_override_manual_confirmation": True,
                 "requires_fresh_risk_snapshot": True,
-                "requires_future_rollback_runbook": True,
-                "next_required_action": "design_review_only_rollback_runbook",
+                "requires_future_rollback_runbook": False,
+                "next_required_action": "review_pre_live_package",
             },
             "integration_notes": {
                 "source_portfolio_limits": "app.risk.portfolio.DEFAULT_LIMITS",
@@ -358,6 +362,156 @@ class TradeExecutionGatewayService:
                 "connects_broker": False,
             },
             "allowed_output": "review_only_trade_execution_risk_gate_contract",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def rollback_runbook(self) -> dict[str, Any]:
+        return {
+            "schema_version": "trade_execution_rollback_runbook.v1",
+            "status": "rollback_runbook_review_ready",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "runbook_name": "ManualGatewayRollbackRunbook",
+            "runbook_state": "defined_for_review_only",
+            "purpose": "Define how an operator would stop and review a future gateway before any live integration is considered.",
+            "trigger_events": [
+                "risk_gate_blocked",
+                "manual_confirmation_expired",
+                "market_data_degraded",
+                "audit_hash_mismatch",
+                "operator_stop",
+                "unexpected_gateway_enablement",
+                "live_trading_flag_detected",
+            ],
+            "rollback_steps": [
+                {
+                    "step": "freeze_new_gateway_reviews",
+                    "owner": "operator",
+                    "evidence_required": "operator_stop_note",
+                    "executes_commands": False,
+                },
+                {
+                    "step": "mark_pending_proposals_blocked",
+                    "owner": "operator",
+                    "evidence_required": "proposal_ids_and_block_reason",
+                    "executes_commands": False,
+                },
+                {
+                    "step": "verify_live_trading_disabled",
+                    "owner": "operator",
+                    "evidence_required": "health_live_trading_enabled_false",
+                    "executes_commands": False,
+                },
+                {
+                    "step": "review_audit_evidence_hashes",
+                    "owner": "operator",
+                    "evidence_required": "audit_hash_chain_summary",
+                    "executes_commands": False,
+                },
+                {
+                    "step": "write_postmortem_before_recovery",
+                    "owner": "operator",
+                    "evidence_required": "manual_postmortem_summary",
+                    "executes_commands": False,
+                },
+            ],
+            "recovery_requirements": [
+                "all_portfolio_and_symbol_risk_gates_pass",
+                "fresh_market_data_quality_snapshot",
+                "new_manual_confirmation_after_recovery",
+                "audit_hash_chain_verified",
+                "operator_postmortem_reviewed",
+                "live_trading_enabled=false",
+            ],
+            "decision": {
+                "runbook_ready_for_review": True,
+                "runbook_allows_execution_now": False,
+                "requires_manual_postmortem": True,
+                "ready_for_live_enablement": False,
+                "next_required_action": "assemble_pre_live_review_package",
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "executes_commands": False,
+                "writes_database_now": False,
+                "runs_migration_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+            },
+            "allowed_output": "review_only_trade_execution_rollback_runbook",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def pre_live_review_package(self) -> dict[str, Any]:
+        capabilities = self.capabilities()
+        manual_confirmation = self.manual_confirmation_contract()
+        audit_schema = self.audit_evidence_schema()
+        risk_contract = self.risk_gate_contract()
+        rollback_runbook = self.rollback_runbook()
+        review_gates = self.review_gates()
+        manifest = [
+            self._package_item("capabilities", capabilities),
+            self._package_item("manual_confirmation_contract", manual_confirmation),
+            self._package_item("audit_evidence_schema", audit_schema),
+            self._package_item("risk_gate_contract", risk_contract),
+            self._package_item("rollback_runbook", rollback_runbook),
+            self._package_item("review_gates", review_gates),
+        ]
+        package_seed = {
+            "stage": self.stage,
+            "schema_version": "trade_execution_pre_live_review_package.v1",
+            "manifest": manifest,
+            "safety_summary": self._safety_summary(),
+            "decision": {
+                "gateway_can_execute": False,
+                "ready_for_live_enablement": False,
+            },
+        }
+        return {
+            "schema_version": "trade_execution_pre_live_review_package.v1",
+            "status": "pre_live_review_package_ready",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "package_id": self._stable_hash(package_seed),
+            "package_state": "assembled_for_review_only",
+            "manifest": manifest,
+            "required_manual_artifacts": [
+                "operator_review_of_manual_confirmation_contract",
+                "operator_review_of_risk_gate_contract",
+                "rollback_drill_evidence",
+                "audit_hash_chain_review",
+                "legal_or_compliance_review_if_real_money_is_considered",
+                "fresh_health_live_trading_enabled_false",
+            ],
+            "included_safety_evidence": {
+                "capabilities_status": capabilities["status"],
+                "review_gates_status": review_gates["status"],
+                "blocked_gate_count": review_gates["blocked_gate_count"],
+                "review_required_count": review_gates["review_required_count"],
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "decision": {
+                "package_ready_for_manual_review": True,
+                "ready_for_live_enablement": False,
+                "gateway_can_execute": False,
+                "requires_operator_release_review": True,
+                "requires_separate_live_integration_plan": True,
+                "next_required_action": "keep_gateway_disabled_until_separate_live_integration_plan",
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "writes_database_now": False,
+                "runs_migration_now": False,
+                "writes_migration_file_now": False,
+                "stores_credentials": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+            },
+            "allowed_output": "review_only_trade_execution_pre_live_review_package",
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -416,15 +570,24 @@ class TradeExecutionGatewayService:
             ),
             self._gate(
                 "audit_and_rollback_required",
-                "review_required",
-                "audit_schema_review_ready_without_rollback",
+                "passed",
+                "audit_schema_and_rollback_runbook_review_ready",
                 "immutable_audit_log_and_manual_rollback_plan",
-                "V5.0-P1 defines the audit evidence schema, but rollback remains a future review requirement.",
+                "V5.0-P3 defines both audit evidence schema and manual rollback runbook as review-only metadata.",
+            ),
+            self._gate(
+                "pre_live_review_package_required",
+                "passed",
+                "pre_live_review_package_ready",
+                "operator_pre_live_review_package",
+                "V5.0-P3 assembles a manual review package, but it still cannot enable or execute live trading.",
             ),
         ]
+        blocked = any(gate["status"] == "blocked" for gate in gates)
+        review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if any(gate["status"] == "blocked" for gate in gates) else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "pre_live_review_metadata_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -436,8 +599,11 @@ class TradeExecutionGatewayService:
                 "manual_confirmation_contract_ready": True,
                 "risk_contract_ready": True,
                 "audit_contract_ready": True,
+                "rollback_runbook_ready": True,
+                "pre_live_package_ready": True,
+                "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "design_review_only_rollback_runbook",
+                "next_required_action": "keep_gateway_disabled_until_separate_live_integration_plan",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -467,8 +633,14 @@ class TradeExecutionGatewayService:
             },
             {
                 "name": "ManualRollbackRunbook",
-                "status": "not_implemented",
+                "status": "review_runbook_defined",
                 "required_before": "any_live_integration_review",
+                "review_only": True,
+            },
+            {
+                "name": "PreLiveReviewPackage",
+                "status": "review_package_defined",
+                "required_before": "any_operator_release_review",
                 "review_only": True,
             },
         ]
@@ -491,6 +663,22 @@ class TradeExecutionGatewayService:
             "reads_live_account_funds": False,
             "live_trading_enabled": settings.enable_live_trading,
         }
+
+    def _package_item(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "name": name,
+            "schema_version": payload.get("schema_version"),
+            "status": payload.get("status"),
+            "stage": payload.get("stage"),
+            "included": True,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _stable_hash(self, payload: dict[str, Any]) -> str:
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def _schema_field(self, name: str, field_type: str, description: str, sensitive: bool) -> dict[str, Any]:
         return {

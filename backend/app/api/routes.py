@@ -154,6 +154,16 @@ def trade_execution_gateway_risk_gate_contract() -> dict:
     return TradeExecutionGatewayService().risk_gate_contract()
 
 
+@router.get("/trade-execution-gateway/rollback-runbook")
+def trade_execution_gateway_rollback_runbook() -> dict:
+    return TradeExecutionGatewayService().rollback_runbook()
+
+
+@router.get("/trade-execution-gateway/pre-live-review-package")
+def trade_execution_gateway_pre_live_review_package() -> dict:
+    return TradeExecutionGatewayService().pre_live_review_package()
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()

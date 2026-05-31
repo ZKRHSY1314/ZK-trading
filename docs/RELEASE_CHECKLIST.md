@@ -187,6 +187,10 @@
 - [ ] V5.0-P2 risk gate contract covers total exposure, single position, daily loss, drawdown, consecutive loss cooldown, new positions per day, market regime, quote quality, limit-up/down, liquidity, T+1, lifecycle, and manual stop flags.
 - [ ] V5.0-P2 dashboard shows portfolio/symbol gates, hard-block statuses, required evidence hashes, and explicit no manual/AI override behavior.
 - [ ] V5.0-P2 must keep `contract_allows_execution_now=false`, `gateway_can_execute=false`, `places_real_trade=false`, `connects_broker=false`, and `live_trading_enabled=false`.
+- [ ] V5.0-P3 exposes `GET /api/trade-execution-gateway/rollback-runbook` as review-only metadata for manual stop/recovery procedures.
+- [ ] V5.0-P3 exposes `GET /api/trade-execution-gateway/pre-live-review-package` as a review-only manifest over capabilities, confirmation, audit schema, risk gates, rollback, and review gates.
+- [ ] V5.0-P3 dashboard shows rollback triggers/steps, package hash, manifest status, required manual artifacts, and disabled live-trading evidence.
+- [ ] V5.0-P3 must keep `runbook_allows_execution_now=false`, `ready_for_live_enablement=false`, `gateway_can_execute=false`, `writes_database_now=false`, `runs_migration_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
 
 ## 14. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
