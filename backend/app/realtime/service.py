@@ -114,6 +114,109 @@ class RealtimeMarketService:
             "live_trading_enabled": False,
         }
 
+    def automation_proposal(self) -> dict[str, Any]:
+        health = self.provider.health()
+        configured = bool(self.provider.configured())
+        evidence_endpoints = [
+            "/api/realtime/cycles/latest",
+            "/api/realtime/cycles?limit=10",
+            "/api/realtime/provider-health",
+            "/api/realtime/scheduler-plan",
+            "/health",
+        ]
+        proposals = [
+            {
+                "id": "v4_realtime_cycle_workday",
+                "name": "ZK V4 realtime cycle review",
+                "mode": "realtime-cycle",
+                "status": "proposal_ready" if configured else "needs_provider_config",
+                "default_status": "paused_until_user_review",
+                "cadence_text": "周一至周五 10:00 / 13:00 / 16:00 Asia/Shanghai；节假日仍需人工复核。",
+                "command": (
+                    "backend\\.venv\\Scripts\\python.exe backend\\scripts\\automation_loop.py "
+                    "--mode realtime-cycle --symbols SZ002081,SZ002115 --limit 20 --max-cycles 1"
+                ),
+                "summary": "刷新实时事件 -> 同步监控提醒 -> replay -> 写入 realtime_cycle_runs 证据。",
+                "evidence_endpoints": evidence_endpoints,
+                "expected_output": [
+                    "provider health and fallback state",
+                    "created monitoring alert counts",
+                    "replay signal summary",
+                    "latest realtime_cycle_runs evidence",
+                    "live_trading_enabled=false confirmation",
+                ],
+                "requires_provider_config": True,
+                "provider_unconfigured_behavior": "return needs_config/fallback_required and do not write fake realtime prices",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+                "requires_user_review": True,
+            },
+            {
+                "id": "v4_offhour_potential_search",
+                "name": "ZK offhour potential search review",
+                "mode": "potential",
+                "status": "proposal_ready",
+                "default_status": "paused_until_user_review",
+                "cadence_text": "每日 20:00 Asia/Shanghai；非交易日/盘后用于候选池发现，交易日历需人工复核。",
+                "command": (
+                    "backend\\.venv\\Scripts\\python.exe backend\\scripts\\automation_loop.py "
+                    "--mode potential --limit 200 --max-cycles 1"
+                ),
+                "summary": "盘后/非交易时段搜索潜力股，写入候选生命周期和评分证据。",
+                "evidence_endpoints": [
+                    "/api/candidates/auto-discovery/latest?limit=50",
+                    "/api/candidates/lifecycle?limit=50",
+                    "/api/candidates/scores?limit=50",
+                    "/api/candidates/potential-search/latest",
+                    "/health",
+                ],
+                "expected_output": [
+                    "candidate discovery counts",
+                    "lifecycle state changes",
+                    "score evidence",
+                    "no live trading or broker action confirmation",
+                ],
+                "requires_provider_config": False,
+                "provider_unconfigured_behavior": "use existing off-hour candidate search sources and keep review-only evidence",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+                "requires_user_review": True,
+            },
+        ]
+        forbidden_actions = [
+            "broker_order",
+            "order_action",
+            "credential_access",
+            "screen_click_trading",
+            "live_auto_trading",
+            "risk_gate_bypass",
+        ]
+        return {
+            "status": "review_required",
+            "active_provider": health.get("provider"),
+            "provider_status": health.get("status"),
+            "provider_configured": configured,
+            "proposal_count": len(proposals),
+            "proposals": proposals,
+            "acceptance_checks": [
+                "Automation remains paused or suggested until the operator explicitly enables it.",
+                "Every run confirms /health live_trading_enabled=false.",
+                "No backend API executes shell commands or creates recurring jobs.",
+                "No broker/order/credential/screen-click/live-trading capability is added.",
+            ],
+            "pause_controls": [
+                "Pause or delete the Codex app automation from the automation card.",
+                "Keep REALTIME_PROVIDER=disabled when no authorized realtime source is configured.",
+                "Review provider-health and realtime cycle history before resuming.",
+            ],
+            "forbidden_actions": forbidden_actions,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
     def provider_health(self) -> list[dict[str, Any]]:
         base = [
             self._health_model(AShareHubRealtimeProvider().health()),

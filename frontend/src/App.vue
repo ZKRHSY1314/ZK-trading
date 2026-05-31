@@ -95,6 +95,7 @@
           <span>提醒 {{ realtimeMonitoringSync?.created_alert_count ?? 0 }}</span>
           <span>闭环 {{ realtimeCycleResult?.status ?? "未运行" }}</span>
           <span>调度 {{ realtimeSchedulerPlan?.status ?? "未加载" }}</span>
+          <span>提案 {{ realtimeAutomationProposal?.proposal_count ?? 0 }}</span>
           <span>实盘 {{ realtimeCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
         <div v-if="realtimeSchedulerPlan" class="score-list">
@@ -107,6 +108,22 @@
             <strong>Pause / Degrade</strong>
             <span>{{ realtimeSchedulerPlan.pause_controls[0] }}</span>
             <small>{{ realtimeSchedulerPlan.degrade_controls[0] }}</small>
+          </div>
+        </div>
+        <div v-if="realtimeAutomationProposal" class="score-list">
+          <div
+            v-for="proposal in realtimeAutomationProposal.proposals"
+            :key="proposal.id"
+            class="score-item"
+          >
+            <strong>{{ proposal.name }} / {{ proposal.status }}</strong>
+            <span>{{ proposal.cadence_text }}</span>
+            <small>{{ proposal.mode }} / {{ proposal.default_status }} / {{ proposal.command }}</small>
+          </div>
+          <div class="score-item">
+            <strong>Automation Guardrails</strong>
+            <span>{{ realtimeAutomationProposal.acceptance_checks[0] }}</span>
+            <small>{{ realtimeAutomationProposal.forbidden_actions.join(" / ") }}</small>
           </div>
         </div>
         <div v-if="realtimeRefreshResult || realtimeMonitoringSync || realtimeCycleResult" class="score-list">
@@ -1368,6 +1385,40 @@ type RealtimeSchedulerPlan = {
   live_trading_enabled: boolean;
 };
 
+type RealtimeAutomationProposalItem = {
+  id: string;
+  name: string;
+  mode: string;
+  status: string;
+  default_status: string;
+  cadence_text: string;
+  command: string;
+  summary: string;
+  evidence_endpoints: string[];
+  expected_output: string[];
+  requires_provider_config: boolean;
+  provider_unconfigured_behavior: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+  requires_user_review: boolean;
+};
+
+type RealtimeAutomationProposal = {
+  status: string;
+  active_provider: string;
+  provider_status: string;
+  provider_configured: boolean;
+  proposal_count: number;
+  proposals: RealtimeAutomationProposalItem[];
+  acceptance_checks: string[];
+  pause_controls: string[];
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type RealtimeProviderHealth = {
   provider: string;
   status: string;
@@ -1723,6 +1774,7 @@ const dailyBarCoverage = ref<any[]>([]);
 const dailyBarRefreshLoading = ref(false);
 const realtimeCapabilities = ref<RealtimeCapabilities | null>(null);
 const realtimeSchedulerPlan = ref<RealtimeSchedulerPlan | null>(null);
+const realtimeAutomationProposal = ref<RealtimeAutomationProposal | null>(null);
 const realtimeHealth = ref<RealtimeProviderHealth[]>([]);
 const realtimeSnapshot = ref<RealtimeSnapshot | null>(null);
 const realtimeEvents = ref<RealtimeEvent[]>([]);
@@ -2564,9 +2616,18 @@ async function runDailyBarRefresh() {
 async function loadRealtimeData() {
   realtimeLoading.value = true;
   try {
-    const [capabilitiesData, schedulerPlanData, healthData, snapshotData, eventsData, cycleRunsData] = await Promise.all([
+    const [
+      capabilitiesData,
+      schedulerPlanData,
+      automationProposalData,
+      healthData,
+      snapshotData,
+      eventsData,
+      cycleRunsData
+    ] = await Promise.all([
       fetchJson<RealtimeCapabilities>("/api/realtime/capabilities"),
       fetchJson<RealtimeSchedulerPlan>("/api/realtime/scheduler-plan"),
+      fetchJson<RealtimeAutomationProposal>("/api/realtime/automation-proposal"),
       fetchJson<RealtimeProviderHealth[]>("/api/realtime/provider-health"),
       fetchJson<RealtimeSnapshot>("/api/realtime/snapshot/SZ002081"),
       fetchJson<RealtimeEvent[]>("/api/realtime/events?limit=20"),
@@ -2574,6 +2635,7 @@ async function loadRealtimeData() {
     ]);
     realtimeCapabilities.value = capabilitiesData;
     realtimeSchedulerPlan.value = schedulerPlanData;
+    realtimeAutomationProposal.value = automationProposalData;
     realtimeHealth.value = healthData;
     realtimeSnapshot.value = snapshotData;
     realtimeEvents.value = eventsData;
@@ -2581,6 +2643,7 @@ async function loadRealtimeData() {
   } catch (err) {
     realtimeCapabilities.value = null;
     realtimeSchedulerPlan.value = null;
+    realtimeAutomationProposal.value = null;
     realtimeHealth.value = [];
     realtimeSnapshot.value = null;
     realtimeEvents.value = [];

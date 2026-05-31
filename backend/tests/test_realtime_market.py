@@ -41,6 +41,7 @@ def test_realtime_capabilities_are_disabled_by_default(test_db):
 
     capabilities = service.capabilities()
     scheduler_plan = service.scheduler_plan()
+    automation_proposal = service.automation_proposal()
     health = service.provider_health()
 
     assert capabilities["active_provider"] == "disabled"
@@ -52,6 +53,14 @@ def test_realtime_capabilities_are_disabled_by_default(test_db):
     assert scheduler_plan["recommended_mode"] == "realtime-cycle"
     assert scheduler_plan["live_trading_enabled"] is False
     assert "broker_order" in scheduler_plan["forbidden_actions"]
+    assert automation_proposal["status"] == "review_required"
+    assert automation_proposal["proposal_count"] == 2
+    assert automation_proposal["review_only"] is True
+    assert automation_proposal["simulation_only"] is True
+    assert automation_proposal["live_trading_enabled"] is False
+    assert {item["mode"] for item in automation_proposal["proposals"]} == {"realtime-cycle", "potential"}
+    assert any(item["default_status"] == "paused_until_user_review" for item in automation_proposal["proposals"])
+    assert "broker_order" in automation_proposal["forbidden_actions"]
     assert any(item["provider"] == "asharehub" and item["quality_status"] == "needs_config" for item in health)
     assert any(item["provider"] == "akshare_fallback" for item in health)
 
@@ -280,6 +289,7 @@ def test_realtime_api_smoke(client, test_db):
 
     capabilities_resp = client.get("/api/realtime/capabilities")
     scheduler_plan_resp = client.get("/api/realtime/scheduler-plan")
+    automation_proposal_resp = client.get("/api/realtime/automation-proposal")
     health_resp = client.get("/api/realtime/provider-health")
     snapshot_resp = client.get("/api/realtime/snapshot/SZ002081")
     events_resp = client.get("/api/realtime/events?symbol=SZ002081&limit=5")
@@ -293,6 +303,7 @@ def test_realtime_api_smoke(client, test_db):
 
     assert capabilities_resp.status_code == 200
     assert scheduler_plan_resp.status_code == 200
+    assert automation_proposal_resp.status_code == 200
     assert health_resp.status_code == 200
     assert snapshot_resp.status_code == 200
     assert events_resp.status_code == 200
@@ -306,6 +317,9 @@ def test_realtime_api_smoke(client, test_db):
     assert snapshot_resp.json()["event"]["symbol"] == "SZ002081"
     assert scheduler_plan_resp.json()["recommended_mode"] == "realtime-cycle"
     assert scheduler_plan_resp.json()["simulation_only"] is True
+    assert automation_proposal_resp.json()["proposal_count"] == 2
+    assert automation_proposal_resp.json()["live_trading_enabled"] is False
+    assert "screen_click_trading" in automation_proposal_resp.json()["forbidden_actions"]
     assert events_resp.json()
     assert refresh_resp.json()["live_trading_enabled"] is False
     assert sync_resp.json()["simulation_only"] is True

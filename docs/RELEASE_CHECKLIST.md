@@ -98,6 +98,9 @@
 - [ ] V4.0-P4 exposes `/api/realtime/scheduler-plan` with cadence, CLI commands, pause controls, degradation rules, and forbidden actions.
 - [ ] V4.0-P4 dashboard shows scheduler/runbook metadata without enabling live automation by default.
 - [ ] V4.0-P4 keeps recurring-job enablement outside the backend API; operator must explicitly configure Codex/OS automation.
+- [ ] V4.0-P5 exposes `/api/realtime/automation-proposal` with review-only Codex automation proposal metadata.
+- [ ] V4.0-P5 dashboard shows proposed realtime-cycle/offhour-search automation cards, default paused status, evidence endpoints, and forbidden actions.
+- [ ] V4.0-P5 keeps recurring-job creation outside backend APIs; Codex app automation must be suggested/reviewed before enablement.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 12. Desired Workday Schedule Cadence
