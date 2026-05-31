@@ -216,6 +216,10 @@
 - [ ] V5.5-P2 covers rejected preview, partial fill preview, stale market data, expired manual confirmation, changed risk snapshot, and limit-down sell blocking.
 - [ ] V5.5-P2 dashboard shows fixture suite, fixture state, per-fixture expected status, blocked/partial/rejected counts, and no-submit/no-real-replay evidence.
 - [ ] V5.5-P2 must keep `can_replay_as_real_order=false`, `can_submit_order_now=false`, `can_cancel_order_now=false`, `can_modify_order_now=false`, `requires_broker_connection=false`, `requires_credentials=false`, `order_lifecycle_engine_implemented=false`, and `live_trading_enabled=false`.
+- [ ] V5.5-P3 exposes `GET /api/trade-execution-gateway/order-failure-runbook-mapping` as review-only mappings from failure fixtures to manual runbook decisions and required audit evidence.
+- [ ] V5.5-P3 maps all six V5.5-P2 fixtures to manual decisions, operator actions, required evidence fields, required hashes, and runbook references.
+- [ ] V5.5-P3 dashboard shows mapping status, source fixture suite, per-fixture manual decisions, audit evidence field count, and no-runbook/no-audit-write evidence.
+- [ ] V5.5-P3 must keep `can_execute_runbook_now=false`, `can_record_audit_now=false`, `can_submit_order_now=false`, `writes_database_now=false`, `executes_runbook_now=false`, `requires_broker_connection=false`, `requires_credentials=false`, and `live_trading_enabled=false`.
 
 ## 15. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:

@@ -199,6 +199,11 @@ def trade_execution_gateway_order_lifecycle_failure_fixtures() -> dict:
     return TradeExecutionGatewayService().order_lifecycle_failure_fixtures()
 
 
+@router.get("/trade-execution-gateway/order-failure-runbook-mapping")
+def trade_execution_gateway_order_failure_runbook_mapping() -> dict:
+    return TradeExecutionGatewayService().order_failure_runbook_mapping()
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()

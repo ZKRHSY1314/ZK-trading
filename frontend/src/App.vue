@@ -771,7 +771,7 @@
           <button class="disabled-live" disabled>实盘执行未启用</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.5-P2" }}</span>
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.5-P3" }}</span>
           <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
           <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
@@ -788,6 +788,7 @@
           <span>接口草案 {{ tradeGatewayBrokerInterfaceDraft?.status ?? "未加载" }}</span>
           <span>契约验证 {{ tradeGatewayBrokerContractVerification?.status ?? "未加载" }}</span>
           <span>失败场景 {{ tradeGatewayOrderFailureFixtures?.status ?? "未加载" }}</span>
+          <span>Runbook映射 {{ tradeGatewayOrderRunbookMapping?.status ?? "未加载" }}</span>
           <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
           <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
           <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
@@ -923,6 +924,16 @@
             <span>{{ tradeGatewayOrderFailureFixtures.fixture_suite }} / {{ tradeGatewayOrderFailureFixtures.fixture_state }}</span>
             <small>submit {{ tradeGatewayOrderFailureFixtures.decision.can_submit_order_now ? "yes" : "no" }} / real replay {{ tradeGatewayOrderFailureFixtures.decision.can_replay_as_real_order ? "yes" : "no" }}</small>
           </div>
+          <div v-if="tradeGatewayOrderRunbookMapping" class="score-item">
+            <strong>Failure Runbook Mapping / {{ tradeGatewayOrderRunbookMapping.status }}</strong>
+            <span>{{ tradeGatewayOrderRunbookMapping.mappings.map((item) => `${item.fixture_name}:${item.manual_decision}`).join(" / ") }}</span>
+            <small>audit fields {{ tradeGatewayOrderRunbookMapping.summary.audit_evidence_field_count }} / writes DB {{ tradeGatewayOrderRunbookMapping.summary.writes_database_now ? "yes" : "no" }}</small>
+          </div>
+          <div v-if="tradeGatewayOrderRunbookMapping" class="score-item">
+            <strong>Runbook Mapping Safety</strong>
+            <span>{{ tradeGatewayOrderRunbookMapping.mapping_state }} / {{ tradeGatewayOrderRunbookMapping.source_fixture_suite }}</span>
+            <small>execute runbook {{ tradeGatewayOrderRunbookMapping.decision.can_execute_runbook_now ? "yes" : "no" }} / record audit {{ tradeGatewayOrderRunbookMapping.decision.can_record_audit_now ? "yes" : "no" }}</small>
+          </div>
           <div
             v-for="component in tradeGatewayCapabilities.required_future_components"
             :key="component.name"
@@ -949,7 +960,7 @@
           <div class="score-item">
             <strong>Forbidden Modes</strong>
             <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
-            <small>这些能力在 V5.5-P2 只能作为阻断项展示。</small>
+            <small>这些能力在 V5.5-P3 只能作为阻断项展示。</small>
           </div>
         </div>
         <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
@@ -1690,6 +1701,7 @@ type TradeGatewayReviewGates = {
     broker_adapter_interface_draft_ready: boolean;
     broker_adapter_contract_verification_ready: boolean;
     order_lifecycle_failure_fixtures_ready: boolean;
+    order_failure_runbook_mapping_ready: boolean;
     ready_for_live_enablement: boolean;
     live_trading_enabled: boolean;
     next_required_action: string;
@@ -2145,6 +2157,55 @@ type TradeGatewayOrderFailureFixtures = {
     can_submit_order_now: boolean;
     can_cancel_order_now: boolean;
     can_modify_order_now: boolean;
+    requires_broker_connection: boolean;
+    requires_credentials: boolean;
+    ready_for_live_enablement: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+  allowed_output: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayOrderRunbookMapping = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  mapping_state: string;
+  source_fixture_suite: string;
+  mappings: {
+    fixture_name: string;
+    failure_mode: string;
+    expected_status: string;
+    manual_decision: string;
+    operator_action: string;
+    required_audit_evidence: string[];
+    required_hashes: string[];
+    runbook_reference: string;
+    can_execute_runbook: boolean;
+    can_submit_order: boolean;
+    writes_database_now: boolean;
+    connects_broker: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }[];
+  summary: {
+    mapping_count: number;
+    manual_review_required_count: number;
+    audit_evidence_field_count: number;
+    writes_database_now: boolean;
+    executes_runbook_now: boolean;
+    connects_broker: boolean;
+    places_order: boolean;
+  };
+  decision: {
+    runbook_mapping_ready_for_review: boolean;
+    can_execute_runbook_now: boolean;
+    can_record_audit_now: boolean;
+    can_submit_order_now: boolean;
     requires_broker_connection: boolean;
     requires_credentials: boolean;
     ready_for_live_enablement: boolean;
@@ -3742,6 +3803,7 @@ const tradeGatewayBrokerThreatModel = ref<TradeGatewayBrokerThreatModel | null>(
 const tradeGatewayBrokerInterfaceDraft = ref<TradeGatewayBrokerInterfaceDraft | null>(null);
 const tradeGatewayBrokerContractVerification = ref<TradeGatewayBrokerContractVerification | null>(null);
 const tradeGatewayOrderFailureFixtures = ref<TradeGatewayOrderFailureFixtures | null>(null);
+const tradeGatewayOrderRunbookMapping = ref<TradeGatewayOrderRunbookMapping | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -4191,7 +4253,8 @@ async function loadTradeExecutionGateway() {
       brokerThreatModelData,
       brokerInterfaceDraftData,
       brokerContractVerificationData,
-      orderFailureFixturesData
+      orderFailureFixturesData,
+      orderRunbookMappingData
     ] = await Promise.all([
       fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
       fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates"),
@@ -4206,7 +4269,8 @@ async function loadTradeExecutionGateway() {
       fetchJson<TradeGatewayBrokerThreatModel>("/api/trade-execution-gateway/broker-adapter-threat-model"),
       fetchJson<TradeGatewayBrokerInterfaceDraft>("/api/trade-execution-gateway/broker-adapter-interface-draft"),
       fetchJson<TradeGatewayBrokerContractVerification>("/api/trade-execution-gateway/broker-adapter-contract-verification"),
-      fetchJson<TradeGatewayOrderFailureFixtures>("/api/trade-execution-gateway/order-lifecycle-failure-fixtures")
+      fetchJson<TradeGatewayOrderFailureFixtures>("/api/trade-execution-gateway/order-lifecycle-failure-fixtures"),
+      fetchJson<TradeGatewayOrderRunbookMapping>("/api/trade-execution-gateway/order-failure-runbook-mapping")
     ]);
     tradeGatewayCapabilities.value = capabilitiesData;
     tradeGatewayReviewGates.value = gatesData;
@@ -4222,6 +4286,7 @@ async function loadTradeExecutionGateway() {
     tradeGatewayBrokerInterfaceDraft.value = brokerInterfaceDraftData;
     tradeGatewayBrokerContractVerification.value = brokerContractVerificationData;
     tradeGatewayOrderFailureFixtures.value = orderFailureFixturesData;
+    tradeGatewayOrderRunbookMapping.value = orderRunbookMappingData;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
   } finally {
