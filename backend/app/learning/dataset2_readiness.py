@@ -59,7 +59,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P0"
+    stage = "V5.6-P1"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -154,6 +154,85 @@ class Dataset2TrainingReadinessService:
                 "training_started_now": False,
                 "allowed_output": "review_only_normalized_dataset2_preview",
                 "next_required_action": "review_readiness_gate_before_any_import_or_training",
+            },
+            "safety_summary": self._safety_summary(),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def cleanup_package(
+        self,
+        source_dir: str | None = None,
+        limit: int = 1000,
+    ) -> dict[str, Any]:
+        pack = self._locate_pack(source_dir)
+        if pack is None:
+            return self._missing_dataset_response(source_dir)
+
+        safe_limit = max(1, min(limit, 1000))
+        source_path = pack / "dataset" / "all_training_patterns.jsonl"
+        records = self._read_jsonl(source_path, limit=safe_limit)
+        normalized = [self._normalize_record(record) for record in records]
+        analysis = self._analyze(records)
+        cleanup_actions = self._cleanup_actions(analysis)
+        normalized_hash = self._normalized_records_hash(normalized)
+        source_hash = self._file_hash(source_path)
+        package_id = self._stable_hash(
+            {
+                "source_hash": source_hash,
+                "normalized_hash": normalized_hash,
+                "record_count": len(records),
+                "cleanup_actions": cleanup_actions,
+            }
+        )
+
+        blocking_action_count = sum(1 for action in cleanup_actions if action["status"] == "blocked")
+        review_action_count = sum(1 for action in cleanup_actions if action["status"] != "passed")
+        return {
+            "schema_version": "dataset2_cleanup_package.v1",
+            "stage": self.stage,
+            "status": "cleanup_package_ready_for_review" if records else "dataset2_not_found",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "source_dir": str(pack),
+            "package_id": package_id,
+            "record_count": len(records),
+            "source_data_hash": source_hash,
+            "normalized_records_hash": normalized_hash,
+            "summary": {
+                "risk_level_change_count": len(analysis["invalid_risk_levels"]),
+                "stringified_list_item_count": analysis["stringified_list_item_count"],
+                "missing_evidence_total": sum(analysis["missing_evidence_counts"].values()),
+                "missing_historical_outcome_total": sum(
+                    analysis["missing_historical_outcome_field_counts"].values()
+                ),
+                "low_support_action_label_count": len(analysis["low_support_action_labels"]),
+                "unsafe_model_target_count": len(analysis["unsafe_model_targets"]),
+                "review_action_count": review_action_count,
+                "blocking_action_count": blocking_action_count,
+            },
+            "cleanup_actions": cleanup_actions,
+            "normalized_records_preview": normalized[: min(20, len(normalized))],
+            "gates": [
+                self._gate("source_dataset_mutation", "passed", False, False, "source dataset files are not modified"),
+                self._gate("file_export", "passed", False, False, "API returns package only; no file is written"),
+                self._gate("database_write", "passed", False, False, "normalized records are not persisted in V5.6-P1"),
+                self._gate("training_start", "passed", False, False, "training remains blocked until a later reviewed stage"),
+                self._gate(
+                    "cleanup_review",
+                    "blocked" if blocking_action_count else "warning",
+                    review_action_count,
+                    0,
+                    "operator review is required before import, export, or training",
+                ),
+            ],
+            "decision": {
+                "cleanup_package_ready": bool(records),
+                "cleanup_can_be_applied_automatically": False,
+                "can_export_file_now": False,
+                "can_import_to_database_now": False,
+                "can_start_training_now": False,
+                "next_required_action": "review_cleanup_package_then_create_separate_dataset2_import_stage",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -380,6 +459,7 @@ class Dataset2TrainingReadinessService:
         for field in LIST_FIELDS:
             normalized[field] = self._normalize_list(record.get(field))
         normalized["quality_flags"] = self._record_quality_flags(record)
+        normalized["cleanup_operations"] = self._record_cleanup_operations(record)
         normalized["training_gate"] = {
             "rule_knowledge_only": True,
             "training_ready": not normalized["quality_flags"],
@@ -388,6 +468,105 @@ class Dataset2TrainingReadinessService:
             "allow_live_order": False,
         }
         return normalized
+
+    def _cleanup_actions(self, analysis: dict[str, Any]) -> list[dict[str, Any]]:
+        missing_evidence = dict(analysis["missing_evidence_counts"])
+        missing_historical = dict(analysis["missing_historical_outcome_field_counts"])
+        unmapped_risk = [
+            item
+            for item in analysis["invalid_risk_levels"]
+            if not item.get("normalized_risk_level")
+        ]
+        return [
+            {
+                "name": "risk_level_normalization",
+                "status": "blocked" if unmapped_risk else ("ready_for_review" if analysis["invalid_risk_levels"] else "passed"),
+                "count": len(analysis["invalid_risk_levels"]),
+                "reason": "map known range values into low/medium/high and review unmapped values",
+                "automated_preview_only": True,
+            },
+            {
+                "name": "stringified_list_normalization",
+                "status": "ready_for_review" if analysis["stringified_list_item_count"] else "passed",
+                "count": analysis["stringified_list_item_count"],
+                "reason": "convert serialized Python-style list strings into clean list items",
+                "automated_preview_only": True,
+            },
+            {
+                "name": "evidence_backfill_queue",
+                "status": "blocked" if missing_evidence else "passed",
+                "count": sum(missing_evidence.values()),
+                "fields": missing_evidence,
+                "reason": "evidence, trigger, filter, and invalidation fields need human-reviewed backfill",
+                "automated_preview_only": False,
+            },
+            {
+                "name": "historical_outcome_join_required",
+                "status": "blocked" if missing_historical else "passed",
+                "count": sum(missing_historical.values()),
+                "fields": missing_historical,
+                "reason": "rule cards still need dated stock/outcome examples before training",
+                "automated_preview_only": False,
+            },
+            {
+                "name": "label_support_review",
+                "status": "warning" if analysis["low_support_action_labels"] else "passed",
+                "count": len(analysis["low_support_action_labels"]),
+                "labels": analysis["low_support_action_labels"],
+                "reason": "low-support labels need weighting or more samples before classifier training",
+                "automated_preview_only": False,
+            },
+            {
+                "name": "model_target_safety_review",
+                "status": "blocked" if analysis["unsafe_model_targets"] else "passed",
+                "count": len(analysis["unsafe_model_targets"]),
+                "reason": "all model targets must stay simulate-only and require backtest review",
+                "automated_preview_only": False,
+            },
+        ]
+
+    def _record_cleanup_operations(self, record: dict[str, Any]) -> list[dict[str, Any]]:
+        operations: list[dict[str, Any]] = []
+        original_risk = str(record.get("risk_level") or "")
+        normalized_risk = RISK_NORMALIZATION.get(original_risk, original_risk)
+        if original_risk != normalized_risk:
+            operations.append(
+                {
+                    "field": "risk_level",
+                    "operation": "normalize_enum",
+                    "from": original_risk,
+                    "to": normalized_risk,
+                    "requires_review": True,
+                }
+            )
+        for field in LIST_FIELDS:
+            values = record.get(field)
+            if isinstance(values, list) and any(self._looks_stringified_list(item) for item in values):
+                operations.append(
+                    {
+                        "field": field,
+                        "operation": "parse_stringified_list_items",
+                        "requires_review": True,
+                    }
+                )
+        for field in EVIDENCE_FIELDS:
+            if self._is_empty(record.get(field)):
+                operations.append(
+                    {
+                        "field": field,
+                        "operation": "backfill_evidence",
+                        "requires_review": True,
+                    }
+                )
+        if any(self._is_empty(record.get(field)) for field in HISTORICAL_OUTCOME_FIELDS):
+            operations.append(
+                {
+                    "field": "historical_outcome_fields",
+                    "operation": "join_historical_outcome_example",
+                    "requires_review": True,
+                }
+            )
+        return operations
 
     def _normalize_list(self, value: Any) -> list[Any]:
         if value is None:
@@ -446,6 +625,13 @@ class Dataset2TrainingReadinessService:
                 digest.update(chunk)
         return digest.hexdigest()
 
+    def _normalized_records_hash(self, records: list[dict[str, Any]]) -> str:
+        return self._stable_hash(records)
+
+    def _stable_hash(self, payload: Any) -> str:
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
     def _missing_dataset_response(self, source_dir: str | None) -> dict[str, Any]:
         return {
             "schema_version": "dataset2_training_readiness.v1",
@@ -482,6 +668,8 @@ class Dataset2TrainingReadinessService:
             "training_started_now": False,
             "writes_database_now": False,
             "writes_file": False,
+            "writes_source_dataset": False,
+            "normalized_records_persisted": False,
             "allow_live_order": False,
             "requires_backtest_before_training": True,
             "connects_broker": False,

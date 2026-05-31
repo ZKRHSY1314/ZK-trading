@@ -1333,12 +1333,29 @@
           </span>
           <small>review-only preview; no database write, no training start</small>
         </div>
+        <div v-if="dataset2CleanupPackage" class="report">
+          <strong>Dataset2 Cleanup Package / {{ dataset2CleanupPackage.status }}</strong>
+          <span>
+            package {{ dataset2CleanupPackage.package_id.slice(0, 16) }} /
+            review actions {{ dataset2CleanupPackage.summary.review_action_count }} /
+            blockers {{ dataset2CleanupPackage.summary.blocking_action_count }}
+          </span>
+          <span>
+            risk fixes {{ dataset2CleanupPackage.summary.risk_level_change_count }} /
+            list fixes {{ dataset2CleanupPackage.summary.stringified_list_item_count }} /
+            evidence todos {{ dataset2CleanupPackage.summary.missing_evidence_total }}
+          </span>
+          <small>{{ dataset2CleanupPackage.decision.next_required_action }} / no file, no DB, no training</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
           </button>
           <button data-testid="dataset2-preview-button" @click="loadDataset2Preview" :disabled="dataset2Loading">
             Dataset2 normalized preview
+          </button>
+          <button data-testid="dataset2-cleanup-package-button" @click="loadDataset2CleanupPackage" :disabled="dataset2Loading">
+            Dataset2 cleanup package
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -1748,6 +1765,40 @@ type Dataset2Preview = {
   decision: {
     writes_database_now: boolean;
     training_started_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2CleanupPackage = {
+  stage: string;
+  status: string;
+  package_id: string;
+  record_count: number;
+  source_data_hash?: string | null;
+  normalized_records_hash: string;
+  summary: {
+    risk_level_change_count: number;
+    stringified_list_item_count: number;
+    missing_evidence_total: number;
+    missing_historical_outcome_total: number;
+    low_support_action_label_count: number;
+    unsafe_model_target_count: number;
+    review_action_count: number;
+    blocking_action_count: number;
+  };
+  cleanup_actions: Array<{
+    name: string;
+    status: string;
+    count: number;
+    reason: string;
+  }>;
+  decision: {
+    cleanup_package_ready: boolean;
+    cleanup_can_be_applied_automatically: boolean;
+    can_export_file_now: boolean;
+    can_import_to_database_now: boolean;
+    can_start_training_now: boolean;
     next_required_action: string;
   };
   safety_summary: Record<string, boolean>;
@@ -5281,6 +5332,7 @@ const automation = ref<AutomationRun | null>(null);
 const learningReport = ref<LearningReport | null>(null);
 const dataset2Readiness = ref<Dataset2Readiness | null>(null);
 const dataset2Preview = ref<Dataset2Preview | null>(null);
+const dataset2CleanupPackage = ref<Dataset2CleanupPackage | null>(null);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -5564,6 +5616,21 @@ async function loadDataset2Preview() {
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Dataset2 normalized preview failed";
     dataset2Preview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2CleanupPackage() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2CleanupPackage.value = await fetchJson<Dataset2CleanupPackage>("/api/learning/dataset2/cleanup-package", {
+      method: "POST"
+    });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 cleanup package failed";
+    dataset2CleanupPackage.value = null;
   } finally {
     dataset2Loading.value = false;
   }

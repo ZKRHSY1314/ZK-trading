@@ -755,6 +755,11 @@ def dataset2_normalized_preview(source_dir: str | None = None, limit: int = 20) 
     return Dataset2TrainingReadinessService().normalized_preview(source_dir=source_dir, limit=limit)
 
 
+@router.post("/learning/dataset2/cleanup-package")
+def dataset2_cleanup_package(source_dir: str | None = None, limit: int = 1000) -> dict:
+    return Dataset2TrainingReadinessService().cleanup_package(source_dir=source_dir, limit=limit)
+
+
 @router.get("/learning/samples", response_model=list[LearningSample])
 def learning_samples(
     label: str | None = None,
