@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P13"
+    stage = "V5.5-P14"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -66,6 +66,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_review_rehearsal",
                 "audit_ledger_migration_manual_release_evidence_verification",
                 "audit_ledger_migration_manual_release_evidence_comparison",
+                "audit_ledger_migration_manual_release_health_digest",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -98,6 +99,7 @@ class TradeExecutionGatewayService:
                 "record_manual_release_review_by_api",
                 "persist_manual_release_evidence",
                 "persist_manual_release_evidence_comparison",
+                "persist_manual_release_health_digest",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -3192,6 +3194,257 @@ class TradeExecutionGatewayService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def audit_ledger_migration_manual_release_health_digest(
+        self,
+        baseline_evidence: dict[str, Any] | None = None,
+        candidate_evidence: dict[str, Any] | None = None,
+        limit: int = 50,
+        max_age_days: int = 7,
+        repeat_checks: int = 2,
+    ) -> dict[str, Any]:
+        release_package = self.audit_ledger_migration_release_package(
+            limit=limit,
+            max_age_days=max_age_days,
+        )
+        integrity = self.audit_ledger_migration_release_package_integrity_review(
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        rehearsal = self.audit_ledger_migration_manual_release_review_rehearsal(
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        candidate_payload = candidate_evidence or {}
+        baseline_payload = baseline_evidence or candidate_payload
+        verifier = self.verify_audit_ledger_migration_manual_release_evidence(
+            evidence=candidate_payload,
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        comparison = self.compare_audit_ledger_migration_manual_release_evidence(
+            baseline_evidence=baseline_payload,
+            candidate_evidence=candidate_payload,
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        module_statuses = [
+            self._manual_release_digest_module(
+                "manual_release_package",
+                release_package.get("status"),
+                release_package.get("package_id"),
+                release_package.get("decision", {}).get("go_no_go"),
+            ),
+            self._manual_release_digest_module(
+                "release_package_integrity",
+                integrity.get("status"),
+                integrity.get("integrity_id"),
+                integrity.get("decision", {}).get("go_no_go"),
+            ),
+            self._manual_release_digest_module(
+                "manual_release_rehearsal",
+                rehearsal.get("status"),
+                rehearsal.get("rehearsal_id"),
+                rehearsal.get("decision", {}).get("go_no_go"),
+            ),
+            self._manual_release_digest_module(
+                "manual_release_evidence_verifier",
+                verifier.get("status"),
+                verifier.get("verification_id"),
+                verifier.get("decision", {}).get("go_no_go"),
+            ),
+            self._manual_release_digest_module(
+                "manual_release_evidence_comparison",
+                comparison.get("status"),
+                comparison.get("comparison_id"),
+                comparison.get("decision", {}).get("go_no_go"),
+            ),
+        ]
+        attention_items = [
+            item
+            for item in module_statuses
+            if item["status"]
+            not in {
+                "release_package_ready_for_manual_review",
+                "integrity_review_passed",
+                "manual_release_rehearsal_ready",
+                "manual_release_evidence_verification_passed",
+                "manual_release_evidence_comparison_stable",
+            }
+        ]
+        digest_checks = [
+            self._manual_release_evidence_check(
+                "release_package_ready",
+                release_package.get("status") == "release_package_ready_for_manual_review",
+                "Manual release package must be ready for operator review.",
+                {
+                    "status": release_package.get("status"),
+                    "package_id": release_package.get("package_id"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "integrity_review_passed",
+                integrity.get("status") == "integrity_review_passed",
+                "Release package integrity must pass before evidence health can be healthy.",
+                {
+                    "status": integrity.get("status"),
+                    "failed_check_count": integrity.get("failed_check_count"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "manual_release_rehearsal_ready",
+                rehearsal.get("status") == "manual_release_rehearsal_ready",
+                "Offline manual release rehearsal must be ready.",
+                {
+                    "status": rehearsal.get("status"),
+                    "pending_steps": rehearsal.get("pending_steps", []),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "evidence_verification_passed",
+                verifier.get("status") == "manual_release_evidence_verification_passed",
+                "Manual release evidence must verify before the digest is healthy.",
+                {
+                    "status": verifier.get("status"),
+                    "failed_check_count": verifier.get("failed_check_count"),
+                    "missing_artifacts": verifier.get("missing_artifacts", []),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "evidence_comparison_stable",
+                comparison.get("status") == "manual_release_evidence_comparison_stable",
+                "Manual release evidence revisions must compare as stable before the digest is healthy.",
+                {
+                    "status": comparison.get("status"),
+                    "failed_check_count": comparison.get("failed_check_count"),
+                    "artifact_hash_changes": comparison.get("artifact_hash_changes", []),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "digest_remains_non_executable",
+                release_package.get("decision", {}).get("release_approved_now") is False
+                and integrity.get("decision", {}).get("release_approved_now") is False
+                and rehearsal.get("decision", {}).get("release_approved_now") is False
+                and verifier.get("decision", {}).get("release_approved_now") is False
+                and comparison.get("decision", {}).get("release_approved_now") is False
+                and comparison.get("decision", {}).get("execution_allowed_now") is False,
+                "Digest must not convert healthy evidence into approval, migration permission, or execution.",
+                {
+                    "package_release_approved_now": release_package.get("decision", {}).get("release_approved_now"),
+                    "integrity_release_approved_now": integrity.get("decision", {}).get("release_approved_now"),
+                    "rehearsal_release_approved_now": rehearsal.get("decision", {}).get("release_approved_now"),
+                    "verifier_release_approved_now": verifier.get("decision", {}).get("release_approved_now"),
+                    "comparison_release_approved_now": comparison.get("decision", {}).get("release_approved_now"),
+                    "comparison_execution_allowed_now": comparison.get("decision", {}).get("execution_allowed_now"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "live_trading_disabled",
+                release_package.get("live_trading_enabled") is False
+                and integrity.get("live_trading_enabled") is False
+                and rehearsal.get("live_trading_enabled") is False
+                and verifier.get("live_trading_enabled") is False
+                and comparison.get("live_trading_enabled") is False
+                and not settings.enable_live_trading,
+                "Live trading must remain disabled while generating the health digest.",
+                {"settings_live_trading_enabled": settings.enable_live_trading},
+            ),
+        ]
+        failed_checks = [check for check in digest_checks if check["status"] == "failed"]
+        status = (
+            "manual_release_health_digest_healthy"
+            if not failed_checks
+            else "manual_release_health_digest_attention_required"
+        )
+        digest_id = self._stable_hash(
+            {
+                "module_statuses": {item["name"]: item["status"] for item in module_statuses},
+                "failed_checks": [check["name"] for check in failed_checks],
+                "package_id": release_package.get("package_id"),
+                "integrity_id": integrity.get("integrity_id"),
+                "rehearsal_id": rehearsal.get("rehearsal_id"),
+                "verification_id": verifier.get("verification_id"),
+                "comparison_id": comparison.get("comparison_id"),
+            }
+        )
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_manual_release_health_digest.v1",
+            "status": status,
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "digest_id": digest_id,
+            "module_statuses": module_statuses,
+            "attention_items": attention_items,
+            "health_flags": {
+                "release_package_ready": release_package.get("status") == "release_package_ready_for_manual_review",
+                "integrity_passed": integrity.get("status") == "integrity_review_passed",
+                "rehearsal_ready": rehearsal.get("status") == "manual_release_rehearsal_ready",
+                "evidence_verified": verifier.get("status") == "manual_release_evidence_verification_passed",
+                "evidence_pair_stable": comparison.get("status") == "manual_release_evidence_comparison_stable",
+                "live_trading_disabled": settings.enable_live_trading is False,
+                "non_executable": True,
+            },
+            "summary": {
+                "module_count": len(module_statuses),
+                "attention_count": len(attention_items),
+                "failed_check_count": len(failed_checks),
+                "missing_artifact_count": len(verifier.get("missing_artifacts", [])),
+                "changed_artifact_hash_count": len(comparison.get("artifact_hash_changes", [])),
+                "pending_rehearsal_step_count": len(rehearsal.get("pending_steps", [])),
+            },
+            "checks": digest_checks,
+            "failed_checks": failed_checks,
+            "decision": {
+                "digest_healthy": status == "manual_release_health_digest_healthy",
+                "manual_review_recorded_now": False,
+                "release_approved_now": False,
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "gateway_can_execute": False,
+                "go_no_go": "health_digest_ready_for_offline_review" if status == "manual_release_health_digest_healthy" else "no_go",
+                "next_required_action": "continue_offline_manual_release_review" if status == "manual_release_health_digest_healthy" else "resolve_manual_release_health_attention_items",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "executes_sql": False,
+                "runs_migration_now": False,
+                "creates_table_now": False,
+                "writes_database_now": False,
+                "writes_audit_ledger_row_now": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "persists_manual_release_evidence": False,
+                "persists_manual_release_evidence_comparison": False,
+                "persists_manual_release_health_digest": False,
+                "mutates_evidence": False,
+                "records_manual_review_now": False,
+                "approves_release_now": False,
+                "enables_gateway_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+            },
+            "allowed_output": "review_only_manual_release_health_digest",
+            "forbidden_actions": [
+                "persist_manual_release_health_digest",
+                "record_manual_release_review_by_api",
+                "approve_release_from_health_digest",
+                "execute_migration_from_health_digest",
+                "create_health_digest_download",
+                "write_health_digest_file",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -3383,12 +3636,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_release_evidence_comparison",
                 "V5.5-P13 compares two manual release evidence verifier summaries in memory without persisting snapshots, approving release, or executing migrations.",
             ),
+            self._gate(
+                "audit_ledger_migration_manual_release_health_digest_required",
+                "passed",
+                "audit_ledger_migration_manual_release_health_digest_ready",
+                "review_only_manual_release_health_digest",
+                "V5.5-P14 summarizes manual release package, integrity, rehearsal, verifier, comparison, and safety flags without persisting snapshots, approving release, or executing migrations.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_evidence_comparison_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -3420,9 +3680,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_rehearsal_ready": True,
                 "audit_ledger_migration_manual_release_evidence_verifier_ready": True,
                 "audit_ledger_migration_manual_release_evidence_comparison_ready": True,
+                "audit_ledger_migration_manual_release_health_digest_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "compare_audit_ledger_migration_manual_release_evidence_revisions",
+                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -3567,6 +3828,12 @@ class TradeExecutionGatewayService:
             {
                 "name": "AuditLedgerMigrationManualReleaseEvidenceComparison",
                 "status": "review_manual_release_evidence_comparison_defined",
+                "required_before": "any_manual_audit_ledger_migration_release",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationManualReleaseHealthDigest",
+                "status": "review_manual_release_health_digest_defined",
                 "required_before": "any_manual_audit_ledger_migration_release",
                 "review_only": True,
             },
@@ -3830,6 +4097,24 @@ class TradeExecutionGatewayService:
             "status": "passed" if passed else "failed",
             "reason": reason,
             "details": details or {},
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _manual_release_digest_module(
+        self,
+        name: str,
+        status: Any,
+        evidence_id: Any,
+        go_no_go: Any,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": status,
+            "evidence_id": evidence_id,
+            "go_no_go": go_no_go,
+            "included": True,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
