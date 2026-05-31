@@ -208,6 +208,10 @@
 - [ ] Forbidden adapter methods include login, submit/cancel/modify order, account funds/position reads, credential storage, and broker-screen clicking.
 - [ ] Dashboard shows threat categories, protected assets, interface draft methods, and forbidden adapter methods without adding broker/order/credential/account/screen-click controls.
 - [ ] V5.5-P0 must keep `broker_adapter_allowed_now=false`, `credential_handling_allowed_now=false`, `account_read_allowed_now=false`, `order_execution_allowed_now=false`, `interface_implemented_now=false`, `adapter_can_connect_now=false`, `adapter_can_execute_now=false`, `adapter_can_read_account_now=false`, and `live_trading_enabled=false`.
+- [ ] V5.5-P1 exposes `GET /api/trade-execution-gateway/broker-adapter-contract-verification` as fixture-only contract verification metadata.
+- [ ] V5.5-P1 verifies draft method surface, non-executable method flags, credential input rejection, forbidden method coverage, non-executable order preview, fixture-only rejection mapping, design-only redaction, and network/state mutation blocking.
+- [ ] V5.5-P1 dashboard shows contract verification checks, fixture name, verification state, network-call status, and adapter execution flags without adding broker/order/credential/account/screen-click controls.
+- [ ] V5.5-P1 must keep `fixture_only=true`, `network_calls=false`, `adapter_instantiated=false`, `adapter_implemented_now=false`, `adapter_can_connect_now=false`, `adapter_can_execute_now=false`, `adapter_can_read_account_now=false`, `credentials_allowed_now=false`, and `live_trading_enabled=false`.
 
 ## 15. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:

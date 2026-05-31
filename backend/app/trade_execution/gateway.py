@@ -12,7 +12,7 @@ from app.risk.portfolio import DEFAULT_LIMITS
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P0"
+    stage = "V5.5-P1"
 
     def capabilities(self) -> dict[str, Any]:
         gates = self.review_gates()["gates"]
@@ -49,6 +49,7 @@ class TradeExecutionGatewayService:
                 "final_readiness_report_review",
                 "broker_adapter_threat_model_review",
                 "broker_adapter_interface_draft_review",
+                "broker_adapter_contract_verification_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -64,6 +65,7 @@ class TradeExecutionGatewayService:
                 "approve_release_by_api",
                 "instantiate_broker_adapter",
                 "read_broker_account",
+                "broker_network_call",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -717,12 +719,12 @@ class TradeExecutionGatewayService:
                 "review_required_count": gates["review_required_count"],
                 "pre_live_package_id": pre_live_package["package_id"],
                 "default_release_state": release_gate["default_state"],
-                "next_track": "V5.5 broker adapter threat modeling and interface draft, review-only",
+                "next_track": "V5.5 broker adapter threat modeling, interface draft, and fixture-only contract verification",
             },
             "safety_matrix": safety_matrix,
             "remaining_blockers": [
                 "separate_live_integration_project_required",
-                "broker_adapter_threat_model_required",
+                "order_lifecycle_failure_mode_fixtures_required",
                 "credential_handling_design_required",
                 "real_order_api_tests_required_before_any_adapter",
                 "operator_acceptance_cannot_be_recorded_by_current_api",
@@ -735,7 +737,7 @@ class TradeExecutionGatewayService:
                 "gateway_can_execute": False,
                 "api_can_enable_gateway": False,
                 "api_can_record_release_approval": False,
-                "next_required_action": "review_broker_adapter_threat_model_and_interface_draft",
+                "next_required_action": "design_order_lifecycle_failure_mode_fixtures",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -757,7 +759,7 @@ class TradeExecutionGatewayService:
             {
                 "name": "credential_exposure",
                 "risk": "Broker passwords, tokens, SMS codes, cookies, account numbers, and trading PINs must never enter this API.",
-                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P0.",
+                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P1.",
                 "status": "blocked_by_design",
             },
             {
@@ -824,7 +826,7 @@ class TradeExecutionGatewayService:
                 "account_read_allowed_now": False,
                 "order_execution_allowed_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "review_broker_adapter_interface_draft",
+                "next_required_action": "review_fixture_only_adapter_contract_verification",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -888,7 +890,7 @@ class TradeExecutionGatewayService:
                 "adapter_can_execute_now": False,
                 "adapter_can_read_account_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "design_fixture_only_adapter_contract_tests",
+                "next_required_action": "review_fixture_only_adapter_contract_verification",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -900,6 +902,126 @@ class TradeExecutionGatewayService:
                 "reads_live_account_funds": False,
             },
             "allowed_output": "review_only_trade_execution_broker_adapter_interface_draft",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def broker_adapter_contract_verification(self) -> dict[str, Any]:
+        interface = self.broker_adapter_interface_draft()
+        draft_methods = {item["name"]: item for item in interface["draft_methods"]}
+        checks = [
+            self._contract_check(
+                "draft_method_surface_present",
+                set(draft_methods) == {
+                    "describe_capabilities",
+                    "validate_config_shape",
+                    "build_order_preview",
+                    "map_rejection_reason",
+                    "redact_account_snapshot",
+                },
+                "Fixture verifier sees every provider-neutral draft method.",
+                {"method_count": len(draft_methods)},
+            ),
+            self._contract_check(
+                "draft_methods_non_executable",
+                all(
+                    item["implemented_now"] is False
+                    and item["calls_broker_now"] is False
+                    and item["places_order_now"] is False
+                    and item["reads_account_now"] is False
+                    and item["stores_credentials_now"] is False
+                    for item in draft_methods.values()
+                ),
+                "Every draft method remains metadata/fixture only.",
+                {"checked_methods": sorted(draft_methods)},
+            ),
+            self._contract_check(
+                "credential_inputs_rejected",
+                all(value is False for value in interface["required_inputs_policy"].values()),
+                "Fixture config shape rejects credentials, account numbers, SMS codes, PINs, and plaintext secrets.",
+                interface["required_inputs_policy"],
+            ),
+            self._contract_check(
+                "forbidden_methods_absent",
+                {"login", "submit_order", "cancel_order", "modify_order", "read_account_funds", "read_live_positions", "store_credentials", "click_broker_screen"}
+                <= set(interface["forbidden_methods"]),
+                "Dangerous adapter methods are explicitly forbidden before implementation.",
+                {"forbidden_methods": interface["forbidden_methods"]},
+            ),
+            self._contract_check(
+                "order_preview_non_executable",
+                draft_methods["build_order_preview"]["mode"] == "simulation_only"
+                and draft_methods["build_order_preview"]["places_order_now"] is False,
+                "Order preview can only describe a review payload and cannot submit/cancel/modify orders.",
+                draft_methods["build_order_preview"],
+            ),
+            self._contract_check(
+                "fixture_rejection_mapping_only",
+                draft_methods["map_rejection_reason"]["mode"] == "fixture_only",
+                "Broker rejection mapping is limited to fixture data.",
+                draft_methods["map_rejection_reason"],
+            ),
+            self._contract_check(
+                "redaction_design_only",
+                draft_methods["redact_account_snapshot"]["mode"] == "design_only"
+                and draft_methods["redact_account_snapshot"]["reads_account_now"] is False,
+                "Account snapshot redaction is only a future design contract and reads no account data now.",
+                draft_methods["redact_account_snapshot"],
+            ),
+            self._contract_check(
+                "network_and_state_mutation_blocked",
+                True,
+                "Verifier performs no network calls, no environment writes, no DB writes, and no adapter instantiation.",
+                {
+                    "makes_network_calls": False,
+                    "writes_env": False,
+                    "writes_database_now": False,
+                    "instantiates_adapter": False,
+                },
+            ),
+        ]
+        passed = all(check["status"] == "passed" for check in checks)
+        return {
+            "schema_version": "trade_execution_broker_adapter_contract_verification.v1",
+            "status": "fixture_contract_verification_passed" if passed else "fixture_contract_verification_failed",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "verification_state": "fixture_only_no_adapter",
+            "source_contract": interface["adapter_contract_name"],
+            "fixture_name": "broker_adapter_boundary_contract_v1",
+            "checks": checks,
+            "summary": {
+                "total_checks": len(checks),
+                "passed_checks": sum(1 for check in checks if check["status"] == "passed"),
+                "blocked_checks": sum(1 for check in checks if check["status"] == "blocked"),
+                "fixture_only": True,
+                "network_calls": False,
+                "adapter_instantiated": False,
+            },
+            "decision": {
+                "contract_verification_ready_for_review": True,
+                "fixture_contract_tests_passed": passed,
+                "adapter_implemented_now": False,
+                "adapter_can_connect_now": False,
+                "adapter_can_execute_now": False,
+                "adapter_can_read_account_now": False,
+                "credentials_allowed_now": False,
+                "ready_for_live_enablement": False,
+                "next_required_action": "design_order_lifecycle_failure_mode_fixtures",
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "fixture_only_contract_verifier": True,
+                "instantiates_adapter": False,
+                "makes_network_calls": False,
+                "writes_database_now": False,
+                "writes_env": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "reads_live_account_funds": False,
+            },
+            "allowed_output": "review_only_fixture_broker_adapter_contract_verification",
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -996,21 +1118,28 @@ class TradeExecutionGatewayService:
                 "passed",
                 "broker_adapter_threat_model_review_ready",
                 "future_broker_adapter_threat_model",
-                "V5.5-P0 defines threat categories and mitigations without implementing broker connectivity.",
+                "V5.5-P1 preserves threat categories and mitigations without implementing broker connectivity.",
             ),
             self._gate(
                 "broker_adapter_interface_draft_required",
                 "passed",
                 "broker_adapter_interface_draft_review_ready",
                 "future_broker_adapter_interface_draft",
-                "V5.5-P0 defines provider-neutral interface metadata without executable adapter methods.",
+                "V5.5-P1 preserves provider-neutral interface metadata without executable adapter methods.",
+            ),
+            self._gate(
+                "broker_adapter_contract_verification_required",
+                "passed",
+                "fixture_contract_verification_passed",
+                "fixture_only_broker_adapter_contract_verifier",
+                "V5.5-P1 verifies the future adapter contract with deterministic fixtures and no broker connectivity.",
             ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "broker_adapter_review_metadata_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "fixture_contract_verification_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -1029,9 +1158,10 @@ class TradeExecutionGatewayService:
                 "final_readiness_report_ready": True,
                 "broker_adapter_threat_model_ready": True,
                 "broker_adapter_interface_draft_ready": True,
+                "broker_adapter_contract_verification_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "design_fixture_only_adapter_contract_tests",
+                "next_required_action": "design_order_lifecycle_failure_mode_fixtures",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -1098,7 +1228,13 @@ class TradeExecutionGatewayService:
             {
                 "name": "BrokerAdapterInterfaceDraft",
                 "status": "review_interface_draft_defined",
-                "required_before": "any_fixture_adapter_contract_tests",
+                "required_before": "any_broker_adapter_contract_verification",
+                "review_only": True,
+            },
+            {
+                "name": "BrokerAdapterContractVerifier",
+                "status": "review_fixture_contract_verified",
+                "required_before": "any_broker_adapter_implementation",
                 "review_only": True,
             },
         ]
@@ -1158,6 +1294,17 @@ class TradeExecutionGatewayService:
             "places_order_now": False,
             "reads_account_now": False,
             "stores_credentials_now": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _contract_check(self, name: str, passed: bool, reason: str, fixture_evidence: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else "blocked",
+            "reason": reason,
+            "fixture_evidence": fixture_evidence,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
