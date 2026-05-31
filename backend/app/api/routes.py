@@ -15,6 +15,7 @@ from app.decision import DecisionAnalyzer
 from app.experience.code_evolution import CodeEvolutionService
 from app.experience.memory import ExperienceMemoryService
 from app.knowledge.repository import KnowledgeRepository
+from app.learning.dataset2_readiness import Dataset2TrainingReadinessService
 from app.learning.phase_matcher import PhaseSimilarityService
 from app.learning.phase_replay import MainForcePhaseReplayService, PhaseReplayError
 from app.learning.service import LearningService
@@ -742,6 +743,16 @@ def learning_summary() -> dict:
 @router.post("/learning/rebuild-samples")
 def rebuild_learning_samples() -> dict:
     return LearningService().rebuild_samples()
+
+
+@router.get("/learning/dataset2/readiness")
+def dataset2_training_readiness(source_dir: str | None = None, limit: int = 500) -> dict:
+    return Dataset2TrainingReadinessService().readiness(source_dir=source_dir, limit=limit)
+
+
+@router.post("/learning/dataset2/normalized-preview")
+def dataset2_normalized_preview(source_dir: str | None = None, limit: int = 20) -> dict:
+    return Dataset2TrainingReadinessService().normalized_preview(source_dir=source_dir, limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])

@@ -1313,6 +1313,34 @@
           </span>
           <small>{{ learningReport.summary.next_actions.slice(0, 2).join("；") }}</small>
         </div>
+        <div v-if="dataset2Readiness" class="report">
+          <strong>Dataset2 Readiness / {{ dataset2Readiness.status }}</strong>
+          <span>
+            records {{ dataset2Readiness.record_count }} /
+            bad risk {{ dataset2Readiness.quality.invalid_risk_level_count }} /
+            stringified lists {{ dataset2Readiness.quality.stringified_list_item_count }}
+          </span>
+          <span>
+            training now {{ dataset2Readiness.decision.can_start_training_now ? "allowed" : "blocked" }} /
+            rule knowledge {{ dataset2Readiness.decision.can_use_as_rule_knowledge ? "usable" : "blocked" }}
+          </span>
+          <small>{{ dataset2Readiness.decision.next_required_action }} / live trading disabled</small>
+        </div>
+        <div v-if="dataset2Preview" class="report">
+          <strong>Dataset2 Normalized Preview / {{ dataset2Preview.preview_count }}</strong>
+          <span>
+            {{ dataset2Preview.records.slice(0, 3).map((item) => `${item.pattern_id}:${item.risk_level}`).join(" / ") }}
+          </span>
+          <small>review-only preview; no database write, no training start</small>
+        </div>
+        <div class="actions">
+          <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
+            {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
+          </button>
+          <button data-testid="dataset2-preview-button" @click="loadDataset2Preview" :disabled="dataset2Loading">
+            Dataset2 normalized preview
+          </button>
+        </div>
         <div v-if="monitoring" class="report">
           <strong>盘中监控 #{{ monitoring.session_id }}</strong>
           <span>
@@ -1678,6 +1706,51 @@ type LearningReport = {
     };
     next_actions: string[];
   };
+};
+
+type Dataset2Readiness = {
+  stage: string;
+  status: string;
+  record_count: number;
+  quality: {
+    invalid_risk_level_count: number;
+    stringified_list_item_count: number;
+    missing_evidence_counts: Record<string, number>;
+    missing_historical_outcome_field_counts: Record<string, number>;
+    unsafe_model_target_count: number;
+    low_support_action_labels: Array<{ action_label: string; count: number }>;
+  };
+  decision: {
+    can_use_as_rule_knowledge: boolean;
+    can_import_normalized_preview: boolean;
+    training_gate_passed?: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2Preview = {
+  stage: string;
+  status: string;
+  preview_count: number;
+  records: Array<{
+    pattern_id: string;
+    pattern_name?: string;
+    action_label?: string;
+    risk_level: string;
+    risk_level_original?: string;
+    quality_flags: string[];
+  }>;
+  decision: {
+    writes_database_now: boolean;
+    training_started_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
 };
 
 type MonitoringEvent = {
@@ -5206,6 +5279,8 @@ const analysis = ref<any | null>(null);
 const account = ref<SimulationAccount | null>(null);
 const automation = ref<AutomationRun | null>(null);
 const learningReport = ref<LearningReport | null>(null);
+const dataset2Readiness = ref<Dataset2Readiness | null>(null);
+const dataset2Preview = ref<Dataset2Preview | null>(null);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -5260,6 +5335,7 @@ const planLoading = ref(false);
 const analysisLoading = ref(false);
 const automationLoading = ref(false);
 const monitoringLoading = ref(false);
+const dataset2Loading = ref(false);
 const phaseReplayLoading = ref(false);
 const phaseMatchLoading = ref(false);
 const potentialSearchLoading = ref(false);
@@ -5462,6 +5538,34 @@ async function loadLearningReport() {
     learningReport.value = await fetchJson<LearningReport>("/api/learning/reports/latest");
   } catch {
     learningReport.value = null;
+  }
+}
+
+async function loadDataset2Readiness() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2Readiness.value = await fetchJson<Dataset2Readiness>("/api/learning/dataset2/readiness");
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 readiness failed";
+    dataset2Readiness.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2Preview() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2Preview.value = await fetchJson<Dataset2Preview>("/api/learning/dataset2/normalized-preview?limit=10", {
+      method: "POST"
+    });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 normalized preview failed";
+    dataset2Preview.value = null;
+  } finally {
+    dataset2Loading.value = false;
   }
 }
 
@@ -7448,6 +7552,7 @@ onMounted(async () => {
     loadAccount(),
     loadAutomation(),
     loadLearningReport(),
+    loadDataset2Readiness(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),
