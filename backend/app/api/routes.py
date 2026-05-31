@@ -42,6 +42,7 @@ from app.rules.loader import load_rule_config
 from app.simulation.broker import SimulatedBroker
 from app.simulation.planner import SimulationPlanner
 from app.storage.sqlite_store import SQLiteStore
+from app.trade_execution.gateway import TradeExecutionGatewayService
 
 router = APIRouter(prefix="/api")
 
@@ -124,7 +125,18 @@ def capabilities() -> dict[str, object]:
         "storage": "sqlite",
         "live_trading": "disabled",
         "ai_models": ["openai_placeholder", "qwen_placeholder", "local_placeholder"],
+        "trade_execution_gateway": "review_only_disabled",
     }
+
+
+@router.get("/trade-execution-gateway/capabilities")
+def trade_execution_gateway_capabilities() -> dict:
+    return TradeExecutionGatewayService().capabilities()
+
+
+@router.get("/trade-execution-gateway/review-gates")
+def trade_execution_gateway_review_gates() -> dict:
+    return TradeExecutionGatewayService().review_gates()
 
 
 @router.get("/automation/capabilities")

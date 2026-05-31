@@ -14,6 +14,16 @@ def test_capabilities_report_safe_state(client):
     data = resp.json()
     assert data["live_trading_enabled"] is False
 
+def test_trade_execution_gateway_reports_safe_state(client):
+    resp = client.get("/api/trade-execution-gateway/capabilities")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["live_trading_enabled"] is False
+    assert data["gateway_enabled"] is False
+    assert data["execution_enabled"] is False
+    assert data["broker_adapter_enabled"] is False
+    assert data["credential_storage_enabled"] is False
+
 def test_start_automation_with_live_trading_fails(client):
     resp = client.post("/api/automation/runs/start?mode=live_trading")
     # Our API doesn't support live_trading mode

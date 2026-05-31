@@ -22,6 +22,16 @@ def test_automation_capabilities(client):
     data = resp.json()
     assert data["live_trading_enabled"] is False
 
+def test_trade_execution_gateway_capabilities(client):
+    resp = client.get("/api/trade-execution-gateway/capabilities")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["stage"] == "V5.0-P0"
+    assert data["review_only"] is True
+    assert data["simulation_only"] is True
+    assert data["execution_enabled"] is False
+    assert data["live_trading_enabled"] is False
+
 def test_learning_summary(client):
     resp = client.get("/api/learning/summary")
     assert resp.status_code == 200

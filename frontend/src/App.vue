@@ -762,6 +762,63 @@
       </article>
 
 <article class="panel wide">
+        <h2>V5.0 Trade Execution Gateway</h2>
+        <p class="review-only-banner">只展示交易执行网关的架构审查和安全门禁；不连接券商、不读取账户、不保存凭证、不下单。</p>
+        <div class="actions">
+          <button data-testid="trade-gateway-refresh-button" @click="loadTradeExecutionGateway" :disabled="tradeGatewayLoading">
+            {{ tradeGatewayLoading ? "刷新中" : "刷新网关门禁" }}
+          </button>
+          <button class="disabled-live" disabled>实盘执行未启用</button>
+        </div>
+        <div class="metrics">
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P0" }}</span>
+          <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
+          <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
+          <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
+          <span>凭证存储 {{ tradeGatewayCapabilities?.credential_storage_enabled ? "开启" : "关闭" }}</span>
+          <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
+          <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
+          <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
+        </div>
+        <div v-if="tradeGatewayCapabilities" class="score-list">
+          <div class="score-item">
+            <strong>Gateway / {{ tradeGatewayCapabilities.status }}</strong>
+            <span>{{ tradeGatewayCapabilities.current_output }}</span>
+            <small>review-only {{ tradeGatewayCapabilities.review_only ? "是" : "否" }} / simulation-only {{ tradeGatewayCapabilities.simulation_only ? "是" : "否" }}</small>
+          </div>
+          <div
+            v-for="component in tradeGatewayCapabilities.required_future_components"
+            :key="component.name"
+            class="score-item"
+          >
+            <strong>{{ component.name }} / {{ component.status }}</strong>
+            <span>required before: {{ component.required_before }}</span>
+            <small>当前仅审查元数据，不启用真实交易执行。</small>
+          </div>
+          <div v-if="tradeGatewayReviewGates" class="score-item">
+            <strong>Decision / {{ tradeGatewayReviewGates.status }}</strong>
+            <span>{{ tradeGatewayReviewGates.decision.next_required_action }}</span>
+            <small>gateway execute {{ tradeGatewayReviewGates.decision.gateway_can_execute ? "允许" : "禁止" }} / live trading disabled</small>
+          </div>
+          <div
+            v-for="gate in tradeGatewayReviewGates?.gates ?? []"
+            :key="gate.name"
+            class="score-item"
+          >
+            <strong>{{ gate.name }} / {{ gate.status }}</strong>
+            <span>{{ gate.reason }}</span>
+            <small>value {{ gate.value }} / limit {{ gate.limit }} / live {{ gate.live_trading_enabled ? "开启" : "关闭" }}</small>
+          </div>
+          <div class="score-item">
+            <strong>Forbidden Modes</strong>
+            <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
+            <small>这些能力在 V5.0-P0 只能作为阻断项展示。</small>
+          </div>
+        </div>
+        <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
+      </article>
+
+<article class="panel wide">
         <h2>Sandbox Experiments</h2>
         <p class="review-only-banner">🔬 Sandbox-only: experiments simulate what-if scenarios for approved proposals. No scoring rules, candidate scores, or trading behavior are changed.</p>
         <div class="metrics">
@@ -1437,6 +1494,63 @@ type AgentCapabilities = {
   blocked_tasks: string[];
   live_trading_enabled: boolean;
   broker_control_blocked: boolean;
+};
+
+type TradeGatewayCapabilities = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  gateway_enabled: boolean;
+  execution_enabled: boolean;
+  real_money_execution_enabled: boolean;
+  broker_adapter_enabled: boolean;
+  screen_click_trading_enabled: boolean;
+  credential_storage_enabled: boolean;
+  live_trading_enabled: boolean;
+  review_only: boolean;
+  simulation_only: boolean;
+  allowed_modes: string[];
+  forbidden_modes: string[];
+  required_future_components: {
+    name: string;
+    status: string;
+    required_before: string;
+    review_only: boolean;
+  }[];
+  current_output: string;
+  safety_summary: Record<string, boolean>;
+  blocked_gate_count: number;
+};
+
+type TradeGatewayReviewGates = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  gates: {
+    name: string;
+    status: string;
+    value: string | boolean;
+    limit: string | boolean;
+    reason: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }[];
+  review_required_count: number;
+  blocked_gate_count: number;
+  allowed_output: string;
+  decision: {
+    gateway_can_execute: boolean;
+    manual_confirmation_contract_ready: boolean;
+    risk_contract_ready: boolean;
+    audit_contract_ready: boolean;
+    live_trading_enabled: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
 };
 
 type AgentTask = {
@@ -3010,6 +3124,8 @@ const potentialSearch = ref<PotentialSearchRun | null>(null);
 const agentCapabilities = ref<AgentCapabilities | null>(null);
 const agentTasks = ref<AgentTask[]>([]);
 const agentAudit = ref<any[]>([]);
+const tradeGatewayCapabilities = ref<TradeGatewayCapabilities | null>(null);
+const tradeGatewayReviewGates = ref<TradeGatewayReviewGates | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -3020,6 +3136,7 @@ const phaseReplayLoading = ref(false);
 const phaseMatchLoading = ref(false);
 const potentialSearchLoading = ref(false);
 const agentTaskLoading = ref(false);
+const tradeGatewayLoading = ref(false);
 const agentLearningSamples = ref<AgentLearningSampleItem[]>([]);
 const agentLearningSummary = ref<AgentLearningSummaryData | null>(null);
 const agentLearningIngestResult = ref<AgentLearningIngestResult | null>(null);
@@ -3437,6 +3554,23 @@ async function loadAgentCapabilities() {
     agentCapabilities.value = await fetchJson<AgentCapabilities>("/api/agent-control/capabilities");
   } catch {
     agentCapabilities.value = null;
+  }
+}
+
+async function loadTradeExecutionGateway() {
+  tradeGatewayLoading.value = true;
+  error.value = "";
+  try {
+    const [capabilitiesData, gatesData] = await Promise.all([
+      fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
+      fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates")
+    ]);
+    tradeGatewayCapabilities.value = capabilitiesData;
+    tradeGatewayReviewGates.value = gatesData;
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
+  } finally {
+    tradeGatewayLoading.value = false;
   }
 }
 
@@ -4827,6 +4961,7 @@ onMounted(async () => {
     loadPhaseMatch(),
     loadPotentialSearch(),
     loadAgentCapabilities(),
+    loadTradeExecutionGateway(),
     loadAgentTasks(),
     loadAgentAudit(),
     loadAgentLearningSamples(),

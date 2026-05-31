@@ -174,7 +174,13 @@
 - [ ] V4.5-P21 dashboard shows final release package status without writing files, creating downloads, writing database records, applying migrations, executing SQL, creating tables, capturing pixels, running OCR, clicking screens, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
-## 13. Desired Workday Schedule Cadence
+## 13. V5.0 Trade Execution Gateway Milestone
+- [ ] V5.0-P0 exposes `GET /api/trade-execution-gateway/capabilities` and `GET /api/trade-execution-gateway/review-gates` as review-only architecture metadata.
+- [ ] V5.0-P0 reports future manual-confirmation, risk-gate, audit-ledger, and rollback contracts as required before any real-money integration.
+- [ ] V5.0-P0 dashboard shows gateway status, forbidden modes, future components, and safety gates while keeping `gateway_enabled=false`, `execution_enabled=false`, `broker_adapter_enabled=false`, `credential_storage_enabled=false`, and `live_trading_enabled=false`.
+- [ ] V5.0-P0 must not add broker login, account/funds read, credential storage, real trade placement/cancel/modify, screen-click trading, or live auto-trading routes.
+
+## 14. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
 - **10:00 AM:** First cycle (Candidate scan, morning momentum check).
 - **1:00 PM (13:00):** Mid-day cycle (Trend persistence, early reversals).
