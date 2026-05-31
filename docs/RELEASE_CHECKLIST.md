@@ -248,6 +248,10 @@
 - [ ] V5.5-P10 integrity review recomputes the package id from `package_id_inputs`, repeats package generation to confirm stable IDs, checks required P4-P8 manifest items, required manual artifacts, forbidden actions, and evidence traceability.
 - [ ] V5.5-P10 dashboard shows integrity status, package id prefix, package-id stability, failed check count, next required action, blocked execution, no source-package mutation, no file write, and disabled live-trading evidence.
 - [ ] V5.5-P10 must keep `manifest_integrity_passed` evidence-only, `execution_allowed_now=false`, `release_approved_now=false`, `migration_allowed_now=false`, `mutates_source_package=false`, `writes_file=false`, `download_created=false`, `executes_sql=false`, `runs_migration_now=false`, `writes_audit_ledger_row_now=false`, `writes_migration_file_now=false`, `enables_gateway_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
+- [ ] V5.5-P11 exposes `GET /api/trade-execution-gateway/audit-ledger-migration-release-review/rehearsal` as an API-only offline manual release review rehearsal.
+- [ ] V5.5-P11 rehearsal reports rehearsal id, source package id/status, integrity status, operator steps, pending/failed steps, offline required artifacts, and next required action.
+- [ ] V5.5-P11 dashboard shows rehearsal status, rehearsal id prefix, pending step count, no API review record, blocked execution, no release approval, and disabled live-trading evidence.
+- [ ] V5.5-P11 must keep `manual_review_recorded_now=false`, `release_approved_now=false`, `execution_allowed_now=false`, `migration_allowed_now=false`, `records_manual_review_now=false`, `marks_rehearsal_complete_now=false`, `writes_database_now=false`, `writes_file=false`, `download_created=false`, `executes_sql=false`, `runs_migration_now=false`, `writes_audit_ledger_row_now=false`, `enables_gateway_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
 
 ## 15. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
