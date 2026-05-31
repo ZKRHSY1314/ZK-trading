@@ -1347,6 +1347,27 @@
           </span>
           <small>{{ dataset2CleanupPackage.decision.next_required_action }} / no file, no DB, no training</small>
         </div>
+        <div v-if="dataset2ImportQueueReview" class="report">
+          <strong>Dataset2 Import Queue Review / {{ dataset2ImportQueueReview.status }}</strong>
+          <span>
+            event {{ dataset2ImportQueueReview.event_id ?? dataset2ImportQueueReview.id }} /
+            package {{ dataset2ImportQueueReview.package_id.slice(0, 16) }} /
+            records {{ dataset2ImportQueueReview.record_count }}
+          </span>
+          <span>
+            metadata event {{ dataset2ImportQueueReview.decision.writes_existing_event_now ? "recorded" : "blocked" }} /
+            normalized rows {{ dataset2ImportQueueReview.decision.normalized_records_persisted ? "persisted" : "not persisted" }} /
+            training {{ dataset2ImportQueueReview.decision.training_started_now ? "started" : "blocked" }}
+          </span>
+          <small>{{ dataset2ImportQueueReview.decision.next_required_action }} / metadata only</small>
+        </div>
+        <div v-if="dataset2ImportQueueReviews.length" class="report">
+          <strong>Dataset2 Import Queue History / {{ dataset2ImportQueueReviews.length }}</strong>
+          <span>
+            {{ dataset2ImportQueueReviews.slice(0, 3).map((item) => `#${item.id}:${item.package_id.slice(0, 8)}`).join(" / ") }}
+          </span>
+          <small>source records and normalized records are excluded from stored review payloads</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -1356,6 +1377,12 @@
           </button>
           <button data-testid="dataset2-cleanup-package-button" @click="loadDataset2CleanupPackage" :disabled="dataset2Loading">
             Dataset2 cleanup package
+          </button>
+          <button data-testid="dataset2-import-queue-review-button" @click="recordDataset2ImportQueueReview" :disabled="dataset2Loading">
+            Dataset2 import queue review
+          </button>
+          <button data-testid="dataset2-import-queue-history-button" @click="loadDataset2ImportQueueReviews" :disabled="dataset2Loading">
+            Dataset2 queue history
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -1797,6 +1824,34 @@ type Dataset2CleanupPackage = {
     cleanup_package_ready: boolean;
     cleanup_can_be_applied_automatically: boolean;
     can_export_file_now: boolean;
+    can_import_to_database_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2ImportQueueReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id: string;
+  record_count: number;
+  summary: {
+    review_action_count: number;
+    blocking_action_count: number;
+  };
+  review: {
+    reviewed_by: string;
+    note?: string | null;
+    source_records_included: boolean;
+    normalized_records_included: boolean;
+  };
+  decision: {
+    writes_existing_event_now: boolean;
+    normalized_records_persisted: boolean;
+    training_started_now: boolean;
     can_import_to_database_now: boolean;
     can_start_training_now: boolean;
     next_required_action: string;
@@ -5333,6 +5388,8 @@ const learningReport = ref<LearningReport | null>(null);
 const dataset2Readiness = ref<Dataset2Readiness | null>(null);
 const dataset2Preview = ref<Dataset2Preview | null>(null);
 const dataset2CleanupPackage = ref<Dataset2CleanupPackage | null>(null);
+const dataset2ImportQueueReview = ref<Dataset2ImportQueueReview | null>(null);
+const dataset2ImportQueueReviews = ref<Dataset2ImportQueueReview[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -5633,6 +5690,31 @@ async function loadDataset2CleanupPackage() {
     dataset2CleanupPackage.value = null;
   } finally {
     dataset2Loading.value = false;
+  }
+}
+
+async function recordDataset2ImportQueueReview() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ImportQueueReview.value = await fetchJson<Dataset2ImportQueueReview>("/api/learning/dataset2/import-queue/review", {
+      method: "POST",
+      body: JSON.stringify({ reviewed_by: "dashboard", note: "V5.6-P2 metadata-only review" })
+    });
+    await loadDataset2ImportQueueReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 import queue review failed";
+    dataset2ImportQueueReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ImportQueueReviews() {
+  try {
+    dataset2ImportQueueReviews.value = await fetchJson<Dataset2ImportQueueReview[]>("/api/learning/dataset2/import-queue/reviews?limit=5");
+  } catch {
+    dataset2ImportQueueReviews.value = [];
   }
 }
 
@@ -7620,6 +7702,7 @@ onMounted(async () => {
     loadAutomation(),
     loadLearningReport(),
     loadDataset2Readiness(),
+    loadDataset2ImportQueueReviews(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.storage.sqlite_store import SQLiteStore
 
 
 ALLOWED_ACTION_LABELS = {
@@ -59,7 +60,8 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P1"
+    stage = "V5.6-P2"
+    import_queue_event_type = "dataset2_import_queue_review"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -240,6 +242,98 @@ class Dataset2TrainingReadinessService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def create_import_queue_review(
+        self,
+        source_dir: str | None = None,
+        limit: int = 1000,
+        reviewed_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        cleanup = self.cleanup_package(source_dir=source_dir, limit=limit)
+        if cleanup.get("status") == "dataset2_not_found":
+            return cleanup
+
+        action_summaries = [
+            {
+                "name": action.get("name"),
+                "status": action.get("status"),
+                "count": action.get("count", 0),
+            }
+            for action in cleanup.get("cleanup_actions", [])
+        ]
+        payload = {
+            "schema_version": "dataset2_import_queue_review.v1",
+            "stage": self.stage,
+            "status": "import_queue_review_recorded",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "package_id": cleanup.get("package_id"),
+            "source_data_hash": cleanup.get("source_data_hash"),
+            "normalized_records_hash": cleanup.get("normalized_records_hash"),
+            "record_count": cleanup.get("record_count", 0),
+            "summary": cleanup.get("summary", {}),
+            "cleanup_actions": action_summaries,
+            "review": {
+                "reviewed_by": reviewed_by or "operator",
+                "note": note,
+                "review_only": True,
+                "simulation_only": True,
+                "source_records_included": False,
+                "normalized_records_included": False,
+            },
+            "decision": {
+                "writes_existing_event_now": True,
+                "normalized_records_persisted": False,
+                "training_started_now": False,
+                "can_import_to_database_now": False,
+                "can_start_training_now": False,
+                "next_required_action": "manual_review_import_queue_metadata_before_any_dataset2_import",
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (self.import_queue_event_type, json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)),
+            )
+            event_id = int(cursor.lastrowid)
+        return {
+            **payload,
+            "event_id": event_id,
+            "stored_in": "events",
+            "normalized_records_preview": None,
+        }
+
+    def list_import_queue_reviews(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.import_queue_event_type, max(1, min(limit, 100))),
+        )
+        reviews: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            reviews.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return reviews
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -248,6 +342,11 @@ class Dataset2TrainingReadinessService:
             cwd = Path.cwd()
             candidates.extend(
                 [
+                    cwd.parent / "???2" / "a_share_trading_training_pack_v2",
+                    cwd.parent
+                    / "???2"
+                    / "a_share_trading_training_pack_v2"
+                    / "a_share_trading_training_pack_v2",
                     cwd.parent / "数据集2" / "a_share_trading_training_pack_v2",
                     cwd.parent
                     / "数据集2"
@@ -661,12 +760,13 @@ class Dataset2TrainingReadinessService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
-    def _safety_summary(self) -> dict[str, bool]:
+    def _safety_summary(self, writes_existing_event_now: bool = False) -> dict[str, bool]:
         return {
             "review_only": True,
             "simulation_only": True,
             "training_started_now": False,
             "writes_database_now": False,
+            "writes_existing_event_now": writes_existing_event_now,
             "writes_file": False,
             "writes_source_dataset": False,
             "normalized_records_persisted": False,

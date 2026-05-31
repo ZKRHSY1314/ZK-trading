@@ -152,6 +152,13 @@ class TradeManualReleaseHealthDigestHistoryMigrationSpecApprovalInput(BaseModel)
     candidate_evidence: dict = Field(default_factory=dict)
 
 
+class Dataset2ImportQueueReviewInput(BaseModel):
+    source_dir: str | None = None
+    limit: int = 1000
+    reviewed_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -758,6 +765,22 @@ def dataset2_normalized_preview(source_dir: str | None = None, limit: int = 20) 
 @router.post("/learning/dataset2/cleanup-package")
 def dataset2_cleanup_package(source_dir: str | None = None, limit: int = 1000) -> dict:
     return Dataset2TrainingReadinessService().cleanup_package(source_dir=source_dir, limit=limit)
+
+
+@router.post("/learning/dataset2/import-queue/review")
+def dataset2_import_queue_review(payload: Dataset2ImportQueueReviewInput | None = None) -> dict:
+    payload = payload or Dataset2ImportQueueReviewInput()
+    return Dataset2TrainingReadinessService().create_import_queue_review(
+        source_dir=payload.source_dir,
+        limit=payload.limit,
+        reviewed_by=payload.reviewed_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/import-queue/reviews")
+def dataset2_import_queue_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_import_queue_reviews(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])

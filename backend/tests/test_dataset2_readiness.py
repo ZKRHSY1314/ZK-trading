@@ -89,7 +89,7 @@ def test_dataset2_readiness_blocks_unclean_training_data(tmp_path):
 
     data = Dataset2TrainingReadinessService().readiness(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P1"
+    assert data["stage"] == "V5.6-P2"
     assert data["status"] == "training_blocked_cleanup_required"
     assert data["quality"]["invalid_risk_level_count"] == 1
     assert data["quality"]["stringified_list_item_count"] == 1
@@ -140,7 +140,7 @@ def test_dataset2_cleanup_package_summarizes_review_actions_without_writes(tmp_p
 
     data = Dataset2TrainingReadinessService().cleanup_package(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P1"
+    assert data["stage"] == "V5.6-P2"
     assert data["status"] == "cleanup_package_ready_for_review"
     assert len(data["package_id"]) == 64
     assert len(data["normalized_records_hash"]) == 64
@@ -161,17 +161,71 @@ def test_dataset2_cleanup_package_summarizes_review_actions_without_writes(tmp_p
     assert actions["historical_outcome_join_required"]["status"] == "blocked"
 
 
+def test_dataset2_import_queue_review_records_metadata_only(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(
+                pattern_id="QUEUE_REVIEW",
+                risk_level="low_to_medium",
+                observable_features=["['big_yang']", "high_volume"],
+                evidence_summary="",
+                signal_date=None,
+            )
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+
+    data = service.create_import_queue_review(
+        source_dir=str(pack),
+        limit=10,
+        reviewed_by="tester",
+        note="metadata only",
+    )
+
+    assert data["stage"] == "V5.6-P2"
+    assert data["status"] == "import_queue_review_recorded"
+    assert isinstance(data["event_id"], int)
+    assert data["decision"]["writes_existing_event_now"] is True
+    assert data["decision"]["normalized_records_persisted"] is False
+    assert data["decision"]["training_started_now"] is False
+    assert data["decision"]["can_import_to_database_now"] is False
+    assert data["safety_summary"]["writes_existing_event_now"] is True
+    assert data["safety_summary"]["writes_database_now"] is False
+    assert data["safety_summary"]["normalized_records_persisted"] is False
+    assert data["normalized_records_preview"] is None
+
+    reviews = service.list_import_queue_reviews(limit=5)
+    latest = reviews[0]
+    assert latest["id"] == data["event_id"]
+    assert latest["package_id"] == data["package_id"]
+    assert latest["review"]["reviewed_by"] == "tester"
+    assert latest["review"]["source_records_included"] is False
+    assert latest["review"]["normalized_records_included"] is False
+    assert "normalized_records_preview" not in latest
+
+
 def test_dataset2_readiness_api_smoke(client, tmp_path):
     pack = _write_dataset2_pack(tmp_path, [_record()])
 
     readiness = client.get("/api/learning/dataset2/readiness", params={"source_dir": str(pack)})
     preview = client.post("/api/learning/dataset2/normalized-preview", params={"source_dir": str(pack), "limit": 1})
     cleanup = client.post("/api/learning/dataset2/cleanup-package", params={"source_dir": str(pack), "limit": 1})
+    queue = client.post(
+        "/api/learning/dataset2/import-queue/review",
+        json={"source_dir": str(pack), "limit": 1, "reviewed_by": "api-test"},
+    )
+    reviews = client.get("/api/learning/dataset2/import-queue/reviews", params={"limit": 3})
 
     assert readiness.status_code == 200
     assert preview.status_code == 200
     assert cleanup.status_code == 200
+    assert queue.status_code == 200
+    assert reviews.status_code == 200
     assert readiness.json()["decision"]["can_start_training_now"] is False
     assert preview.json()["preview_count"] == 1
     assert preview.json()["safety_summary"]["allow_live_order"] is False
     assert cleanup.json()["decision"]["can_import_to_database_now"] is False
+    assert queue.json()["decision"]["training_started_now"] is False
+    assert queue.json()["decision"]["normalized_records_persisted"] is False
+    assert reviews.json()[0]["review"]["reviewed_by"] == "api-test"
