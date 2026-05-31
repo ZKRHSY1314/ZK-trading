@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P8",
+            "stage": "V4.5-P9",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -54,6 +54,7 @@ class ScreenMonitoringService:
                 "provider_config_proposal",
                 "provider_readiness_replay",
                 "screen_readiness_audit_report",
+                "screen_readiness_audit_acknowledgement",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -138,7 +139,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P8",
+            "stage": "V4.5-P9",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -241,7 +242,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P8",
+            "stage": "V4.5-P9",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -287,6 +288,95 @@ class ScreenMonitoringService:
             "simulation_only": True,
             "live_trading_enabled": False,
         }
+
+    def acknowledge_screen_readiness_audit(
+        self,
+        acknowledged_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        report = self.screen_readiness_audit_report()
+        report_hash = self._screen_audit_report_hash(report)
+        now = datetime.now().isoformat(timespec="seconds")
+        summary = report.get("summary") or {}
+        safety_matrix = report.get("safety_matrix") or []
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO screen_readiness_audit_acknowledgements(
+                    status, report_hash, report_status, report_stage,
+                    summary_json, safety_matrix_json, report_json,
+                    acknowledged_by, acknowledgement_note, acknowledgement_effect,
+                    review_only, simulation_only, live_trading_enabled,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(report_hash) DO UPDATE SET
+                    status = excluded.status,
+                    report_status = excluded.report_status,
+                    report_stage = excluded.report_stage,
+                    summary_json = excluded.summary_json,
+                    safety_matrix_json = excluded.safety_matrix_json,
+                    report_json = excluded.report_json,
+                    acknowledged_by = excluded.acknowledged_by,
+                    acknowledgement_note = excluded.acknowledgement_note,
+                    acknowledgement_effect = excluded.acknowledgement_effect,
+                    review_only = excluded.review_only,
+                    simulation_only = excluded.simulation_only,
+                    live_trading_enabled = excluded.live_trading_enabled,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    "acknowledged",
+                    report_hash,
+                    str(report.get("status") or "unknown"),
+                    str(report.get("stage") or "V4.5-P9"),
+                    json.dumps(summary, ensure_ascii=False, default=str),
+                    json.dumps(safety_matrix, ensure_ascii=False, default=str),
+                    json.dumps(report, ensure_ascii=False, default=str),
+                    (acknowledged_by or "operator")[:80],
+                    note,
+                    "audit_status_only",
+                    1,
+                    1,
+                    0,
+                    now,
+                    now,
+                ),
+            )
+            ack_id = int(cursor.lastrowid or 0)
+        if not ack_id:
+            row = self.store.fetch_one(
+                "SELECT id FROM screen_readiness_audit_acknowledgements WHERE report_hash = ?",
+                (report_hash,),
+            )
+            ack_id = int(row["id"]) if row else 0
+        return self.get_screen_readiness_audit_acknowledgement(ack_id) or {
+            "id": ack_id,
+            "status": "acknowledged",
+            "report_hash": report_hash,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def list_screen_readiness_audit_acknowledgements(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.store.fetch_all(
+            """
+            SELECT *
+            FROM screen_readiness_audit_acknowledgements
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 200)),),
+        )
+        return [self._screen_readiness_audit_ack_model(row) for row in rows]
+
+    def get_screen_readiness_audit_acknowledgement(self, ack_id: int) -> dict[str, Any] | None:
+        row = self.store.fetch_one(
+            "SELECT * FROM screen_readiness_audit_acknowledgements WHERE id = ?",
+            (ack_id,),
+        )
+        return self._screen_readiness_audit_ack_model(row) if row else None
 
     def artifact_retention_policy(self) -> dict[str, Any]:
         return {
@@ -1155,6 +1245,18 @@ class ScreenMonitoringService:
             "live_trading_enabled": False,
         }
 
+    def _screen_audit_report_hash(self, report: dict[str, Any]) -> str:
+        payload = {
+            "status": report.get("status"),
+            "stage": report.get("stage"),
+            "summary": report.get("summary") or {},
+            "blockers": report.get("blockers") or [],
+            "safety_matrix": report.get("safety_matrix") or [],
+            "forbidden_actions": report.get("forbidden_actions") or [],
+        }
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def _screen_audit_next_steps(
         self,
         blockers: list[dict[str, Any]],
@@ -1309,6 +1411,26 @@ class ScreenMonitoringService:
         item["review_only"] = bool(item.get("review_only"))
         item["simulation_only"] = bool(item.get("simulation_only"))
         item["live_trading_enabled"] = bool(item.get("live_trading_enabled"))
+        return item
+
+    def _screen_readiness_audit_ack_model(self, row: dict[str, Any] | None) -> dict[str, Any]:
+        if not row:
+            return {}
+        item = dict(row)
+        item["summary"] = self._decode_json(item.pop("summary_json", "{}"))
+        item["safety_matrix"] = self._decode_json(item.pop("safety_matrix_json", "[]"))
+        item["report"] = self._decode_json(item.pop("report_json", "{}"))
+        item["review_only"] = bool(item.get("review_only"))
+        item["simulation_only"] = bool(item.get("simulation_only"))
+        item["live_trading_enabled"] = bool(item.get("live_trading_enabled"))
+        item["writes_env"] = False
+        item["executes_commands"] = False
+        item["real_screen_capture"] = False
+        item["pixel_data_stored"] = False
+        item["ocr_executed"] = False
+        item["broker_action"] = False
+        item["order_action"] = False
+        item["credential_access"] = False
         return item
 
     def _decode_json(self, value: Any) -> Any:

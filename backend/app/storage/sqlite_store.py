@@ -882,6 +882,28 @@ CREATE TABLE IF NOT EXISTS screen_provider_replay_runs (
 CREATE INDEX IF NOT EXISTS idx_screen_provider_replay_runs_created ON screen_provider_replay_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_screen_provider_replay_runs_status ON screen_provider_replay_runs(status);
 
+CREATE TABLE IF NOT EXISTS screen_readiness_audit_acknowledgements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL DEFAULT 'acknowledged',
+    report_hash TEXT NOT NULL UNIQUE,
+    report_status TEXT NOT NULL,
+    report_stage TEXT NOT NULL,
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    safety_matrix_json TEXT NOT NULL DEFAULT '[]',
+    report_json TEXT NOT NULL DEFAULT '{}',
+    acknowledged_by TEXT NOT NULL,
+    acknowledgement_note TEXT,
+    acknowledgement_effect TEXT NOT NULL DEFAULT 'audit_status_only',
+    review_only INTEGER NOT NULL DEFAULT 1,
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_screen_readiness_audit_ack_status ON screen_readiness_audit_acknowledgements(status);
+CREATE INDEX IF NOT EXISTS idx_screen_readiness_audit_ack_created ON screen_readiness_audit_acknowledgements(created_at);
+
 CREATE TABLE IF NOT EXISTS historical_backtest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     config_json TEXT NOT NULL,
@@ -1124,6 +1146,7 @@ KNOWLEDGE_TABLES = [
     "screen_artifact_reviews",
     "screen_provider_config_proposals",
     "screen_provider_replay_runs",
+    "screen_readiness_audit_acknowledgements",
     "historical_backtest_runs",
     "historical_backtest_trades",
     "historical_backtest_closed_trades",

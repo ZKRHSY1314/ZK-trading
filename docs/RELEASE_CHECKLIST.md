@@ -133,6 +133,9 @@
 - [ ] V4.5-P8 exposes `/api/screen-monitoring/readiness-audit` as a consolidated screen-readiness evidence report.
 - [ ] V4.5-P8 audit report combines provider readiness, artifact retention/review queue, config proposals, replay runs, latest session, and recent observations.
 - [ ] V4.5-P8 dashboard shows report status, blocked checks, pending review counts, and safety matrix without enabling capture, OCR, broker, order, credential, or screen-click controls.
+- [ ] V4.5-P9 exposes `/api/screen-monitoring/readiness-audit/acknowledge` and `/api/screen-monitoring/readiness-audit/acknowledgements`.
+- [ ] V4.5-P9 acknowledgement records a hash and summary of the current audit report as audit status only.
+- [ ] V4.5-P9 dashboard shows acknowledgement status/history without applying config, enabling screenshots/OCR, controlling windows, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

@@ -102,6 +102,11 @@ class ScreenProviderReplayInput(BaseModel):
     scenario_name: str = "local_safe_fixture_readiness"
 
 
+class ScreenReadinessAuditAckInput(BaseModel):
+    acknowledged_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -725,6 +730,24 @@ def screen_monitoring_readiness_audit(limit: int = 20) -> dict:
     from app.screen_monitoring.service import ScreenMonitoringService
 
     return ScreenMonitoringService().screen_readiness_audit_report(limit=limit)
+
+
+@router.post("/screen-monitoring/readiness-audit/acknowledge")
+def screen_monitoring_readiness_audit_acknowledge(input_data: ScreenReadinessAuditAckInput | None = None) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenReadinessAuditAckInput()
+    return ScreenMonitoringService().acknowledge_screen_readiness_audit(
+        acknowledged_by=payload.acknowledged_by,
+        note=payload.note,
+    )
+
+
+@router.get("/screen-monitoring/readiness-audit/acknowledgements")
+def screen_monitoring_readiness_audit_acknowledgements(limit: int = 20) -> list[dict]:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().list_screen_readiness_audit_acknowledgements(limit=limit)
 
 
 @router.post("/screen-monitoring/provider-config-proposals")
