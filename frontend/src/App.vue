@@ -774,7 +774,7 @@
           <button class="disabled-live" disabled>实盘执行未启用</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.5-P12" }}</span>
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.5-P13" }}</span>
           <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
           <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
@@ -801,6 +801,7 @@
           <span>完整性 {{ tradeGatewayAuditMigrationPackageIntegrity?.status ?? "未加载" }}</span>
           <span>复核演练 {{ tradeGatewayAuditMigrationReleaseRehearsal?.status ?? "未加载" }}</span>
           <span>证据校验 {{ tradeGatewayAuditMigrationEvidenceVerification?.status ?? "未加载" }}</span>
+          <span>证据对比 {{ tradeGatewayAuditMigrationEvidenceComparison?.status ?? "未加载" }}</span>
           <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
           <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
           <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
@@ -1006,6 +1007,11 @@
             <span>{{ tradeGatewayAuditMigrationEvidenceVerification.decision.go_no_go }} / {{ tradeGatewayAuditMigrationEvidenceVerification.decision.next_required_action }}</span>
             <small>{{ tradeGatewayAuditMigrationEvidenceVerification.verification_id.slice(0, 16) }} / missing {{ tradeGatewayAuditMigrationEvidenceVerification.missing_artifacts.length }} / persist {{ tradeGatewayAuditMigrationEvidenceVerification.safety_summary.persists_manual_release_evidence ? "yes" : "no" }}</small>
           </div>
+          <div v-if="tradeGatewayAuditMigrationEvidenceComparison" class="score-item">
+            <strong>Evidence Comparison / {{ tradeGatewayAuditMigrationEvidenceComparison.status }}</strong>
+            <span>{{ tradeGatewayAuditMigrationEvidenceComparison.decision.go_no_go }} / {{ tradeGatewayAuditMigrationEvidenceComparison.decision.next_required_action }}</span>
+            <small>{{ tradeGatewayAuditMigrationEvidenceComparison.comparison_id.slice(0, 16) }} / changed {{ tradeGatewayAuditMigrationEvidenceComparison.artifact_hash_changes.length }} / persist {{ tradeGatewayAuditMigrationEvidenceComparison.safety_summary.persists_manual_release_evidence_comparison ? "yes" : "no" }}</small>
+          </div>
           <div
             v-for="component in tradeGatewayCapabilities.required_future_components"
             :key="component.name"
@@ -1032,7 +1038,7 @@
           <div class="score-item">
             <strong>Forbidden Modes</strong>
             <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
-            <small>这些能力在 V5.5-P12 只能作为阻断项展示。</small>
+            <small>这些能力在 V5.5-P13 只能作为阻断项展示。</small>
           </div>
         </div>
         <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
@@ -1783,6 +1789,7 @@ type TradeGatewayReviewGates = {
     audit_ledger_migration_release_package_integrity_review_ready: boolean;
     audit_ledger_migration_manual_release_rehearsal_ready: boolean;
     audit_ledger_migration_manual_release_evidence_verifier_ready: boolean;
+    audit_ledger_migration_manual_release_evidence_comparison_ready: boolean;
     ready_for_live_enablement: boolean;
     live_trading_enabled: boolean;
     next_required_action: string;
@@ -2883,6 +2890,66 @@ type TradeGatewayAuditMigrationManualReleaseEvidenceVerification = {
   };
   safety_summary: TradeGatewayAuditMigrationReleaseReadiness["safety_summary"] & {
     persists_manual_release_evidence: boolean;
+    records_manual_review_now: boolean;
+    writes_file: boolean;
+    download_created: boolean;
+  };
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayAuditMigrationManualReleaseEvidenceComparison = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  comparison_id: string;
+  baseline: {
+    status: string;
+    verification_id: string;
+    source_package_id: string;
+    rehearsal_id: string;
+    provided_artifact_names: string[];
+    failed_check_count: number;
+    evidence_complete: boolean;
+  };
+  candidate: {
+    status: string;
+    verification_id: string;
+    source_package_id: string;
+    rehearsal_id: string;
+    provided_artifact_names: string[];
+    failed_check_count: number;
+    evidence_complete: boolean;
+  };
+  artifact_names_added: string[];
+  artifact_names_removed: string[];
+  artifact_hash_changes: Array<Record<string, any>>;
+  artifact_review_changes: Array<Record<string, any>>;
+  check_status_differences: Array<Record<string, any>>;
+  checks: TradeGatewayAuditMigrationManualReleaseEvidenceVerification["checks"];
+  failed_checks: TradeGatewayAuditMigrationManualReleaseEvidenceVerification["failed_checks"];
+  failed_check_count: number;
+  decision: {
+    evidence_pair_stable: boolean;
+    manual_review_recorded_now: boolean;
+    release_approved_now: boolean;
+    migration_allowed_now: boolean;
+    execution_allowed_now: boolean;
+    gateway_can_execute: boolean;
+    go_no_go: string;
+    next_required_action: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  safety_summary: TradeGatewayAuditMigrationReleaseReadiness["safety_summary"] & {
+    persists_manual_release_evidence: boolean;
+    persists_manual_release_evidence_comparison: boolean;
+    mutates_evidence: boolean;
     records_manual_review_now: boolean;
     writes_file: boolean;
     download_created: boolean;
@@ -4490,6 +4557,7 @@ const tradeGatewayAuditMigrationReleasePackage = ref<TradeGatewayAuditMigrationR
 const tradeGatewayAuditMigrationPackageIntegrity = ref<TradeGatewayAuditMigrationReleasePackageIntegrityReview | null>(null);
 const tradeGatewayAuditMigrationReleaseRehearsal = ref<TradeGatewayAuditMigrationManualReleaseRehearsal | null>(null);
 const tradeGatewayAuditMigrationEvidenceVerification = ref<TradeGatewayAuditMigrationManualReleaseEvidenceVerification | null>(null);
+const tradeGatewayAuditMigrationEvidenceComparison = ref<TradeGatewayAuditMigrationManualReleaseEvidenceComparison | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -4949,7 +5017,8 @@ async function loadTradeExecutionGateway() {
       auditMigrationReleasePackageData,
       auditMigrationPackageIntegrityData,
       auditMigrationReleaseRehearsalData,
-      auditMigrationEvidenceVerificationData
+      auditMigrationEvidenceVerificationData,
+      auditMigrationEvidenceComparisonData
     ] = await Promise.all([
       fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
       fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates"),
@@ -5000,6 +5069,14 @@ async function loadTradeExecutionGateway() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ evidence: {} })
         }
+      ),
+      fetchJson<TradeGatewayAuditMigrationManualReleaseEvidenceComparison>(
+        "/api/trade-execution-gateway/audit-ledger-migration-release-evidence/compare?limit=10&max_age_days=7&repeat_checks=2",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ baseline_evidence: {}, candidate_evidence: {} })
+        }
       )
     ]);
     tradeGatewayCapabilities.value = capabilitiesData;
@@ -5026,6 +5103,7 @@ async function loadTradeExecutionGateway() {
     tradeGatewayAuditMigrationPackageIntegrity.value = auditMigrationPackageIntegrityData;
     tradeGatewayAuditMigrationReleaseRehearsal.value = auditMigrationReleaseRehearsalData;
     tradeGatewayAuditMigrationEvidenceVerification.value = auditMigrationEvidenceVerificationData;
+    tradeGatewayAuditMigrationEvidenceComparison.value = auditMigrationEvidenceComparisonData;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
   } finally {
@@ -5073,6 +5151,14 @@ async function approveTradeGatewayAuditMigrationSpec() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ evidence: {} })
+      }
+    );
+    tradeGatewayAuditMigrationEvidenceComparison.value = await fetchJson<TradeGatewayAuditMigrationManualReleaseEvidenceComparison>(
+      "/api/trade-execution-gateway/audit-ledger-migration-release-evidence/compare?limit=10&max_age_days=7&repeat_checks=2",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseline_evidence: {}, candidate_evidence: {} })
       }
     );
   } catch (err) {

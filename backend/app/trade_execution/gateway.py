@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P12"
+    stage = "V5.5-P13"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -65,6 +65,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_release_package_integrity_review",
                 "audit_ledger_migration_manual_release_review_rehearsal",
                 "audit_ledger_migration_manual_release_evidence_verification",
+                "audit_ledger_migration_manual_release_evidence_comparison",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -96,6 +97,7 @@ class TradeExecutionGatewayService:
                 "approve_release_from_integrity_review",
                 "record_manual_release_review_by_api",
                 "persist_manual_release_evidence",
+                "persist_manual_release_evidence_comparison",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -789,7 +791,7 @@ class TradeExecutionGatewayService:
             {
                 "name": "credential_exposure",
                 "risk": "Broker passwords, tokens, SMS codes, cookies, account numbers, and trading PINs must never enter this API.",
-                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P12.",
+                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P13.",
                 "status": "blocked_by_design",
             },
             {
@@ -2937,6 +2939,259 @@ class TradeExecutionGatewayService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def compare_audit_ledger_migration_manual_release_evidence(
+        self,
+        baseline_evidence: dict[str, Any] | None = None,
+        candidate_evidence: dict[str, Any] | None = None,
+        limit: int = 50,
+        max_age_days: int = 7,
+        repeat_checks: int = 2,
+    ) -> dict[str, Any]:
+        baseline_payload = baseline_evidence or {}
+        candidate_payload = candidate_evidence or {}
+        baseline = self.verify_audit_ledger_migration_manual_release_evidence(
+            evidence=baseline_payload,
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        candidate = self.verify_audit_ledger_migration_manual_release_evidence(
+            evidence=candidate_payload,
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        baseline_hashes = self._manual_release_artifact_hashes(baseline_payload)
+        candidate_hashes = self._manual_release_artifact_hashes(candidate_payload)
+        baseline_reviews = self._manual_release_artifact_reviews(baseline_payload)
+        candidate_reviews = self._manual_release_artifact_reviews(candidate_payload)
+        baseline_names = set(baseline_hashes)
+        candidate_names = set(candidate_hashes)
+        artifact_names_added = sorted(candidate_names - baseline_names)
+        artifact_names_removed = sorted(baseline_names - candidate_names)
+        artifact_hash_changes = [
+            {
+                "name": name,
+                "baseline_hash": baseline_hashes.get(name),
+                "candidate_hash": candidate_hashes.get(name),
+            }
+            for name in sorted(baseline_names & candidate_names)
+            if baseline_hashes.get(name) != candidate_hashes.get(name)
+        ]
+        artifact_review_changes = [
+            {
+                "name": name,
+                "baseline_review": baseline_reviews.get(name),
+                "candidate_review": candidate_reviews.get(name),
+            }
+            for name in sorted(set(baseline_reviews) & set(candidate_reviews))
+            if baseline_reviews.get(name) != candidate_reviews.get(name)
+        ]
+        baseline_check_statuses = {check["name"]: check["status"] for check in baseline.get("checks", [])}
+        candidate_check_statuses = {check["name"]: check["status"] for check in candidate.get("checks", [])}
+        check_status_differences = [
+            {
+                "name": name,
+                "baseline_status": baseline_check_statuses.get(name),
+                "candidate_status": candidate_check_statuses.get(name),
+            }
+            for name in sorted(set(baseline_check_statuses) | set(candidate_check_statuses))
+            if baseline_check_statuses.get(name) != candidate_check_statuses.get(name)
+        ]
+        comparison_checks = [
+            self._manual_release_evidence_check(
+                "baseline_and_candidate_present",
+                bool(baseline_hashes) and bool(candidate_hashes),
+                "Both baseline and candidate evidence payloads must include offline artifacts before comparison can pass.",
+                {
+                    "baseline_artifact_count": len(baseline_hashes),
+                    "candidate_artifact_count": len(candidate_hashes),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "source_package_id_stable",
+                baseline.get("source_package_id") == candidate.get("source_package_id"),
+                "Evidence revisions must point to the same manual release package.",
+                {
+                    "baseline_source_package_id": baseline.get("source_package_id"),
+                    "candidate_source_package_id": candidate.get("source_package_id"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "rehearsal_id_stable",
+                baseline.get("rehearsal_id") == candidate.get("rehearsal_id"),
+                "Evidence revisions must point to the same manual release rehearsal.",
+                {
+                    "baseline_rehearsal_id": baseline.get("rehearsal_id"),
+                    "candidate_rehearsal_id": candidate.get("rehearsal_id"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "verification_status_stable",
+                baseline.get("status") == candidate.get("status"),
+                "Verifier status should be stable across compared evidence revisions.",
+                {
+                    "baseline_status": baseline.get("status"),
+                    "candidate_status": candidate.get("status"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "artifact_names_stable",
+                not artifact_names_added and not artifact_names_removed,
+                "Artifact names should not be added or removed between evidence revisions without operator review.",
+                {
+                    "artifact_names_added": artifact_names_added,
+                    "artifact_names_removed": artifact_names_removed,
+                },
+            ),
+            self._manual_release_evidence_check(
+                "artifact_hashes_stable",
+                not artifact_hash_changes,
+                "Artifact hashes should stay stable between evidence revisions unless the change is reviewed offline.",
+                {"artifact_hash_changes": artifact_hash_changes},
+            ),
+            self._manual_release_evidence_check(
+                "artifact_review_metadata_stable",
+                not artifact_review_changes,
+                "Reviewer metadata should stay stable between evidence revisions unless the change is reviewed offline.",
+                {"artifact_review_changes": artifact_review_changes},
+            ),
+            self._manual_release_evidence_check(
+                "check_statuses_stable",
+                not check_status_differences,
+                "Verifier check statuses should stay stable between evidence revisions.",
+                {"check_status_differences": check_status_differences},
+            ),
+            self._manual_release_evidence_check(
+                "comparison_remains_non_executable",
+                baseline.get("decision", {}).get("release_approved_now") is False
+                and candidate.get("decision", {}).get("release_approved_now") is False
+                and baseline.get("decision", {}).get("migration_allowed_now") is False
+                and candidate.get("decision", {}).get("migration_allowed_now") is False
+                and baseline.get("decision", {}).get("execution_allowed_now") is False
+                and candidate.get("decision", {}).get("execution_allowed_now") is False,
+                "Comparison must not convert evidence stability into release approval, migration permission, or execution.",
+                {
+                    "baseline_release_approved_now": baseline.get("decision", {}).get("release_approved_now"),
+                    "candidate_release_approved_now": candidate.get("decision", {}).get("release_approved_now"),
+                    "baseline_migration_allowed_now": baseline.get("decision", {}).get("migration_allowed_now"),
+                    "candidate_migration_allowed_now": candidate.get("decision", {}).get("migration_allowed_now"),
+                    "baseline_execution_allowed_now": baseline.get("decision", {}).get("execution_allowed_now"),
+                    "candidate_execution_allowed_now": candidate.get("decision", {}).get("execution_allowed_now"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "live_trading_disabled",
+                baseline.get("live_trading_enabled") is False
+                and candidate.get("live_trading_enabled") is False
+                and not settings.enable_live_trading,
+                "Live trading must remain disabled while comparing manual release evidence.",
+                {
+                    "baseline_live_trading_enabled": baseline.get("live_trading_enabled"),
+                    "candidate_live_trading_enabled": candidate.get("live_trading_enabled"),
+                    "settings_live_trading_enabled": settings.enable_live_trading,
+                },
+            ),
+        ]
+        failed_checks = [check for check in comparison_checks if check["status"] == "failed"]
+        if not baseline_hashes or not candidate_hashes:
+            status = "manual_release_evidence_comparison_missing"
+            next_required_action = "provide_two_offline_evidence_payloads"
+        elif failed_checks:
+            status = "manual_release_evidence_comparison_changed"
+            next_required_action = "review_evidence_revision_differences_offline"
+        else:
+            status = "manual_release_evidence_comparison_stable"
+            next_required_action = "continue_offline_release_review_with_stable_evidence"
+        comparison_id = self._stable_hash(
+            {
+                "baseline_verification_id": baseline.get("verification_id"),
+                "candidate_verification_id": candidate.get("verification_id"),
+                "artifact_hash_changes": artifact_hash_changes,
+                "artifact_review_changes": artifact_review_changes,
+                "check_status_differences": check_status_differences,
+                "status": status,
+            }
+        )
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_manual_release_evidence_comparison.v1",
+            "status": status,
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "comparison_id": comparison_id,
+            "baseline": {
+                "status": baseline.get("status"),
+                "verification_id": baseline.get("verification_id"),
+                "source_package_id": baseline.get("source_package_id"),
+                "rehearsal_id": baseline.get("rehearsal_id"),
+                "provided_artifact_names": baseline.get("provided_artifact_names", []),
+                "failed_check_count": baseline.get("failed_check_count"),
+                "evidence_complete": baseline.get("decision", {}).get("evidence_complete"),
+            },
+            "candidate": {
+                "status": candidate.get("status"),
+                "verification_id": candidate.get("verification_id"),
+                "source_package_id": candidate.get("source_package_id"),
+                "rehearsal_id": candidate.get("rehearsal_id"),
+                "provided_artifact_names": candidate.get("provided_artifact_names", []),
+                "failed_check_count": candidate.get("failed_check_count"),
+                "evidence_complete": candidate.get("decision", {}).get("evidence_complete"),
+            },
+            "artifact_names_added": artifact_names_added,
+            "artifact_names_removed": artifact_names_removed,
+            "artifact_hash_changes": artifact_hash_changes,
+            "artifact_review_changes": artifact_review_changes,
+            "check_status_differences": check_status_differences,
+            "checks": comparison_checks,
+            "failed_checks": failed_checks,
+            "failed_check_count": len(failed_checks),
+            "decision": {
+                "evidence_pair_stable": status == "manual_release_evidence_comparison_stable",
+                "manual_review_recorded_now": False,
+                "release_approved_now": False,
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "gateway_can_execute": False,
+                "go_no_go": "stable_evidence_pair_for_offline_review" if status == "manual_release_evidence_comparison_stable" else "no_go",
+                "next_required_action": next_required_action,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "executes_sql": False,
+                "runs_migration_now": False,
+                "creates_table_now": False,
+                "writes_database_now": False,
+                "writes_audit_ledger_row_now": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "persists_manual_release_evidence": False,
+                "persists_manual_release_evidence_comparison": False,
+                "mutates_evidence": False,
+                "records_manual_review_now": False,
+                "approves_release_now": False,
+                "enables_gateway_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+            },
+            "allowed_output": "review_only_manual_release_evidence_comparison",
+            "forbidden_actions": [
+                "persist_manual_release_evidence_comparison",
+                "record_manual_release_review_by_api",
+                "approve_release_from_evidence_comparison",
+                "execute_migration_from_evidence_comparison",
+                "create_evidence_comparison_download",
+                "write_evidence_comparison_file",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -3028,21 +3283,21 @@ class TradeExecutionGatewayService:
                 "passed",
                 "broker_adapter_threat_model_review_ready",
                 "future_broker_adapter_threat_model",
-                "V5.5-P12 preserves threat categories and mitigations without implementing broker connectivity.",
+                "V5.5-P13 preserves threat categories and mitigations without implementing broker connectivity.",
             ),
             self._gate(
                 "broker_adapter_interface_draft_required",
                 "passed",
                 "broker_adapter_interface_draft_review_ready",
                 "future_broker_adapter_interface_draft",
-                "V5.5-P12 preserves provider-neutral interface metadata without executable adapter methods.",
+                "V5.5-P13 preserves provider-neutral interface metadata without executable adapter methods.",
             ),
             self._gate(
                 "broker_adapter_contract_verification_required",
                 "passed",
                 "fixture_contract_verification_passed",
                 "fixture_only_broker_adapter_contract_verifier",
-                "V5.5-P12 preserves fixture contract verification with no broker connectivity.",
+                "V5.5-P13 preserves fixture contract verification with no broker connectivity.",
             ),
             self._gate(
                 "order_lifecycle_failure_fixtures_required",
@@ -3121,12 +3376,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_release_evidence_verifier",
                 "V5.5-P12 verifies offline manual release evidence payloads in memory without persisting evidence, approving release, or executing migrations.",
             ),
+            self._gate(
+                "audit_ledger_migration_manual_release_evidence_comparison_required",
+                "passed",
+                "audit_ledger_migration_manual_release_evidence_comparison_ready",
+                "review_only_manual_release_evidence_comparison",
+                "V5.5-P13 compares two manual release evidence verifier summaries in memory without persisting snapshots, approving release, or executing migrations.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_evidence_verifier_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_evidence_comparison_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -3157,9 +3419,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_release_package_integrity_review_ready": True,
                 "audit_ledger_migration_manual_release_rehearsal_ready": True,
                 "audit_ledger_migration_manual_release_evidence_verifier_ready": True,
+                "audit_ledger_migration_manual_release_evidence_comparison_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "review_audit_ledger_migration_manual_release_evidence",
+                "next_required_action": "compare_audit_ledger_migration_manual_release_evidence_revisions",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -3298,6 +3561,12 @@ class TradeExecutionGatewayService:
             {
                 "name": "AuditLedgerMigrationManualReleaseEvidenceVerifier",
                 "status": "review_manual_release_evidence_verifier_defined",
+                "required_before": "any_manual_audit_ledger_migration_release",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationManualReleaseEvidenceComparison",
+                "status": "review_manual_release_evidence_comparison_defined",
                 "required_before": "any_manual_audit_ledger_migration_release",
                 "review_only": True,
             },
@@ -3564,6 +3833,29 @@ class TradeExecutionGatewayService:
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _manual_release_artifact_hashes(self, evidence: dict[str, Any]) -> dict[str, str]:
+        artifacts = evidence.get("artifacts") if isinstance(evidence, dict) else None
+        if not isinstance(artifacts, list):
+            return {}
+        return {
+            str(item.get("name")): str(item.get("artifact_hash", ""))
+            for item in artifacts
+            if isinstance(item, dict) and item.get("name")
+        }
+
+    def _manual_release_artifact_reviews(self, evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        artifacts = evidence.get("artifacts") if isinstance(evidence, dict) else None
+        if not isinstance(artifacts, list):
+            return {}
+        return {
+            str(item.get("name")): {
+                "reviewed_by": item.get("reviewed_by"),
+                "reviewed_at": item.get("reviewed_at"),
+            }
+            for item in artifacts
+            if isinstance(item, dict) and item.get("name")
         }
 
     def _default_audit_ledger_migration_spec(self, storage_plan: dict[str, Any]) -> str:
