@@ -143,6 +143,14 @@ class TradeManualReleaseHealthDigestHistoryMigrationSpecInput(BaseModel):
     candidate_evidence: dict = Field(default_factory=dict)
 
 
+class TradeManualReleaseHealthDigestHistoryMigrationSpecApprovalInput(BaseModel):
+    spec_text: str | None = None
+    approved_by: str = "operator"
+    note: str | None = None
+    baseline_evidence: dict = Field(default_factory=dict)
+    candidate_evidence: dict = Field(default_factory=dict)
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -411,6 +419,35 @@ def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest_
         limit=limit,
         max_age_days=max_age_days,
         repeat_checks=repeat_checks,
+    )
+
+
+@router.post("/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-spec/approve")
+def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest_history_migration_spec_approve(
+    input_data: TradeManualReleaseHealthDigestHistoryMigrationSpecApprovalInput | None = None,
+    limit: int = 50,
+    max_age_days: int = 7,
+    repeat_checks: int = 2,
+) -> dict:
+    payload = input_data or TradeManualReleaseHealthDigestHistoryMigrationSpecApprovalInput()
+    return TradeExecutionGatewayService().approve_audit_ledger_migration_manual_release_health_digest_history_migration_spec(
+        spec_text=payload.spec_text,
+        approved_by=payload.approved_by,
+        note=payload.note,
+        baseline_evidence=payload.baseline_evidence,
+        candidate_evidence=payload.candidate_evidence,
+        limit=limit,
+        max_age_days=max_age_days,
+        repeat_checks=repeat_checks,
+    )
+
+
+@router.get("/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-spec/approvals")
+def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest_history_migration_spec_approvals(
+    limit: int = 20,
+) -> list[dict]:
+    return TradeExecutionGatewayService().list_audit_ledger_migration_manual_release_health_digest_history_migration_spec_approvals(
+        limit=limit
     )
 
 

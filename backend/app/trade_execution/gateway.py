@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P17"
+    stage = "V5.5-P18"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -70,6 +70,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_health_digest_history_retention_proposal",
                 "audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist",
                 "audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier",
+                "audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval_metadata",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -108,6 +109,7 @@ class TradeExecutionGatewayService:
                 "run_manual_release_health_digest_history_migration",
                 "write_manual_release_health_digest_history_migration_file",
                 "execute_manual_release_health_digest_history_migration_spec",
+                "approve_manual_release_health_digest_history_migration_as_execution",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -4093,6 +4095,152 @@ class TradeExecutionGatewayService:
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
         }
+
+    def approve_audit_ledger_migration_manual_release_health_digest_history_migration_spec(
+        self,
+        spec_text: str | None = None,
+        approved_by: str = "operator",
+        note: str | None = None,
+        baseline_evidence: dict[str, Any] | None = None,
+        candidate_evidence: dict[str, Any] | None = None,
+        limit: int = 50,
+        max_age_days: int = 7,
+        repeat_checks: int = 2,
+    ) -> dict[str, Any]:
+        verification = self.verify_audit_ledger_migration_manual_release_health_digest_history_migration_spec(
+            spec_text=spec_text,
+            baseline_evidence=baseline_evidence,
+            candidate_evidence=candidate_evidence,
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        verification_passed = verification.get("status") == "spec_verification_passed"
+        failed_count = int(verification.get("summary", {}).get("failed_count") or 0)
+        now = datetime.now().isoformat(timespec="seconds")
+        approval = {
+            "schema_version": "trade_execution_audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval.v1",
+            "status": "approval_metadata_recorded" if verification_passed else "approval_blocked",
+            "stage": self.stage,
+            "approved_at": now,
+            "approved_by": (approved_by or "operator")[:80],
+            "approval_note": note,
+            "approval_effect": "existing_event_metadata_only",
+            "spec_hash": verification.get("spec_hash"),
+            "verification_status": verification.get("status"),
+            "verification_failed_count": failed_count,
+            "target_table": verification.get("target_table"),
+            "source_checklist_status": verification.get("source_checklist_status"),
+            "migration_allowed_now": False,
+            "future_migration_still_requires": [
+                "reviewed_sqlite_migration_file",
+                "operator_release_approval",
+                "rollback_plan",
+                "migration_unit_tests",
+                "api_smoke_tests",
+                "manual_release_health_digest_history_release_readiness",
+                "forbidden_tracked_file_scan",
+                "separate_live_integration_review",
+            ],
+            "safety_summary": self._safety_summary()
+            | {
+                "writes_existing_event_now": verification_passed,
+                "persists_manual_release_health_digest_history": False,
+                "writes_history_row_now": False,
+                "creates_table_now": False,
+                "runs_migration_now": False,
+                "executes_sql": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "approves_release_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+            },
+            "allowed_output": "review_only_manual_release_health_digest_history_migration_spec_approval_metadata",
+            "forbidden_actions": [
+                "execute_sql",
+                "run_history_migration",
+                "create_history_table",
+                "write_migration_file",
+                "write_history_row",
+                "persist_manual_release_health_digest_history",
+                "approve_release_now",
+                "enable_gateway_now",
+                "connect_broker",
+                "submit_order",
+                "store_credentials",
+                "screen_click",
+                "keyboard_type",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        if not verification_passed:
+            approval["event_id"] = None
+            approval["verification"] = verification
+            return approval
+
+        payload = dict(approval)
+        payload["verification"] = {
+            "schema_version": verification.get("schema_version"),
+            "status": verification.get("status"),
+            "spec_hash": verification.get("spec_hash"),
+            "failed_count": failed_count,
+            "target_table": verification.get("target_table"),
+            "source_checklist_status": verification.get("source_checklist_status"),
+            "allowed_output": verification.get("allowed_output"),
+            "migration_allowed_now": verification.get("migration_allowed_now"),
+            "live_trading_enabled": verification.get("live_trading_enabled"),
+        }
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO events(event_type, payload_json)
+                VALUES (?, ?)
+                """,
+                (
+                    "trade_manual_release_health_digest_history_migration_spec_approval",
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid or 0)
+        approval["event_id"] = event_id
+        approval["verification"] = payload["verification"]
+        return approval
+
+    def list_audit_ledger_migration_manual_release_health_digest_history_migration_spec_approvals(
+        self,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        rows = self.store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (
+                "trade_manual_release_health_digest_history_migration_spec_approval",
+                max(1, min(limit, 200)),
+            ),
+        )
+        approvals: list[dict[str, Any]] = []
+        for row in rows:
+            payload = self._decode_json(row.get("payload_json") or "{}")
+            item = payload if isinstance(payload, dict) else {}
+            item["event_id"] = row.get("id")
+            item["event_type"] = row.get("event_type")
+            item["created_at"] = row.get("created_at")
+            item["review_only"] = True
+            item["simulation_only"] = True
+            item["live_trading_enabled"] = settings.enable_live_trading
+            approvals.append(item)
+        return approvals
+
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -4312,12 +4460,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_release_health_digest_history_migration_spec_verifier",
                 "V5.5-P17 dry-run verifies future health digest history migration specs in memory without executing SQL, writing files, creating tables, or writing history rows.",
             ),
+            self._gate(
+                "audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval_metadata_required",
+                "passed",
+                "audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval_metadata_ready",
+                "review_only_manual_release_health_digest_history_migration_spec_approval_metadata",
+                "V5.5-P18 can record operator approval metadata for verified history migration specs in existing events without executing SQL, writing files, creating tables, or writing history rows.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval_metadata_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -4353,9 +4508,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_health_digest_history_retention_proposal_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier_ready": True,
+                "audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval_metadata_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier",
+                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval_metadata",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -4525,6 +4681,12 @@ class TradeExecutionGatewayService:
                 "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryMigrationSpecVerifier",
                 "status": "review_manual_release_health_digest_history_migration_spec_verifier_defined",
                 "required_before": "any_manual_release_health_digest_history_migration_spec_approval",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryMigrationSpecApprovalMetadata",
+                "status": "review_manual_release_health_digest_history_migration_spec_approval_metadata_defined",
+                "required_before": "any_manual_release_health_digest_history_release_readiness",
                 "review_only": True,
             },
         ]
