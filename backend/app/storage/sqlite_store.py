@@ -866,6 +866,22 @@ CREATE TABLE IF NOT EXISTS screen_provider_config_proposals (
 CREATE INDEX IF NOT EXISTS idx_screen_provider_config_proposals_status ON screen_provider_config_proposals(status);
 CREATE INDEX IF NOT EXISTS idx_screen_provider_config_proposals_created ON screen_provider_config_proposals(created_at);
 
+CREATE TABLE IF NOT EXISTS screen_provider_replay_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL,
+    proposal_id INTEGER REFERENCES screen_provider_config_proposals(id) ON DELETE SET NULL,
+    scenario_name TEXT NOT NULL,
+    step_json TEXT NOT NULL DEFAULT '[]',
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    review_only INTEGER NOT NULL DEFAULT 1,
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_screen_provider_replay_runs_created ON screen_provider_replay_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_screen_provider_replay_runs_status ON screen_provider_replay_runs(status);
+
 CREATE TABLE IF NOT EXISTS historical_backtest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     config_json TEXT NOT NULL,
@@ -1107,6 +1123,7 @@ KNOWLEDGE_TABLES = [
     "screen_monitoring_sessions",
     "screen_artifact_reviews",
     "screen_provider_config_proposals",
+    "screen_provider_replay_runs",
     "historical_backtest_runs",
     "historical_backtest_trades",
     "historical_backtest_closed_trades",

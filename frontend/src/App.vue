@@ -207,6 +207,9 @@
           <button data-testid="screen-config-proposal-button" @click="generateScreenProviderConfigProposal" :disabled="screenMonitoringLoading">
             生成 local-safe 配置提案
           </button>
+          <button data-testid="screen-provider-replay-button" @click="runScreenProviderReplay" :disabled="screenMonitoringLoading">
+            运行 Provider Replay
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -218,6 +221,7 @@
           <span>观测 {{ screenObservations.length }}</span>
           <span>Artifact {{ screenArtifactReviews.length }}</span>
           <span>配置提案 {{ screenProviderConfigProposals.length }}</span>
+          <span>Replay {{ screenProviderReplayRuns.length }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -281,6 +285,11 @@
             <span>{{ screenProviderConfigProposalResult.provider }} / {{ screenProviderConfigProposalResult.target_window_title }}</span>
             <small>写入 env {{ screenProviderConfigProposalResult.proposal.writes_env ? "是" : "否" }} / 执行命令 {{ screenProviderConfigProposalResult.proposal.executes_commands ? "是" : "否" }}</small>
           </div>
+          <div v-if="screenProviderReplayResult" class="score-item">
+            <strong>Provider Replay / {{ screenProviderReplayResult.status }}</strong>
+            <span>步骤 {{ screenProviderReplayResult.summary.step_count }} / 通过 {{ screenProviderReplayResult.summary.passed_count }} / 阻断 {{ screenProviderReplayResult.summary.blocked_count }}</span>
+            <small>{{ screenProviderReplayResult.summary.allowed_output }} / live trading disabled</small>
+          </div>
           <div v-if="screenObservationResult" class="score-item">
             <strong>Latest Observation / {{ screenObservationResult.app_status }}</strong>
             <span>置信度 {{ screenObservationResult.confidence }} / 插入 {{ screenObservationResult.inserted ? "是" : "去重" }}</span>
@@ -314,6 +323,13 @@
               <button @click="approveScreenProviderConfigProposal(proposal.id)" :disabled="screenMonitoringLoading">接受</button>
               <button @click="rejectScreenProviderConfigProposal(proposal.id)" :disabled="screenMonitoringLoading">拒绝</button>
             </div>
+          </div>
+        </div>
+        <div v-if="screenProviderReplayRuns.length" class="score-list">
+          <div v-for="run in screenProviderReplayRuns.slice(0, 5)" :key="run.id" class="score-item">
+            <strong>Provider Replay #{{ run.id }} / {{ run.status }}</strong>
+            <span>{{ run.scenario_name }} / proposal {{ run.proposal_id ?? "none" }}</span>
+            <small>通过 {{ run.summary.passed_count }} / 阻断 {{ run.summary.blocked_count }} / 像素与 OCR 关闭</small>
           </div>
         </div>
         <p v-if="!screenObservations.length">暂无屏幕观测证据。V4.5 仅支持 mock、fixture、截图预检和 artifact 元数据复核，不控制交易软件。</p>
@@ -1924,6 +1940,40 @@ type ScreenProviderConfigProposal = {
   live_trading_enabled: boolean;
 };
 
+type ScreenProviderReplayRun = {
+  id: number;
+  status: string;
+  proposal_id?: number | null;
+  proposal_title?: string | null;
+  proposal_status?: string | null;
+  scenario_name: string;
+  steps: Array<{
+    name: string;
+    status: string;
+    reason: string;
+    evidence: Record<string, any>;
+    real_screen_capture: boolean;
+    pixel_data_stored: boolean;
+    ocr_executed: boolean;
+    writes_env: boolean;
+    executes_commands: boolean;
+  }>;
+  summary: {
+    scenario_name: string;
+    proposal_id?: number | null;
+    step_count: number;
+    passed_count: number;
+    blocked_count: number;
+    readiness_status: string;
+    allowed_output: string;
+    forbidden_actions: string[];
+  };
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+  created_at: string;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2158,6 +2208,8 @@ const screenArtifactReviews = ref<ScreenArtifactReview[]>([]);
 const screenArtifactSyncResult = ref<ScreenArtifactSyncResult | null>(null);
 const screenProviderConfigProposals = ref<ScreenProviderConfigProposal[]>([]);
 const screenProviderConfigProposalResult = ref<ScreenProviderConfigProposal | null>(null);
+const screenProviderReplayRuns = ref<ScreenProviderReplayRun[]>([]);
+const screenProviderReplayResult = ref<ScreenProviderReplayRun | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3104,7 +3156,8 @@ async function loadScreenMonitoring() {
       observationsData,
       artifactPolicyData,
       artifactReviewsData,
-      providerConfigProposalsData
+      providerConfigProposalsData,
+      providerReplayRunsData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3113,7 +3166,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenObservation[]>("/api/screen-monitoring/observations?limit=20"),
       fetchJson<ScreenArtifactPolicy>("/api/screen-monitoring/artifact-policy"),
       fetchJson<ScreenArtifactReview[]>("/api/screen-monitoring/artifact-reviews?limit=20"),
-      fetchJson<ScreenProviderConfigProposal[]>("/api/screen-monitoring/provider-config-proposals?limit=20")
+      fetchJson<ScreenProviderConfigProposal[]>("/api/screen-monitoring/provider-config-proposals?limit=20"),
+      fetchJson<ScreenProviderReplayRun[]>("/api/screen-monitoring/provider-replay?limit=20")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3123,6 +3177,7 @@ async function loadScreenMonitoring() {
     screenArtifactPolicy.value = artifactPolicyData;
     screenArtifactReviews.value = artifactReviewsData;
     screenProviderConfigProposals.value = providerConfigProposalsData;
+    screenProviderReplayRuns.value = providerReplayRunsData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3132,6 +3187,7 @@ async function loadScreenMonitoring() {
     screenArtifactPolicy.value = null;
     screenArtifactReviews.value = [];
     screenProviderConfigProposals.value = [];
+    screenProviderReplayRuns.value = [];
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -3303,6 +3359,27 @@ async function rejectScreenProviderConfigProposal(id: number) {
     await loadScreenMonitoring();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "local-safe 配置提案拒绝失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function runScreenProviderReplay() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    const proposalId = screenProviderConfigProposals.value[0]?.id ?? null;
+    screenProviderReplayResult.value = await fetchJson<ScreenProviderReplayRun>(
+      "/api/screen-monitoring/provider-replay",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal_id: proposalId, scenario_name: "dashboard_provider_readiness_replay" })
+      }
+    );
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Provider replay 运行失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

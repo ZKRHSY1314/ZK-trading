@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P6",
+            "stage": "V4.5-P7",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -52,6 +52,7 @@ class ScreenMonitoringService:
                 "artifact_retention_policy",
                 "provider_readiness_runbook",
                 "provider_config_proposal",
+                "provider_readiness_replay",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -136,7 +137,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P6",
+            "stage": "V4.5-P7",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -218,6 +219,120 @@ class ScreenMonitoringService:
             "simulation_only": True,
             "live_trading_enabled": False,
         }
+
+    def replay_provider_readiness_scenario(
+        self,
+        proposal_id: int | None = None,
+        scenario_name: str = "local_safe_fixture_readiness",
+    ) -> dict[str, Any]:
+        proposal = self._resolve_config_proposal(proposal_id)
+        readiness = self.provider_readiness_runbook()
+        fixture_capabilities = FixtureScreenCaptureProvider().capabilities()
+        steps = [
+            self._scenario_step(
+                "load_config_proposal",
+                bool(proposal),
+                "proposal loaded" if proposal else "no proposal available; replay uses current readiness only",
+                {"proposal_id": proposal.get("id") if proposal else None},
+            ),
+            self._scenario_step(
+                "verify_no_env_write",
+                not proposal or not bool(proposal.get("proposal", {}).get("writes_env")),
+                "config proposal must not write .env",
+                {"writes_env": proposal.get("proposal", {}).get("writes_env") if proposal else False},
+            ),
+            self._scenario_step(
+                "verify_no_command_execution",
+                not proposal or not bool(proposal.get("proposal", {}).get("executes_commands")),
+                "config proposal must not execute shell or GUI commands",
+                {"executes_commands": proposal.get("proposal", {}).get("executes_commands") if proposal else False},
+            ),
+            self._scenario_step(
+                "fixture_provider_available",
+                bool(fixture_capabilities.get("fixture_replay_supported")),
+                "fixture provider can simulate observation persistence without desktop access",
+                {"provider": fixture_capabilities.get("provider")},
+            ),
+            self._scenario_step(
+                "real_pixel_capture_blocked",
+                True,
+                "real pixel capture remains blocked during scenario replay",
+                {"real_screen_capture": False, "pixel_data_stored": False},
+            ),
+            self._scenario_step(
+                "ocr_execution_blocked",
+                True,
+                "OCR remains blocked during scenario replay",
+                {"ocr_executed": False},
+            ),
+            self._scenario_step(
+                "live_trading_disabled",
+                not settings.enable_live_trading,
+                "live trading must remain disabled",
+                {"live_trading_enabled": False},
+            ),
+        ]
+        status = "replay_passed" if all(step["status"] == "passed" for step in steps) else "replay_blocked"
+        summary = {
+            "scenario_name": scenario_name,
+            "proposal_id": proposal.get("id") if proposal else None,
+            "step_count": len(steps),
+            "passed_count": sum(1 for step in steps if step["status"] == "passed"),
+            "blocked_count": sum(1 for step in steps if step["status"] != "passed"),
+            "readiness_status": readiness["status"],
+            "allowed_output": "review_only_scenario_replay",
+            "forbidden_actions": readiness["runbook"]["blocked_actions"],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO screen_provider_replay_runs(
+                    status, proposal_id, scenario_name, step_json, summary_json,
+                    review_only, simulation_only, live_trading_enabled
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    status,
+                    proposal.get("id") if proposal else None,
+                    scenario_name[:120],
+                    json.dumps(steps, ensure_ascii=False, default=str),
+                    json.dumps(summary, ensure_ascii=False, default=str),
+                    1,
+                    1,
+                    0,
+                ),
+            )
+            run_id = int(cursor.lastrowid)
+        return self.get_provider_replay_run(run_id) or {"id": run_id, "status": status}
+
+    def list_provider_replay_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.store.fetch_all(
+            """
+            SELECT r.*, p.title AS proposal_title, p.status AS proposal_status
+            FROM screen_provider_replay_runs r
+            LEFT JOIN screen_provider_config_proposals p ON p.id = r.proposal_id
+            ORDER BY r.created_at DESC, r.id DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 200)),),
+        )
+        return [self._provider_replay_run_model(row) for row in rows]
+
+    def get_provider_replay_run(self, run_id: int) -> dict[str, Any] | None:
+        row = self.store.fetch_one(
+            """
+            SELECT r.*, p.title AS proposal_title, p.status AS proposal_status
+            FROM screen_provider_replay_runs r
+            LEFT JOIN screen_provider_config_proposals p ON p.id = r.proposal_id
+            WHERE r.id = ?
+            """,
+            (run_id,),
+        )
+        return self._provider_replay_run_model(row) if row else None
 
     def generate_provider_config_proposal(self, target_window_title: str | None = None) -> dict[str, Any]:
         title = (target_window_title or "Untitled - Notepad").strip()[:120]
@@ -838,6 +953,34 @@ class ScreenMonitoringService:
         steps.append("Confirm /health reports live_trading_enabled=false before any screen-monitoring run.")
         return steps
 
+    def _resolve_config_proposal(self, proposal_id: int | None) -> dict[str, Any]:
+        if proposal_id:
+            return self.get_provider_config_proposal(proposal_id) or {}
+        proposals = self.list_provider_config_proposals(limit=1)
+        return proposals[0] if proposals else {}
+
+    def _scenario_step(
+        self,
+        name: str,
+        passed: bool,
+        reason: str,
+        evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else "blocked",
+            "reason": reason,
+            "evidence": evidence or {},
+            "real_screen_capture": False,
+            "pixel_data_stored": False,
+            "ocr_executed": False,
+            "writes_env": False,
+            "executes_commands": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
     def _safety_blocks(self, payload: dict[str, Any]) -> list[str]:
         blocked_terms = (
             "click",
@@ -957,6 +1100,17 @@ class ScreenMonitoringService:
         item = dict(row)
         item["proposal"] = self._decode_json(item.pop("proposal_json", "{}"))
         item["rationale"] = self._decode_json(item.pop("rationale_json", "{}"))
+        item["review_only"] = bool(item.get("review_only"))
+        item["simulation_only"] = bool(item.get("simulation_only"))
+        item["live_trading_enabled"] = bool(item.get("live_trading_enabled"))
+        return item
+
+    def _provider_replay_run_model(self, row: dict[str, Any] | None) -> dict[str, Any]:
+        if not row:
+            return {}
+        item = dict(row)
+        item["steps"] = self._decode_json(item.pop("step_json", "[]"))
+        item["summary"] = self._decode_json(item.pop("summary_json", "{}"))
         item["review_only"] = bool(item.get("review_only"))
         item["simulation_only"] = bool(item.get("simulation_only"))
         item["live_trading_enabled"] = bool(item.get("live_trading_enabled"))

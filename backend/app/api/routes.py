@@ -97,6 +97,11 @@ class ScreenProviderConfigProposalInput(BaseModel):
     target_window_title: str | None = "Untitled - Notepad"
 
 
+class ScreenProviderReplayInput(BaseModel):
+    proposal_id: int | None = None
+    scenario_name: str = "local_safe_fixture_readiness"
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -695,6 +700,24 @@ def screen_monitoring_provider_readiness() -> dict:
     from app.screen_monitoring.service import ScreenMonitoringService
 
     return ScreenMonitoringService().provider_readiness_runbook()
+
+
+@router.post("/screen-monitoring/provider-replay")
+def screen_monitoring_provider_replay(input_data: ScreenProviderReplayInput | None = None) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenProviderReplayInput()
+    return ScreenMonitoringService().replay_provider_readiness_scenario(
+        proposal_id=payload.proposal_id,
+        scenario_name=payload.scenario_name,
+    )
+
+
+@router.get("/screen-monitoring/provider-replay")
+def screen_monitoring_provider_replay_runs(limit: int = 20) -> list[dict]:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().list_provider_replay_runs(limit=limit)
 
 
 @router.post("/screen-monitoring/provider-config-proposals")

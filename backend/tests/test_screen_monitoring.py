@@ -4,6 +4,7 @@ from app.screen_monitoring.service import ScreenMonitoringService
 
 def _reset_screen_monitoring(store) -> None:
     with store.connect() as conn:
+        conn.execute("DELETE FROM screen_provider_replay_runs")
         conn.execute("DELETE FROM screen_provider_config_proposals")
         conn.execute("DELETE FROM screen_artifact_reviews")
         conn.execute("DELETE FROM screen_observations")
@@ -14,7 +15,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     _reset_screen_monitoring(test_db)
     capabilities = ScreenMonitoringService().capabilities()
 
-    assert capabilities["stage"] == "V4.5-P6"
+    assert capabilities["stage"] == "V4.5-P7"
     assert capabilities["capture_provider"] == "disabled"
     assert capabilities["provider_status"] == "disabled"
     assert capabilities["provider_configured"] is False
@@ -31,6 +32,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     assert "artifact_review_queue" in capabilities["allowed_modes"]
     assert "provider_readiness_runbook" in capabilities["allowed_modes"]
     assert "provider_config_proposal" in capabilities["allowed_modes"]
+    assert "provider_readiness_replay" in capabilities["allowed_modes"]
 
 
 def test_screen_observation_creates_session_and_summary(test_db):
@@ -141,7 +143,7 @@ def test_screen_provider_readiness_runbook_is_read_only_and_blocks_real_adapters
     readiness = ScreenMonitoringService().provider_readiness_runbook()
     checks = {item["name"]: item for item in readiness["checks"]}
 
-    assert readiness["stage"] == "V4.5-P6"
+    assert readiness["stage"] == "V4.5-P7"
     assert readiness["status"] == "disabled_needs_provider_selection"
     assert readiness["active_provider"] == "disabled"
     assert checks["provider_selected"]["status"] == "blocked"
@@ -205,6 +207,30 @@ def test_provider_config_proposal_is_review_only_and_does_not_apply_env(test_db)
     assert accepted["review_note"] == "reviewed but not applied"
     assert accepted["proposal"]["apply_automatically"] is False
     assert accepted["live_trading_enabled"] is False
+
+
+def test_provider_readiness_scenario_replay_uses_proposal_without_side_effects(test_db):
+    _reset_screen_monitoring(test_db)
+    service = ScreenMonitoringService()
+    proposal = service.generate_provider_config_proposal("Untitled - Notepad")
+
+    replay = service.replay_provider_readiness_scenario(proposal_id=proposal["id"])
+    listed = service.list_provider_replay_runs()
+
+    assert replay["status"] == "replay_passed"
+    assert replay["proposal_id"] == proposal["id"]
+    assert replay["summary"]["proposal_id"] == proposal["id"]
+    assert replay["summary"]["allowed_output"] == "review_only_scenario_replay"
+    assert replay["summary"]["blocked_count"] == 0
+    assert all(step["real_screen_capture"] is False for step in replay["steps"])
+    assert all(step["pixel_data_stored"] is False for step in replay["steps"])
+    assert all(step["ocr_executed"] is False for step in replay["steps"])
+    assert all(step["writes_env"] is False for step in replay["steps"])
+    assert all(step["executes_commands"] is False for step in replay["steps"])
+    assert replay["review_only"] is True
+    assert replay["simulation_only"] is True
+    assert replay["live_trading_enabled"] is False
+    assert listed[0]["id"] == replay["id"]
 
 
 def test_local_safe_preflight_requires_explicit_config(test_db):
@@ -417,7 +443,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert latest_resp.status_code == 200
     assert capabilities_resp.json()["live_trading_enabled"] is False
     assert capabilities_resp.json()["provider_configured"] is False
-    assert provider_readiness_resp.json()["stage"] == "V4.5-P6"
+    assert provider_readiness_resp.json()["stage"] == "V4.5-P7"
     assert provider_readiness_resp.json()["live_trading_enabled"] is False
     assert "ocr_execution" in provider_readiness_resp.json()["runbook"]["blocked_actions"]
     config_proposal_resp = client.post(
@@ -438,11 +464,22 @@ def test_screen_monitoring_api_smoke(client, test_db):
         f"/api/screen-monitoring/provider-config-proposals/{proposal_id}/reject",
         json={"reviewed_by": "api-smoke", "note": "proposal rejected"},
     )
+    provider_replay_resp = client.post(
+        "/api/screen-monitoring/provider-replay",
+        json={"proposal_id": proposal_id, "scenario_name": "api_smoke_replay"},
+    )
+    provider_replay_runs_resp = client.get("/api/screen-monitoring/provider-replay?limit=5")
     assert config_approve_resp.status_code == 200
     assert config_reject_resp.status_code == 200
+    assert provider_replay_resp.status_code == 200
+    assert provider_replay_runs_resp.status_code == 200
     assert config_approve_resp.json()["status"] == "accepted"
     assert config_reject_resp.json()["status"] == "rejected"
     assert config_reject_resp.json()["live_trading_enabled"] is False
+    assert provider_replay_resp.json()["status"] == "replay_passed"
+    assert provider_replay_resp.json()["summary"]["allowed_output"] == "review_only_scenario_replay"
+    assert provider_replay_resp.json()["live_trading_enabled"] is False
+    assert provider_replay_runs_resp.json()[0]["scenario_name"] == "api_smoke_replay"
     assert any(item["provider"] == "fixture" for item in providers_resp.json())
     assert empty_latest_resp.json()["status"] == "empty"
     assert session_resp.json()["status"] == "running"
