@@ -237,6 +237,9 @@
           <button data-testid="screen-digest-migration-checklist-button" @click="refreshScreenDigestMigrationChecklist" :disabled="screenMonitoringLoading">
             迁移就绪清单
           </button>
+          <button data-testid="screen-digest-migration-spec-button" @click="verifyScreenDigestMigrationSpec" :disabled="screenMonitoringLoading">
+            校验迁移草案
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -258,6 +261,7 @@
           <span>Health {{ screenReadinessHealth?.status ?? "未生成" }}</span>
           <span>History {{ screenDigestHistoryProposal?.status ?? "未生成" }}</span>
           <span>Migration {{ screenDigestMigrationChecklist?.status ?? "未生成" }}</span>
+          <span>Spec {{ screenDigestMigrationSpecVerification?.status ?? "未校验" }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -365,6 +369,11 @@
             <strong>History Migration / {{ screenDigestMigrationChecklist.status }}</strong>
             <span>{{ screenDigestMigrationChecklist.migration_plan.default_state }} / {{ screenDigestMigrationChecklist.allowed_output }}</span>
             <small>允许迁移 {{ screenDigestMigrationChecklist.summary.migration_allowed_now ? "是" : "否" }} / 需复核 {{ screenDigestMigrationChecklist.summary.review_required_count }} / DB {{ screenDigestMigrationChecklist.safety_summary.writes_database_now ? "写入" : "不写" }}</small>
+          </div>
+          <div v-if="screenDigestMigrationSpecVerification" class="score-item">
+            <strong>Migration Spec / {{ screenDigestMigrationSpecVerification.status }}</strong>
+            <span>{{ screenDigestMigrationSpecVerification.passed_count }}/{{ screenDigestMigrationSpecVerification.check_count }} checks / {{ screenDigestMigrationSpecVerification.allowed_output }}</span>
+            <small>执行 SQL {{ screenDigestMigrationSpecVerification.safety_summary.executes_sql ? "是" : "否" }} / 失败 {{ screenDigestMigrationSpecVerification.failed_count }} / 迁移 {{ screenDigestMigrationSpecVerification.migration_allowed_now ? "允许" : "禁止" }}</small>
           </div>
           <div
             v-for="item in screenReadinessAudit?.safety_matrix.slice(0, 6) ?? []"
@@ -2500,6 +2509,53 @@ type ScreenDigestMigrationChecklist = {
   live_trading_enabled: boolean;
 };
 
+type ScreenDigestMigrationSpecVerification = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  spec_hash: string;
+  spec_preview: string;
+  target_table: string;
+  check_count: number;
+  passed_count: number;
+  failed_count: number;
+  checks: Array<{
+    name: string;
+    status: string;
+    reason: string;
+    details: Record<string, any>;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  failed_checks: Array<{
+    name: string;
+    status: string;
+    reason: string;
+    details: Record<string, any>;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  missing_fields: string[];
+  safety_blocks: Array<{
+    name: string;
+    matches: string[];
+    blocked: boolean;
+  }>;
+  source_checklist_status: string;
+  migration_allowed_now: boolean;
+  safety_summary: ScreenDigestMigrationChecklist["safety_summary"] & {
+    executes_sql: boolean;
+  };
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2746,6 +2802,7 @@ const screenReadinessComparison = ref<ScreenReadinessComparison | null>(null);
 const screenReadinessHealth = ref<ScreenReadinessHealth | null>(null);
 const screenDigestHistoryProposal = ref<ScreenDigestHistoryProposal | null>(null);
 const screenDigestMigrationChecklist = ref<ScreenDigestMigrationChecklist | null>(null);
+const screenDigestMigrationSpecVerification = ref<ScreenDigestMigrationSpecVerification | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3896,6 +3953,25 @@ async function refreshScreenDigestMigrationChecklist() {
     );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Digest history migration checklist 生成失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function verifyScreenDigestMigrationSpec() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenDigestMigrationSpecVerification.value = await fetchJson<ScreenDigestMigrationSpecVerification>(
+      "/api/screen-monitoring/readiness-health/history-migration-spec/verify?limit=40",
+      {
+        method: "POST",
+        body: JSON.stringify({ spec_text: null }),
+        headers: { "Content-Type": "application/json" }
+      }
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Digest history migration spec 校验失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

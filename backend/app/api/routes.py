@@ -107,6 +107,10 @@ class ScreenReadinessAuditAckInput(BaseModel):
     note: str | None = None
 
 
+class ScreenDigestMigrationSpecInput(BaseModel):
+    spec_text: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -797,6 +801,20 @@ def screen_monitoring_readiness_health_history_migration_checklist(limit: int = 
     from app.screen_monitoring.service import ScreenMonitoringService
 
     return ScreenMonitoringService().screen_readiness_digest_history_migration_checklist(limit=limit)
+
+
+@router.post("/screen-monitoring/readiness-health/history-migration-spec/verify")
+def screen_monitoring_readiness_health_history_migration_spec_verify(
+    input_data: ScreenDigestMigrationSpecInput | None = None,
+    limit: int = 50,
+) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenDigestMigrationSpecInput()
+    return ScreenMonitoringService().verify_screen_readiness_digest_history_migration_spec(
+        spec_text=payload.spec_text,
+        limit=limit,
+    )
 
 
 @router.post("/screen-monitoring/provider-config-proposals")

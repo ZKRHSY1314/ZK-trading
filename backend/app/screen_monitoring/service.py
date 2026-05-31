@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P16",
+            "stage": "V4.5-P17",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -62,6 +62,7 @@ class ScreenMonitoringService:
                 "screen_readiness_health_digest",
                 "screen_readiness_digest_history_proposal",
                 "screen_readiness_digest_history_migration_checklist",
+                "screen_readiness_digest_history_migration_spec_verifier",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -146,7 +147,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P16",
+            "stage": "V4.5-P17",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -249,7 +250,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P16",
+            "stage": "V4.5-P17",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -306,7 +307,7 @@ class ScreenMonitoringService:
         evidence_bundle = {
             "schema_version": "screen_readiness_evidence_export.v1",
             "status": "export_ready",
-            "stage": "V4.5-P16",
+            "stage": "V4.5-P17",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "bundle_scope": [
                 "capabilities",
@@ -514,7 +515,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_verifier.v1",
             "status": "verification_passed" if not failed else "verification_failed",
-            "stage": "V4.5-P16",
+            "stage": "V4.5-P17",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "export_bundle_hash": bundle.get("bundle_hash"),
             "verified_export_stage": bundle.get("stage"),
@@ -552,7 +553,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_comparison.v1",
             "status": "comparison_stable" if not differences else "comparison_changed",
-            "stage": "V4.5-P16",
+            "stage": "V4.5-P17",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "baseline": baseline_summary,
             "candidate": candidate_summary,
@@ -633,7 +634,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_health_digest.v1",
             "status": "health_digest_clean" if not failed_flags else "health_digest_review_required",
-            "stage": "V4.5-P16",
+            "stage": "V4.5-P17",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": {
                 "capture_provider": capabilities.get("capture_provider"),
@@ -718,7 +719,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_digest_history_proposal.v1",
             "status": "proposal_ready",
-            "stage": "V4.5-P16",
+            "stage": "V4.5-P17",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "proposal": {
                 "name": "screen_readiness_digest_history",
@@ -904,7 +905,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_digest_history_migration_checklist.v1",
             "status": "migration_review_ready" if not blocked_checks else "migration_blocked",
-            "stage": "V4.5-P16",
+            "stage": "V4.5-P17",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "migration_plan": {
                 "target_table": "screen_readiness_digest_history",
@@ -958,6 +959,164 @@ class ScreenMonitoringService:
             "forbidden_actions": [
                 "create_table_now",
                 "run_migration_now",
+                "write_migration_file_now",
+                "insert_digest_snapshot_now",
+                "write_env",
+                "execute_command",
+                "write_file",
+                "create_download",
+                "screen_click",
+                "keyboard_type",
+                "inspect_window",
+                "real_pixel_capture",
+                "pixel_storage",
+                "ocr_execution",
+                "broker_action",
+                "order_action",
+                "credential_access",
+                "live_auto_trading",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def verify_screen_readiness_digest_history_migration_spec(
+        self,
+        spec_text: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        checklist = self.screen_readiness_digest_history_migration_checklist(limit=limit)
+        target_table = str(checklist.get("migration_plan", {}).get("target_table") or "screen_readiness_digest_history")
+        field_names = [str(item.get("target")) for item in checklist.get("field_mapping", []) if item.get("target")]
+        spec = spec_text if spec_text is not None else self._default_digest_history_migration_spec(field_names)
+        normalized = " ".join(spec.lower().split())
+        dangerous_terms = [
+            " drop ",
+            " delete ",
+            " insert ",
+            " update ",
+            " alter ",
+            " pragma ",
+            " attach ",
+            " detach ",
+            " vacuum ",
+            " replace ",
+            " truncate ",
+        ]
+        sensitive_terms = [
+            "raw_pixels",
+            "ocr_text",
+            "broker_credentials",
+            "broker_account",
+            "orders",
+            "positions",
+            "plaintext_secrets",
+            "full_screenshot",
+        ]
+        missing_fields = [
+            field
+            for field in field_names
+            if field.lower() not in normalized
+        ]
+        dangerous_matches = [term.strip() for term in dangerous_terms if term in f" {normalized} "]
+        sensitive_matches = [term for term in sensitive_terms if term in normalized]
+        checks = [
+            self._screen_digest_migration_spec_check(
+                "spec_text_present",
+                bool(spec.strip()),
+                "migration spec text must be provided or generated from the safe default",
+            ),
+            self._screen_digest_migration_spec_check(
+                "target_table_named",
+                target_table.lower() in normalized,
+                "spec must name the digest history target table",
+            ),
+            self._screen_digest_migration_spec_check(
+                "create_table_shape_present",
+                "create table" in normalized and "if not exists" in normalized,
+                "dry-run spec should describe a guarded CREATE TABLE shape",
+            ),
+            self._screen_digest_migration_spec_check(
+                "required_fields_covered",
+                not missing_fields,
+                "spec must cover every P15/P16 required metadata field",
+                details={"missing_fields": missing_fields[:20]},
+            ),
+            self._screen_digest_migration_spec_check(
+                "sensitive_fields_absent",
+                not sensitive_matches,
+                "spec must not include pixels, OCR text, broker data, orders, positions, credentials, or secrets",
+                details={"sensitive_matches": sensitive_matches},
+            ),
+            self._screen_digest_migration_spec_check(
+                "dangerous_sql_absent",
+                not dangerous_matches,
+                "dry-run verifier rejects destructive or data-mutating SQL terms",
+                details={"dangerous_matches": dangerous_matches},
+            ),
+            self._screen_digest_migration_spec_check(
+                "operator_approval_required",
+                checklist.get("summary", {}).get("manual_review_required") is True,
+                "operator approval must remain required before any future migration",
+            ),
+            self._screen_digest_migration_spec_check(
+                "migration_not_allowed_now",
+                checklist.get("summary", {}).get("migration_allowed_now") is False,
+                "dry-run verification must not enable migration execution",
+            ),
+            self._screen_digest_migration_spec_check(
+                "live_trading_disabled",
+                not settings.enable_live_trading and checklist.get("live_trading_enabled") is False,
+                "migration spec verification must preserve disabled live trading state",
+            ),
+        ]
+        failed = [item for item in checks if item["status"] != "passed"]
+        spec_hash = hashlib.sha256(spec.encode("utf-8")).hexdigest()
+        safety_summary = {
+            "executes_sql": False,
+            "runs_migration_now": False,
+            "creates_table_now": False,
+            "writes_database_now": False,
+            "writes_migration_file_now": False,
+            "writes_file": False,
+            "download_created": False,
+            "executes_commands": False,
+            "writes_env": False,
+            "real_screen_capture": False,
+            "pixel_data_stored": False,
+            "ocr_executed": False,
+            "broker_action": False,
+            "order_action": False,
+            "credential_access": False,
+            "live_trading_enabled": False,
+        }
+        return {
+            "schema_version": "screen_readiness_digest_history_migration_spec_verifier.v1",
+            "status": "spec_verification_passed" if not failed else "spec_verification_failed",
+            "stage": "V4.5-P17",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "spec_hash": spec_hash,
+            "spec_preview": spec[:800],
+            "target_table": target_table,
+            "check_count": len(checks),
+            "passed_count": len(checks) - len(failed),
+            "failed_count": len(failed),
+            "checks": checks,
+            "failed_checks": failed,
+            "missing_fields": missing_fields,
+            "safety_blocks": [
+                {"name": "dangerous_sql", "matches": dangerous_matches, "blocked": bool(dangerous_matches)},
+                {"name": "sensitive_fields", "matches": sensitive_matches, "blocked": bool(sensitive_matches)},
+            ],
+            "source_checklist_status": checklist.get("status"),
+            "migration_allowed_now": False,
+            "safety_summary": safety_summary,
+            "allowed_output": "review_only_screen_readiness_digest_history_migration_spec_verifier",
+            "forbidden_actions": [
+                "execute_sql",
+                "run_migration_now",
+                "create_table_now",
                 "write_migration_file_now",
                 "insert_digest_snapshot_now",
                 "write_env",
@@ -1083,7 +1242,7 @@ class ScreenMonitoringService:
             counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
         return {
             "status": "timeline_ready",
-            "stage": "V4.5-P16",
+            "stage": "V4.5-P17",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "item_count": len(ordered),
             "counts_by_type": counts_by_type,
@@ -1145,7 +1304,7 @@ class ScreenMonitoringService:
                     "acknowledged",
                     report_hash,
                     str(report.get("status") or "unknown"),
-                    str(report.get("stage") or "V4.5-P16"),
+                    str(report.get("stage") or "V4.5-P17"),
                     json.dumps(summary, ensure_ascii=False, default=str),
                     json.dumps(safety_matrix, ensure_ascii=False, default=str),
                     json.dumps(report, ensure_ascii=False, default=str),
@@ -2249,6 +2408,47 @@ class ScreenMonitoringService:
             "simulation_only": True,
             "live_trading_enabled": False,
         }
+
+    def _screen_digest_migration_spec_check(
+        self,
+        name: str,
+        passed: bool,
+        reason: str,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else "failed",
+            "reason": reason,
+            "details": details or {},
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def _default_digest_history_migration_spec(self, field_names: list[str]) -> str:
+        lines = [
+            "CREATE TABLE IF NOT EXISTS screen_readiness_digest_history (",
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,",
+        ]
+        for field in field_names:
+            column_type = "TEXT"
+            if field.endswith("_count"):
+                column_type = "INTEGER"
+            elif field == "safety_summary" or field.endswith("_names"):
+                column_type = "JSON"
+            lines.append(f"  {field} {column_type},")
+        lines.extend(
+            [
+                "  created_at TEXT NOT NULL,",
+                "  review_only INTEGER NOT NULL DEFAULT 1,",
+                "  simulation_only INTEGER NOT NULL DEFAULT 1,",
+                "  live_trading_enabled INTEGER NOT NULL DEFAULT 0",
+                ");",
+                "-- dry-run spec only; do not execute without separate reviewed migration, rollback plan, tests, and operator approval",
+            ]
+        )
+        return "\n".join(lines)
 
     def _screen_evidence_export_safety(
         self,

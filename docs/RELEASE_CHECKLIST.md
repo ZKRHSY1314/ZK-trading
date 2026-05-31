@@ -157,6 +157,9 @@
 - [ ] V4.5-P16 exposes `/api/screen-monitoring/readiness-health/history-migration-checklist` as a review-only migration readiness checklist for future digest history persistence.
 - [ ] V4.5-P16 checklist reports target table, field mapping, required future artifacts, review-required checks, rollback/test requirements, and safety evidence without creating tables or running migrations now.
 - [ ] V4.5-P16 dashboard shows migration readiness/default state without writing database records, migration files, downloads, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
+- [ ] V4.5-P17 exposes `POST /api/screen-monitoring/readiness-health/history-migration-spec/verify` as an in-memory dry-run verifier for a future digest history migration spec.
+- [ ] V4.5-P17 verifier checks target table, guarded create-table shape, required metadata fields, sensitive field exclusion, dangerous SQL terms, and disabled live-trading state without executing SQL.
+- [ ] V4.5-P17 dashboard shows migration spec verification results without creating tables, running migrations, writing migration files, writing database records, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence
