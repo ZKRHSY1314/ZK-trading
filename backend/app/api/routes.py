@@ -249,6 +249,17 @@ def trade_execution_gateway_audit_ledger_migration_release_readiness(limit: int 
     return TradeExecutionGatewayService().audit_ledger_migration_release_readiness(limit=limit)
 
 
+@router.get("/trade-execution-gateway/audit-ledger-migration-approval-review")
+def trade_execution_gateway_audit_ledger_migration_approval_review(
+    limit: int = 50,
+    max_age_days: int = 7,
+) -> dict:
+    return TradeExecutionGatewayService().audit_ledger_migration_approval_review(
+        limit=limit,
+        max_age_days=max_age_days,
+    )
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()

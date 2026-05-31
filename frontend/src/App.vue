@@ -774,7 +774,7 @@
           <button class="disabled-live" disabled>实盘执行未启用</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.5-P7" }}</span>
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.5-P8" }}</span>
           <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
           <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
@@ -796,6 +796,7 @@
           <span>迁移规格校验 {{ tradeGatewayAuditMigrationSpecVerification?.status ?? "未加载" }}</span>
           <span>规格审批 {{ tradeGatewayAuditMigrationSpecApprovals.length }}</span>
           <span>发布就绪 {{ tradeGatewayAuditMigrationReleaseReadiness?.status ?? "未加载" }}</span>
+          <span>审批复核 {{ tradeGatewayAuditMigrationApprovalReview?.status ?? "未加载" }}</span>
           <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
           <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
           <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
@@ -976,6 +977,11 @@
             <span>{{ tradeGatewayAuditMigrationReleaseReadiness.decision.go_no_go }} / {{ tradeGatewayAuditMigrationReleaseReadiness.allowed_output }}</span>
             <small>approval {{ tradeGatewayAuditMigrationReleaseReadiness.evidence.approval_count }} / gate {{ tradeGatewayAuditMigrationReleaseReadiness.gates.length }} / migration {{ tradeGatewayAuditMigrationReleaseReadiness.decision.migration_allowed_now ? "allowed" : "blocked" }}</small>
           </div>
+          <div v-if="tradeGatewayAuditMigrationApprovalReview" class="score-item">
+            <strong>Migration Approval Review / {{ tradeGatewayAuditMigrationApprovalReview.status }}</strong>
+            <span>{{ tradeGatewayAuditMigrationApprovalReview.decision.next_required_action }} / reuse {{ tradeGatewayAuditMigrationApprovalReview.decision.approval_can_be_reused_for_manual_release_review ? "yes" : "no" }}</span>
+            <small>age {{ tradeGatewayAuditMigrationApprovalReview.latest_approval.approval_age_days ?? "none" }}d / max {{ tradeGatewayAuditMigrationApprovalReview.review_policy.max_age_days }}d / match {{ tradeGatewayAuditMigrationApprovalReview.latest_approval.matches_current_spec ? "yes" : "no" }}</small>
+          </div>
           <div
             v-for="component in tradeGatewayCapabilities.required_future_components"
             :key="component.name"
@@ -1002,7 +1008,7 @@
           <div class="score-item">
             <strong>Forbidden Modes</strong>
             <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
-            <small>这些能力在 V5.5-P7 只能作为阻断项展示。</small>
+            <small>这些能力在 V5.5-P8 只能作为阻断项展示。</small>
           </div>
         </div>
         <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
@@ -1748,6 +1754,7 @@ type TradeGatewayReviewGates = {
     audit_ledger_migration_spec_dry_run_ready: boolean;
     audit_ledger_migration_spec_approval_metadata_ready: boolean;
     audit_ledger_migration_release_readiness_ready: boolean;
+    audit_ledger_migration_approval_freshness_ready: boolean;
     ready_for_live_enablement: boolean;
     live_trading_enabled: boolean;
     next_required_action: string;
@@ -2505,6 +2512,74 @@ type TradeGatewayAuditMigrationReleaseReadiness = {
     approves_release_now: boolean;
     enables_gateway_now: boolean;
   };
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayAuditMigrationApprovalReview = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  review_policy: {
+    max_age_days: number;
+    rotation_required_when: string[];
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  latest_approval: {
+    event_id: number | null;
+    status: string | null;
+    approved_at: string | null;
+    created_at: string | null;
+    approved_by: string | null;
+    spec_hash: string | null;
+    verification_status: string | null;
+    approval_age_hours: number | null;
+    approval_age_days: number | null;
+    expires_at: string | null;
+    is_expired: boolean;
+    matches_current_spec: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  current_spec: {
+    spec_hash: string | null;
+    verification_status: string;
+    failed_count: number;
+    migration_allowed_now: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  release_readiness: {
+    status: string;
+    go_no_go: string;
+    approval_count: number;
+    latest_approval_event_id: number | null;
+    migration_allowed_now: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  gates: TradeGatewayAuditMigrationReleaseReadiness["gates"];
+  blocked_gates: TradeGatewayAuditMigrationReleaseReadiness["blocked_gates"];
+  review_required_gates: TradeGatewayAuditMigrationReleaseReadiness["review_required_gates"];
+  decision: {
+    next_required_action: string;
+    migration_allowed_now: boolean;
+    approval_can_be_reused_for_manual_release_review: boolean;
+    requires_human_release_approval: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  safety_summary: TradeGatewayAuditMigrationReleaseReadiness["safety_summary"];
   allowed_output: string;
   forbidden_actions: string[];
   review_only: boolean;
@@ -4103,6 +4178,7 @@ const tradeGatewayAuditMigrationSpecVerification = ref<TradeGatewayAuditMigratio
 const tradeGatewayAuditMigrationSpecApprovals = ref<TradeGatewayAuditMigrationSpecApproval[]>([]);
 const tradeGatewayAuditMigrationSpecApprovalResult = ref<TradeGatewayAuditMigrationSpecApproval | null>(null);
 const tradeGatewayAuditMigrationReleaseReadiness = ref<TradeGatewayAuditMigrationReleaseReadiness | null>(null);
+const tradeGatewayAuditMigrationApprovalReview = ref<TradeGatewayAuditMigrationApprovalReview | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -4557,7 +4633,8 @@ async function loadTradeExecutionGateway() {
       auditStoragePlanData,
       auditMigrationSpecVerificationData,
       auditMigrationSpecApprovalsData,
-      auditMigrationReleaseReadinessData
+      auditMigrationReleaseReadinessData,
+      auditMigrationApprovalReviewData
     ] = await Promise.all([
       fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
       fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates"),
@@ -4588,6 +4665,9 @@ async function loadTradeExecutionGateway() {
       ),
       fetchJson<TradeGatewayAuditMigrationReleaseReadiness>(
         "/api/trade-execution-gateway/audit-ledger-migration-release-readiness?limit=10"
+      ),
+      fetchJson<TradeGatewayAuditMigrationApprovalReview>(
+        "/api/trade-execution-gateway/audit-ledger-migration-approval-review?limit=10&max_age_days=7"
       )
     ]);
     tradeGatewayCapabilities.value = capabilitiesData;
@@ -4609,6 +4689,7 @@ async function loadTradeExecutionGateway() {
     tradeGatewayAuditMigrationSpecVerification.value = auditMigrationSpecVerificationData;
     tradeGatewayAuditMigrationSpecApprovals.value = auditMigrationSpecApprovalsData;
     tradeGatewayAuditMigrationReleaseReadiness.value = auditMigrationReleaseReadinessData;
+    tradeGatewayAuditMigrationApprovalReview.value = auditMigrationApprovalReviewData;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
   } finally {
@@ -4637,6 +4718,9 @@ async function approveTradeGatewayAuditMigrationSpec() {
     );
     tradeGatewayAuditMigrationReleaseReadiness.value = await fetchJson<TradeGatewayAuditMigrationReleaseReadiness>(
       "/api/trade-execution-gateway/audit-ledger-migration-release-readiness?limit=10"
+    );
+    tradeGatewayAuditMigrationApprovalReview.value = await fetchJson<TradeGatewayAuditMigrationApprovalReview>(
+      "/api/trade-execution-gateway/audit-ledger-migration-approval-review?limit=10&max_age_days=7"
     );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "审计账本迁移规格审批元数据记录失败";
