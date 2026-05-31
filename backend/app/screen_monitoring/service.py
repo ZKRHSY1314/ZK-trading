@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -64,6 +64,7 @@ class ScreenMonitoringService:
                 "screen_readiness_digest_history_migration_checklist",
                 "screen_readiness_digest_history_migration_spec_verifier",
                 "screen_readiness_digest_history_migration_spec_approval",
+                "screen_readiness_digest_history_release_readiness",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -148,7 +149,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -251,7 +252,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -308,7 +309,7 @@ class ScreenMonitoringService:
         evidence_bundle = {
             "schema_version": "screen_readiness_evidence_export.v1",
             "status": "export_ready",
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "bundle_scope": [
                 "capabilities",
@@ -516,7 +517,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_verifier.v1",
             "status": "verification_passed" if not failed else "verification_failed",
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "export_bundle_hash": bundle.get("bundle_hash"),
             "verified_export_stage": bundle.get("stage"),
@@ -554,7 +555,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_comparison.v1",
             "status": "comparison_stable" if not differences else "comparison_changed",
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "baseline": baseline_summary,
             "candidate": candidate_summary,
@@ -635,7 +636,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_health_digest.v1",
             "status": "health_digest_clean" if not failed_flags else "health_digest_review_required",
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": {
                 "capture_provider": capabilities.get("capture_provider"),
@@ -720,7 +721,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_digest_history_proposal.v1",
             "status": "proposal_ready",
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "proposal": {
                 "name": "screen_readiness_digest_history",
@@ -906,7 +907,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_digest_history_migration_checklist.v1",
             "status": "migration_review_ready" if not blocked_checks else "migration_blocked",
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "migration_plan": {
                 "target_table": "screen_readiness_digest_history",
@@ -1095,7 +1096,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_digest_history_migration_spec_verifier.v1",
             "status": "spec_verification_passed" if not failed else "spec_verification_failed",
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "spec_hash": spec_hash,
             "spec_preview": spec[:800],
@@ -1153,7 +1154,7 @@ class ScreenMonitoringService:
         approval = {
             "schema_version": "screen_readiness_digest_history_migration_spec_approval.v1",
             "status": "approval_metadata_recorded" if verification_passed else "approval_blocked",
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "approved_at": now,
             "approved_by": (approved_by or "operator")[:80],
             "approval_note": note,
@@ -1270,6 +1271,150 @@ class ScreenMonitoringService:
             item["live_trading_enabled"] = False
             approvals.append(item)
         return approvals
+
+    def screen_readiness_digest_history_release_readiness(self, limit: int = 50) -> dict[str, Any]:
+        checklist = self.screen_readiness_digest_history_migration_checklist(limit=limit)
+        verification = self.verify_screen_readiness_digest_history_migration_spec(limit=limit)
+        approvals = self.list_screen_readiness_digest_history_migration_spec_approvals(limit=limit)
+        latest_approval = approvals[0] if approvals else None
+        checklist_ready = checklist.get("status") == "migration_review_ready"
+        verification_ready = verification.get("status") == "spec_verification_passed"
+        approval_ready = bool(latest_approval) and latest_approval.get("verification_status") == "spec_verification_passed"
+        safety_ready = (
+            verification.get("safety_summary", {}).get("executes_sql") is False
+            and verification.get("safety_summary", {}).get("creates_table_now") is False
+            and (latest_approval or {}).get("safety_summary", {}).get("runs_migration_now", False) is False
+            and not settings.enable_live_trading
+        )
+        gates = [
+            self._screen_digest_release_gate(
+                "migration_checklist_ready",
+                checklist_ready,
+                "P16 migration readiness checklist must be review-ready",
+            ),
+            self._screen_digest_release_gate(
+                "migration_spec_verified",
+                verification_ready,
+                "P17 dry-run migration spec verifier must pass",
+            ),
+            self._screen_digest_release_gate(
+                "operator_approval_recorded",
+                approval_ready,
+                "P18 operator approval metadata is required before a release can be reviewed",
+                status_if_false="review_required",
+            ),
+            self._screen_digest_release_gate(
+                "latest_approval_matches_spec",
+                bool(latest_approval) and latest_approval.get("spec_hash") == verification.get("spec_hash"),
+                "latest approval must match the currently verified spec hash",
+                status_if_false="review_required",
+            ),
+            self._screen_digest_release_gate(
+                "no_migration_execution_enabled",
+                verification.get("migration_allowed_now") is False
+                and checklist.get("summary", {}).get("migration_allowed_now") is False
+                and (latest_approval or {}).get("migration_allowed_now", False) is False,
+                "release readiness summary must not enable migration execution",
+            ),
+            self._screen_digest_release_gate(
+                "safety_summary_clean",
+                safety_ready,
+                "release readiness summary must preserve no SQL execution, no table creation, no migration, and disabled live trading",
+            ),
+        ]
+        blocked = [gate for gate in gates if gate["status"] == "blocked"]
+        review_required = [gate for gate in gates if gate["status"] == "review_required"]
+        if blocked:
+            status = "release_blocked"
+        elif review_required:
+            status = "release_review_required"
+        else:
+            status = "release_evidence_ready"
+        safety_summary = {
+            "executes_sql": False,
+            "runs_migration_now": False,
+            "creates_table_now": False,
+            "writes_database_now": False,
+            "writes_digest_history_table_now": False,
+            "writes_migration_file_now": False,
+            "writes_file": False,
+            "download_created": False,
+            "executes_commands": False,
+            "writes_env": False,
+            "real_screen_capture": False,
+            "pixel_data_stored": False,
+            "ocr_executed": False,
+            "broker_action": False,
+            "order_action": False,
+            "credential_access": False,
+            "live_trading_enabled": False,
+        }
+        return {
+            "schema_version": "screen_readiness_digest_history_release_readiness.v1",
+            "status": status,
+            "stage": "V4.5-P19",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "decision": {
+                "go_no_go": "go_for_manual_release_review" if status == "release_evidence_ready" else "no_go",
+                "migration_allowed_now": False,
+                "requires_human_release_approval": True,
+                "reason": "all evidence gates passed" if status == "release_evidence_ready" else "release evidence is incomplete or requires review",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            },
+            "evidence": {
+                "checklist_status": checklist.get("status"),
+                "verification_status": verification.get("status"),
+                "verification_failed_count": verification.get("failed_count"),
+                "approval_count": len(approvals),
+                "latest_approval_status": latest_approval.get("status") if latest_approval else None,
+                "latest_approval_event_id": latest_approval.get("event_id") if latest_approval else None,
+                "spec_hash": verification.get("spec_hash"),
+                "approved_spec_hash": latest_approval.get("spec_hash") if latest_approval else None,
+                "allowed_output": "review_only_screen_readiness_digest_history_release_readiness",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            },
+            "gates": gates,
+            "blocked_gates": blocked,
+            "review_required_gates": review_required,
+            "required_before_actual_migration": [
+                "separate_reviewed_migration_file",
+                "rollback_plan",
+                "migration_tests",
+                "api_smoke_tests",
+                "database_backup_plan",
+                "explicit_operator_release_approval",
+            ],
+            "safety_summary": safety_summary,
+            "allowed_output": "review_only_screen_readiness_digest_history_release_readiness",
+            "forbidden_actions": [
+                "execute_sql",
+                "run_migration_now",
+                "create_table_now",
+                "write_migration_file_now",
+                "insert_digest_snapshot_now",
+                "write_env",
+                "execute_command",
+                "write_file",
+                "create_download",
+                "screen_click",
+                "keyboard_type",
+                "inspect_window",
+                "real_pixel_capture",
+                "pixel_storage",
+                "ocr_execution",
+                "broker_action",
+                "order_action",
+                "credential_access",
+                "live_auto_trading",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
 
     def screen_readiness_timeline(self, limit: int = 50) -> dict[str, Any]:
         safe_limit = max(1, min(limit, 200))
@@ -1390,7 +1535,7 @@ class ScreenMonitoringService:
             counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
         return {
             "status": "timeline_ready",
-            "stage": "V4.5-P18",
+            "stage": "V4.5-P19",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "item_count": len(ordered),
             "counts_by_type": counts_by_type,
@@ -1452,7 +1597,7 @@ class ScreenMonitoringService:
                     "acknowledged",
                     report_hash,
                     str(report.get("status") or "unknown"),
-                    str(report.get("stage") or "V4.5-P18"),
+                    str(report.get("stage") or "V4.5-P19"),
                     json.dumps(summary, ensure_ascii=False, default=str),
                     json.dumps(safety_matrix, ensure_ascii=False, default=str),
                     json.dumps(report, ensure_ascii=False, default=str),
@@ -2569,6 +2714,23 @@ class ScreenMonitoringService:
             "status": "passed" if passed else "failed",
             "reason": reason,
             "details": details or {},
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def _screen_digest_release_gate(
+        self,
+        name: str,
+        passed: bool,
+        reason: str,
+        *,
+        status_if_false: str = "blocked",
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else status_if_false,
+            "reason": reason,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,

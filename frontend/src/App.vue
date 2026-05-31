@@ -243,6 +243,9 @@
           <button data-testid="screen-digest-migration-spec-approval-button" @click="approveScreenDigestMigrationSpec" :disabled="screenMonitoringLoading">
             确认草案已审阅
           </button>
+          <button data-testid="screen-digest-migration-release-button" @click="refreshScreenDigestReleaseReadiness" :disabled="screenMonitoringLoading">
+            发布就绪汇总
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -266,6 +269,7 @@
           <span>Migration {{ screenDigestMigrationChecklist?.status ?? "未生成" }}</span>
           <span>Spec {{ screenDigestMigrationSpecVerification?.status ?? "未校验" }}</span>
           <span>Spec审批 {{ screenDigestMigrationSpecApprovals.length }}</span>
+          <span>Release {{ screenDigestReleaseReadiness?.status ?? "未生成" }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -388,6 +392,11 @@
             <strong>Spec Approval History / {{ screenDigestMigrationSpecApprovals.length }}</strong>
             <span>{{ screenDigestMigrationSpecApprovals[0].approved_by }} / {{ screenDigestMigrationSpecApprovals[0].verification_status }}</span>
             <small>{{ screenDigestMigrationSpecApprovals[0].spec_hash.slice(0, 16) }} / {{ screenDigestMigrationSpecApprovals[0].approval_effect }}</small>
+          </div>
+          <div v-if="screenDigestReleaseReadiness" class="score-item">
+            <strong>Release Readiness / {{ screenDigestReleaseReadiness.status }}</strong>
+            <span>{{ screenDigestReleaseReadiness.decision.go_no_go }} / {{ screenDigestReleaseReadiness.allowed_output }}</span>
+            <small>审批 {{ screenDigestReleaseReadiness.evidence.approval_count }} / gate {{ screenDigestReleaseReadiness.gates.length }} / 迁移 {{ screenDigestReleaseReadiness.decision.migration_allowed_now ? "允许" : "禁止" }}</small>
           </div>
           <div
             v-for="item in screenReadinessAudit?.safety_matrix.slice(0, 6) ?? []"
@@ -2607,6 +2616,77 @@ type ScreenDigestMigrationSpecApproval = {
   };
 };
 
+type ScreenDigestReleaseReadiness = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  decision: {
+    go_no_go: string;
+    migration_allowed_now: boolean;
+    requires_human_release_approval: boolean;
+    reason: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  evidence: {
+    checklist_status: string;
+    verification_status: string;
+    verification_failed_count: number;
+    approval_count: number;
+    latest_approval_status: string | null;
+    latest_approval_event_id: number | null;
+    spec_hash: string;
+    approved_spec_hash: string | null;
+    allowed_output: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  gates: Array<{
+    name: string;
+    status: string;
+    reason: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  blocked_gates: Array<{
+    name: string;
+    status: string;
+    reason: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  review_required_gates: Array<{
+    name: string;
+    status: string;
+    reason: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  required_before_actual_migration: string[];
+  safety_summary: ScreenDigestMigrationSpecApproval["safety_summary"] & {
+    writes_database_now: boolean;
+    writes_digest_history_table_now: boolean;
+    writes_file: boolean;
+    download_created: boolean;
+    executes_commands: boolean;
+    writes_env: boolean;
+    real_screen_capture: boolean;
+    pixel_data_stored: boolean;
+    credential_access: boolean;
+  };
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2856,6 +2936,7 @@ const screenDigestMigrationChecklist = ref<ScreenDigestMigrationChecklist | null
 const screenDigestMigrationSpecVerification = ref<ScreenDigestMigrationSpecVerification | null>(null);
 const screenDigestMigrationSpecApprovalResult = ref<ScreenDigestMigrationSpecApproval | null>(null);
 const screenDigestMigrationSpecApprovals = ref<ScreenDigestMigrationSpecApproval[]>([]);
+const screenDigestReleaseReadiness = ref<ScreenDigestReleaseReadiness | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3813,7 +3894,8 @@ async function loadScreenMonitoring() {
       readinessHealthData,
       digestHistoryProposalData,
       digestMigrationChecklistData,
-      digestMigrationSpecApprovalsData
+      digestMigrationSpecApprovalsData,
+      digestReleaseReadinessData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3833,7 +3915,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenReadinessHealth>("/api/screen-monitoring/readiness-health?limit=40"),
       fetchJson<ScreenDigestHistoryProposal>("/api/screen-monitoring/readiness-health/history-proposal?limit=40"),
       fetchJson<ScreenDigestMigrationChecklist>("/api/screen-monitoring/readiness-health/history-migration-checklist?limit=40"),
-      fetchJson<ScreenDigestMigrationSpecApproval[]>("/api/screen-monitoring/readiness-health/history-migration-spec/approvals?limit=10")
+      fetchJson<ScreenDigestMigrationSpecApproval[]>("/api/screen-monitoring/readiness-health/history-migration-spec/approvals?limit=10"),
+      fetchJson<ScreenDigestReleaseReadiness>("/api/screen-monitoring/readiness-health/history-migration-release-readiness?limit=40")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3854,6 +3937,7 @@ async function loadScreenMonitoring() {
     screenDigestHistoryProposal.value = digestHistoryProposalData;
     screenDigestMigrationChecklist.value = digestMigrationChecklistData;
     screenDigestMigrationSpecApprovals.value = digestMigrationSpecApprovalsData;
+    screenDigestReleaseReadiness.value = digestReleaseReadinessData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3874,6 +3958,7 @@ async function loadScreenMonitoring() {
     screenDigestHistoryProposal.value = null;
     screenDigestMigrationChecklist.value = null;
     screenDigestMigrationSpecApprovals.value = [];
+    screenDigestReleaseReadiness.value = null;
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -4053,8 +4138,25 @@ async function approveScreenDigestMigrationSpec() {
     screenDigestMigrationSpecApprovals.value = await fetchJson<ScreenDigestMigrationSpecApproval[]>(
       "/api/screen-monitoring/readiness-health/history-migration-spec/approvals?limit=10"
     );
+    screenDigestReleaseReadiness.value = await fetchJson<ScreenDigestReleaseReadiness>(
+      "/api/screen-monitoring/readiness-health/history-migration-release-readiness?limit=40"
+    );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Digest history migration spec 审批记录失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function refreshScreenDigestReleaseReadiness() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenDigestReleaseReadiness.value = await fetchJson<ScreenDigestReleaseReadiness>(
+      "/api/screen-monitoring/readiness-health/history-migration-release-readiness?limit=40"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Digest history release readiness 生成失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

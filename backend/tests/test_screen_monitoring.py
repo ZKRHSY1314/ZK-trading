@@ -17,7 +17,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     _reset_screen_monitoring(test_db)
     capabilities = ScreenMonitoringService().capabilities()
 
-    assert capabilities["stage"] == "V4.5-P18"
+    assert capabilities["stage"] == "V4.5-P19"
     assert capabilities["capture_provider"] == "disabled"
     assert capabilities["provider_status"] == "disabled"
     assert capabilities["provider_configured"] is False
@@ -46,6 +46,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     assert "screen_readiness_digest_history_migration_checklist" in capabilities["allowed_modes"]
     assert "screen_readiness_digest_history_migration_spec_verifier" in capabilities["allowed_modes"]
     assert "screen_readiness_digest_history_migration_spec_approval" in capabilities["allowed_modes"]
+    assert "screen_readiness_digest_history_release_readiness" in capabilities["allowed_modes"]
 
 
 def test_screen_observation_creates_session_and_summary(test_db):
@@ -156,7 +157,7 @@ def test_screen_provider_readiness_runbook_is_read_only_and_blocks_real_adapters
     readiness = ScreenMonitoringService().provider_readiness_runbook()
     checks = {item["name"]: item for item in readiness["checks"]}
 
-    assert readiness["stage"] == "V4.5-P18"
+    assert readiness["stage"] == "V4.5-P19"
     assert readiness["status"] == "disabled_needs_provider_selection"
     assert readiness["active_provider"] == "disabled"
     assert checks["provider_selected"]["status"] == "blocked"
@@ -272,7 +273,7 @@ def test_screen_readiness_audit_report_consolidates_safe_evidence(test_db):
     report = service.screen_readiness_audit_report()
     safety = {item["name"]: item for item in report["safety_matrix"]}
 
-    assert report["stage"] == "V4.5-P18"
+    assert report["stage"] == "V4.5-P19"
     assert report["status"] == "review_required"
     assert report["summary"]["allowed_output"] == "review_only_screen_readiness_report"
     assert report["summary"]["config_proposal_count"] == 1
@@ -306,7 +307,7 @@ def test_screen_readiness_audit_acknowledgement_is_audit_only(test_db):
     listed = service.list_screen_readiness_audit_acknowledgements()
 
     assert ack["status"] == "acknowledged"
-    assert ack["report_stage"] == "V4.5-P18"
+    assert ack["report_stage"] == "V4.5-P19"
     assert len(ack["report_hash"]) == 64
     assert ack["acknowledged_by"] == "tester"
     assert ack["acknowledgement_note"] == "reviewed readiness evidence"
@@ -355,7 +356,7 @@ def test_screen_readiness_timeline_is_read_only_and_chronological(test_db):
     event_ts = [item["event_ts"] for item in timeline["items"]]
 
     assert timeline["status"] == "timeline_ready"
-    assert timeline["stage"] == "V4.5-P18"
+    assert timeline["stage"] == "V4.5-P19"
     assert timeline["allowed_output"] == "review_only_screen_readiness_timeline"
     assert "readiness_audit_report" in item_types
     assert "screen_observation" in item_types
@@ -388,7 +389,7 @@ def test_screen_readiness_evidence_export_is_json_only_bundle(test_db):
 
     assert bundle["schema_version"] == "screen_readiness_evidence_export.v1"
     assert bundle["status"] == "export_ready"
-    assert bundle["stage"] == "V4.5-P18"
+    assert bundle["stage"] == "V4.5-P19"
     assert len(bundle["bundle_hash"]) == 64
     assert bundle["export_metadata"]["format"] == "json"
     assert bundle["export_metadata"]["delivery"] == "api_response_only"
@@ -426,7 +427,7 @@ def test_screen_readiness_evidence_verifier_checks_bundle_safety(test_db):
 
     assert verification["schema_version"] == "screen_readiness_evidence_verifier.v1"
     assert verification["status"] == "verification_passed"
-    assert verification["stage"] == "V4.5-P18"
+    assert verification["stage"] == "V4.5-P19"
     assert len(verification["export_bundle_hash"]) == 64
     assert verification["check_count"] == verification["passed_count"]
     assert verification["failed_count"] == 0
@@ -456,7 +457,7 @@ def test_screen_readiness_evidence_comparison_is_read_only_and_stable(test_db):
 
     assert comparison["schema_version"] == "screen_readiness_evidence_comparison.v1"
     assert comparison["status"] == "comparison_stable"
-    assert comparison["stage"] == "V4.5-P18"
+    assert comparison["stage"] == "V4.5-P19"
     assert comparison["baseline"]["export_bundle_hash"] == comparison["candidate"]["export_bundle_hash"]
     assert comparison["baseline"]["failed_count"] == 0
     assert comparison["candidate"]["failed_count"] == 0
@@ -489,13 +490,13 @@ def test_screen_readiness_health_digest_summarizes_read_only_evidence(test_db):
 
     assert digest["schema_version"] == "screen_readiness_health_digest.v1"
     assert digest["status"] == "health_digest_clean"
-    assert digest["stage"] == "V4.5-P18"
+    assert digest["stage"] == "V4.5-P19"
     assert digest["summary"]["verification_status"] == "verification_passed"
     assert digest["summary"]["comparison_status"] == "comparison_stable"
     assert digest["summary"]["acknowledgement_count"] == 1
     assert len(digest["summary"]["export_bundle_hash"]) == 64
     assert modules["evidence_verifier"]["live_trading_enabled"] is False
-    assert modules["evidence_comparison"]["stage"] == "V4.5-P18"
+    assert modules["evidence_comparison"]["stage"] == "V4.5-P19"
     assert flags["live_trading_disabled"]["status"] == "passed"
     assert flags["verification_passed"]["status"] == "passed"
     assert flags["comparison_stable"]["status"] == "passed"
@@ -527,7 +528,7 @@ def test_screen_readiness_digest_history_proposal_is_review_only(test_db):
 
     assert proposal_doc["schema_version"] == "screen_readiness_digest_history_proposal.v1"
     assert proposal_doc["status"] == "proposal_ready"
-    assert proposal_doc["stage"] == "V4.5-P18"
+    assert proposal_doc["stage"] == "V4.5-P19"
     assert proposal_doc["proposal"]["default_state"] == "not_persisted"
     assert proposal_doc["proposal"]["apply_automatically"] is False
     assert proposal_doc["proposal"]["writes_database_now"] is False
@@ -561,7 +562,7 @@ def test_screen_readiness_digest_history_migration_checklist_is_review_only(test
 
     assert checklist["schema_version"] == "screen_readiness_digest_history_migration_checklist.v1"
     assert checklist["status"] == "migration_review_ready"
-    assert checklist["stage"] == "V4.5-P18"
+    assert checklist["stage"] == "V4.5-P19"
     assert checklist["migration_plan"]["target_table"] == "screen_readiness_digest_history"
     assert checklist["migration_plan"]["default_state"] == "not_applied"
     assert checklist["migration_plan"]["create_table_now"] is False
@@ -606,7 +607,7 @@ def test_screen_readiness_digest_history_migration_spec_verifier_is_dry_run(test
 
     assert verification["schema_version"] == "screen_readiness_digest_history_migration_spec_verifier.v1"
     assert verification["status"] == "spec_verification_passed"
-    assert verification["stage"] == "V4.5-P18"
+    assert verification["stage"] == "V4.5-P19"
     assert len(verification["spec_hash"]) == 64
     assert verification["target_table"] == "screen_readiness_digest_history"
     assert verification["failed_count"] == 0
@@ -664,7 +665,7 @@ def test_screen_readiness_digest_history_migration_spec_approval_is_metadata_onl
 
     assert approval["schema_version"] == "screen_readiness_digest_history_migration_spec_approval.v1"
     assert approval["status"] == "approval_metadata_recorded"
-    assert approval["stage"] == "V4.5-P18"
+    assert approval["stage"] == "V4.5-P19"
     assert approval["event_id"] is not None
     assert approval["approved_by"] == "tester"
     assert approval["approval_effect"] == "audit_metadata_only"
@@ -710,6 +711,81 @@ def test_screen_readiness_digest_history_migration_spec_approval_blocks_failed_s
     assert approval["migration_allowed_now"] is False
     assert approvals == []
     assert approval["live_trading_enabled"] is False
+
+
+def test_screen_readiness_digest_history_release_readiness_requires_approval(test_db):
+    _reset_screen_monitoring(test_db)
+    service = ScreenMonitoringService()
+
+    readiness = service.screen_readiness_digest_history_release_readiness(limit=20)
+    gates = {item["name"]: item for item in readiness["gates"]}
+
+    assert readiness["schema_version"] == "screen_readiness_digest_history_release_readiness.v1"
+    assert readiness["status"] == "release_review_required"
+    assert readiness["stage"] == "V4.5-P19"
+    assert readiness["decision"]["go_no_go"] == "no_go"
+    assert readiness["decision"]["migration_allowed_now"] is False
+    assert readiness["evidence"]["approval_count"] == 0
+    assert readiness["evidence"]["allowed_output"] == "review_only_screen_readiness_digest_history_release_readiness"
+    assert gates["migration_checklist_ready"]["status"] == "passed"
+    assert gates["migration_spec_verified"]["status"] == "passed"
+    assert gates["operator_approval_recorded"]["status"] == "review_required"
+    assert gates["latest_approval_matches_spec"]["status"] == "review_required"
+    assert readiness["safety_summary"]["executes_sql"] is False
+    assert readiness["safety_summary"]["runs_migration_now"] is False
+    assert readiness["safety_summary"]["creates_table_now"] is False
+    assert readiness["safety_summary"]["writes_migration_file_now"] is False
+    assert readiness["safety_summary"]["writes_digest_history_table_now"] is False
+    assert readiness["safety_summary"]["broker_action"] is False
+    assert readiness["safety_summary"]["order_action"] is False
+    assert readiness["safety_summary"]["credential_access"] is False
+    assert readiness["allowed_output"] == "review_only_screen_readiness_digest_history_release_readiness"
+    assert "execute_sql" in readiness["forbidden_actions"]
+    assert "run_migration_now" in readiness["forbidden_actions"]
+    assert readiness["review_only"] is True
+    assert readiness["simulation_only"] is True
+    assert readiness["live_trading_enabled"] is False
+
+
+def test_screen_readiness_digest_history_release_readiness_summarizes_approved_spec(test_db):
+    _reset_screen_monitoring(test_db)
+    service = ScreenMonitoringService()
+    approval = service.approve_screen_readiness_digest_history_migration_spec(
+        approved_by="tester",
+        note="reviewed release readiness source",
+        limit=20,
+    )
+
+    readiness = service.screen_readiness_digest_history_release_readiness(limit=20)
+    gates = {item["name"]: item for item in readiness["gates"]}
+
+    assert readiness["status"] == "release_evidence_ready"
+    assert readiness["stage"] == "V4.5-P19"
+    assert readiness["decision"]["go_no_go"] == "go_for_manual_release_review"
+    assert readiness["decision"]["requires_human_release_approval"] is True
+    assert readiness["decision"]["migration_allowed_now"] is False
+    assert readiness["evidence"]["approval_count"] == 1
+    assert readiness["evidence"]["latest_approval_event_id"] == approval["event_id"]
+    assert readiness["evidence"]["approved_spec_hash"] == readiness["evidence"]["spec_hash"]
+    assert readiness["evidence"]["latest_approval_status"] == "approval_metadata_recorded"
+    assert gates["migration_checklist_ready"]["status"] == "passed"
+    assert gates["migration_spec_verified"]["status"] == "passed"
+    assert gates["operator_approval_recorded"]["status"] == "passed"
+    assert gates["latest_approval_matches_spec"]["status"] == "passed"
+    assert gates["no_migration_execution_enabled"]["status"] == "passed"
+    assert readiness["required_before_actual_migration"] == [
+        "separate_reviewed_migration_file",
+        "rollback_plan",
+        "migration_tests",
+        "api_smoke_tests",
+        "database_backup_plan",
+        "explicit_operator_release_approval",
+    ]
+    assert readiness["safety_summary"]["executes_sql"] is False
+    assert readiness["safety_summary"]["runs_migration_now"] is False
+    assert readiness["safety_summary"]["creates_table_now"] is False
+    assert readiness["safety_summary"]["live_trading_enabled"] is False
+    assert readiness["live_trading_enabled"] is False
 
 
 def test_local_safe_preflight_requires_explicit_config(test_db):
@@ -898,6 +974,9 @@ def test_screen_monitoring_api_smoke(client, test_db):
     readiness_history_spec_approvals_empty_resp = client.get(
         "/api/screen-monitoring/readiness-health/history-migration-spec/approvals?limit=5"
     )
+    readiness_history_release_empty_resp = client.get(
+        "/api/screen-monitoring/readiness-health/history-migration-release-readiness?limit=5"
+    )
     empty_latest_resp = client.get("/api/screen-monitoring/sessions/latest")
     session_resp = client.post(
         "/api/screen-monitoring/sessions",
@@ -936,6 +1015,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert readiness_history_migration_empty_resp.status_code == 200
     assert readiness_history_spec_empty_resp.status_code == 200
     assert readiness_history_spec_approvals_empty_resp.status_code == 200
+    assert readiness_history_release_empty_resp.status_code == 200
     assert empty_latest_resp.status_code == 200
     assert session_resp.status_code == 200
     assert observation_resp.status_code == 200
@@ -949,33 +1029,37 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert latest_resp.status_code == 200
     assert capabilities_resp.json()["live_trading_enabled"] is False
     assert capabilities_resp.json()["provider_configured"] is False
-    assert provider_readiness_resp.json()["stage"] == "V4.5-P18"
+    assert provider_readiness_resp.json()["stage"] == "V4.5-P19"
     assert provider_readiness_resp.json()["live_trading_enabled"] is False
     assert "ocr_execution" in provider_readiness_resp.json()["runbook"]["blocked_actions"]
-    assert readiness_audit_empty_resp.json()["stage"] == "V4.5-P18"
+    assert readiness_audit_empty_resp.json()["stage"] == "V4.5-P19"
     assert readiness_audit_empty_resp.json()["summary"]["allowed_output"] == "review_only_screen_readiness_report"
     assert readiness_ack_empty_resp.json() == []
-    assert readiness_timeline_empty_resp.json()["stage"] == "V4.5-P18"
+    assert readiness_timeline_empty_resp.json()["stage"] == "V4.5-P19"
     assert readiness_timeline_empty_resp.json()["allowed_output"] == "review_only_screen_readiness_timeline"
-    assert readiness_export_empty_resp.json()["stage"] == "V4.5-P18"
+    assert readiness_export_empty_resp.json()["stage"] == "V4.5-P19"
     assert readiness_export_empty_resp.json()["export_metadata"]["writes_file"] is False
     assert readiness_export_empty_resp.json()["safety"]["ocr_executed"] is False
-    assert readiness_verify_empty_resp.json()["stage"] == "V4.5-P18"
+    assert readiness_verify_empty_resp.json()["stage"] == "V4.5-P19"
     assert readiness_verify_empty_resp.json()["status"] == "verification_passed"
-    assert readiness_compare_empty_resp.json()["stage"] == "V4.5-P18"
+    assert readiness_compare_empty_resp.json()["stage"] == "V4.5-P19"
     assert readiness_compare_empty_resp.json()["status"] == "comparison_stable"
-    assert readiness_health_empty_resp.json()["stage"] == "V4.5-P18"
+    assert readiness_health_empty_resp.json()["stage"] == "V4.5-P19"
     assert readiness_health_empty_resp.json()["allowed_output"] == "review_only_screen_readiness_health_digest"
-    assert readiness_history_proposal_empty_resp.json()["stage"] == "V4.5-P18"
+    assert readiness_history_proposal_empty_resp.json()["stage"] == "V4.5-P19"
     assert readiness_history_proposal_empty_resp.json()["proposal"]["writes_database_now"] is False
-    assert readiness_history_migration_empty_resp.json()["stage"] == "V4.5-P18"
+    assert readiness_history_migration_empty_resp.json()["stage"] == "V4.5-P19"
     assert readiness_history_migration_empty_resp.json()["migration_plan"]["create_table_now"] is False
     assert readiness_history_migration_empty_resp.json()["summary"]["migration_allowed_now"] is False
-    assert readiness_history_spec_empty_resp.json()["stage"] == "V4.5-P18"
+    assert readiness_history_spec_empty_resp.json()["stage"] == "V4.5-P19"
     assert readiness_history_spec_empty_resp.json()["status"] == "spec_verification_passed"
     assert readiness_history_spec_empty_resp.json()["safety_summary"]["executes_sql"] is False
     assert readiness_history_spec_empty_resp.json()["migration_allowed_now"] is False
     assert readiness_history_spec_approvals_empty_resp.json() == []
+    assert readiness_history_release_empty_resp.json()["stage"] == "V4.5-P19"
+    assert readiness_history_release_empty_resp.json()["status"] == "release_review_required"
+    assert readiness_history_release_empty_resp.json()["decision"]["migration_allowed_now"] is False
+    assert readiness_history_release_empty_resp.json()["safety_summary"]["executes_sql"] is False
     config_proposal_resp = client.post(
         "/api/screen-monitoring/provider-config-proposals",
         json={"target_window_title": "Untitled - Notepad"},
@@ -1023,6 +1107,9 @@ def test_screen_monitoring_api_smoke(client, test_db):
     readiness_history_spec_approvals_resp = client.get(
         "/api/screen-monitoring/readiness-health/history-migration-spec/approvals?limit=5"
     )
+    readiness_history_release_resp = client.get(
+        "/api/screen-monitoring/readiness-health/history-migration-release-readiness?limit=20"
+    )
     assert config_approve_resp.status_code == 200
     assert config_reject_resp.status_code == 200
     assert provider_replay_resp.status_code == 200
@@ -1040,6 +1127,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert readiness_history_spec_resp.status_code == 200
     assert readiness_history_spec_approval_resp.status_code == 200
     assert readiness_history_spec_approvals_resp.status_code == 200
+    assert readiness_history_release_resp.status_code == 200
     assert config_approve_resp.json()["status"] == "accepted"
     assert config_reject_resp.json()["status"] == "rejected"
     assert config_reject_resp.json()["live_trading_enabled"] is False
@@ -1107,6 +1195,13 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert readiness_history_spec_approval_resp.json()["migration_allowed_now"] is False
     assert readiness_history_spec_approval_resp.json()["live_trading_enabled"] is False
     assert readiness_history_spec_approvals_resp.json()[0]["event_id"] == readiness_history_spec_approval_resp.json()["event_id"]
+    assert readiness_history_release_resp.json()["schema_version"] == "screen_readiness_digest_history_release_readiness.v1"
+    assert readiness_history_release_resp.json()["status"] == "release_evidence_ready"
+    assert readiness_history_release_resp.json()["decision"]["go_no_go"] == "go_for_manual_release_review"
+    assert readiness_history_release_resp.json()["evidence"]["approval_count"] >= 1
+    assert readiness_history_release_resp.json()["safety_summary"]["runs_migration_now"] is False
+    assert readiness_history_release_resp.json()["safety_summary"]["creates_table_now"] is False
+    assert readiness_history_release_resp.json()["live_trading_enabled"] is False
     assert any(item["provider"] == "fixture" for item in providers_resp.json())
     assert empty_latest_resp.json()["status"] == "empty"
     assert session_resp.json()["status"] == "running"
