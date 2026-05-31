@@ -139,6 +139,9 @@
 - [ ] V4.5-P10 exposes `/api/screen-monitoring/readiness-timeline` as a chronological read-only evidence timeline.
 - [ ] V4.5-P10 timeline combines observations, artifact reviews, provider config proposals, provider replay runs, current audit report, and audit acknowledgements.
 - [ ] V4.5-P10 dashboard shows timeline items and safety flags without adding any capture, OCR, broker, order, credential, screen-click, or live-trading controls.
+- [ ] V4.5-P11 exposes `/api/screen-monitoring/readiness-export` as a JSON evidence bundle for manual archive/review.
+- [ ] V4.5-P11 export includes capabilities, provider readiness, current audit report, acknowledgement history, timeline, bundle hash, and safety metadata.
+- [ ] V4.5-P11 dashboard shows export status/hash and confirms API response only without writing files, creating downloads, enabling OCR/capture, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

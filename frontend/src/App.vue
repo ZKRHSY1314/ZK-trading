@@ -219,6 +219,9 @@
           <button data-testid="screen-readiness-timeline-button" @click="refreshScreenReadinessTimeline" :disabled="screenMonitoringLoading">
             刷新 Timeline
           </button>
+          <button data-testid="screen-readiness-export-button" @click="refreshScreenReadinessExport" :disabled="screenMonitoringLoading">
+            生成 Evidence Export
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -234,6 +237,7 @@
           <span>Audit {{ screenReadinessAudit?.status ?? "未加载" }}</span>
           <span>确认 {{ screenReadinessAuditAcks.length }}</span>
           <span>Timeline {{ screenReadinessTimeline?.item_count ?? 0 }}</span>
+          <span>Export {{ screenReadinessExport?.status ?? "未生成" }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -311,6 +315,11 @@
             <strong>Audit Ack / {{ screenReadinessAuditAckResult.status }}</strong>
             <span>{{ screenReadinessAuditAckResult.acknowledged_by }} / {{ screenReadinessAuditAckResult.acknowledgement_effect }}</span>
             <small>写 env {{ screenReadinessAuditAckResult.writes_env ? "是" : "否" }} / OCR {{ screenReadinessAuditAckResult.ocr_executed ? "执行" : "关闭" }} / live trading disabled</small>
+          </div>
+          <div v-if="screenReadinessExport" class="score-item">
+            <strong>Evidence Export / {{ screenReadinessExport.status }}</strong>
+            <span>{{ screenReadinessExport.export_metadata.allowed_output }} / {{ screenReadinessExport.export_metadata.delivery }}</span>
+            <small>{{ screenReadinessExport.bundle_hash.slice(0, 16) }} / 写文件 {{ screenReadinessExport.safety.writes_file ? "是" : "否" }} / OCR {{ screenReadinessExport.safety.ocr_executed ? "执行" : "关闭" }}</small>
           </div>
           <div
             v-for="item in screenReadinessAudit?.safety_matrix.slice(0, 6) ?? []"
@@ -2125,6 +2134,51 @@ type ScreenReadinessTimeline = {
   live_trading_enabled: boolean;
 };
 
+type ScreenReadinessEvidenceExport = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  bundle_hash: string;
+  bundle_scope: string[];
+  capabilities: ScreenMonitoringCapabilities;
+  provider_readiness: ScreenProviderReadiness;
+  readiness_audit_report: ScreenReadinessAuditReport;
+  readiness_audit_acknowledgements: ScreenReadinessAuditAck[];
+  readiness_timeline: ScreenReadinessTimeline;
+  export_metadata: {
+    format: string;
+    delivery: string;
+    writes_file: boolean;
+    download_created: boolean;
+    operator_archive_ready: boolean;
+    allowed_output: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  safety: {
+    writes_env: boolean;
+    executes_commands: boolean;
+    writes_file: boolean;
+    download_created: boolean;
+    real_screen_capture: boolean;
+    pixel_data_stored: boolean;
+    ocr_executed: boolean;
+    broker_action: boolean;
+    order_action: boolean;
+    credential_access: boolean;
+    live_trading_enabled: boolean;
+    allowed_output: string;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2365,6 +2419,7 @@ const screenReadinessAudit = ref<ScreenReadinessAuditReport | null>(null);
 const screenReadinessAuditAcks = ref<ScreenReadinessAuditAck[]>([]);
 const screenReadinessAuditAckResult = ref<ScreenReadinessAuditAck | null>(null);
 const screenReadinessTimeline = ref<ScreenReadinessTimeline | null>(null);
+const screenReadinessExport = ref<ScreenReadinessEvidenceExport | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3315,7 +3370,8 @@ async function loadScreenMonitoring() {
       providerReplayRunsData,
       readinessAuditData,
       readinessAuditAcksData,
-      readinessTimelineData
+      readinessTimelineData,
+      readinessExportData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3328,7 +3384,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenProviderReplayRun[]>("/api/screen-monitoring/provider-replay?limit=20"),
       fetchJson<ScreenReadinessAuditReport>("/api/screen-monitoring/readiness-audit?limit=20"),
       fetchJson<ScreenReadinessAuditAck[]>("/api/screen-monitoring/readiness-audit/acknowledgements?limit=20"),
-      fetchJson<ScreenReadinessTimeline>("/api/screen-monitoring/readiness-timeline?limit=40")
+      fetchJson<ScreenReadinessTimeline>("/api/screen-monitoring/readiness-timeline?limit=40"),
+      fetchJson<ScreenReadinessEvidenceExport>("/api/screen-monitoring/readiness-export?limit=40")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3342,6 +3399,7 @@ async function loadScreenMonitoring() {
     screenReadinessAudit.value = readinessAuditData;
     screenReadinessAuditAcks.value = readinessAuditAcksData;
     screenReadinessTimeline.value = readinessTimelineData;
+    screenReadinessExport.value = readinessExportData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3355,6 +3413,7 @@ async function loadScreenMonitoring() {
     screenReadinessAudit.value = null;
     screenReadinessAuditAcks.value = [];
     screenReadinessTimeline.value = null;
+    screenReadinessExport.value = null;
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -3407,6 +3466,20 @@ async function refreshScreenReadinessTimeline() {
     );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Readiness timeline 刷新失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function refreshScreenReadinessExport() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenReadinessExport.value = await fetchJson<ScreenReadinessEvidenceExport>(
+      "/api/screen-monitoring/readiness-export?limit=40"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Readiness evidence export 生成失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

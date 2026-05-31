@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P10",
+            "stage": "V4.5-P11",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -56,6 +56,7 @@ class ScreenMonitoringService:
                 "screen_readiness_audit_report",
                 "screen_readiness_audit_acknowledgement",
                 "screen_readiness_timeline",
+                "screen_readiness_evidence_export",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -140,7 +141,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P10",
+            "stage": "V4.5-P11",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -243,7 +244,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P10",
+            "stage": "V4.5-P11",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -289,6 +290,63 @@ class ScreenMonitoringService:
             "simulation_only": True,
             "live_trading_enabled": False,
         }
+
+    def screen_readiness_evidence_export(self, limit: int = 50) -> dict[str, Any]:
+        safe_limit = max(1, min(limit, 200))
+        capabilities = self.capabilities()
+        readiness = self.provider_readiness_runbook()
+        report = self.screen_readiness_audit_report(limit=min(safe_limit, 100))
+        acknowledgements = self.list_screen_readiness_audit_acknowledgements(limit=safe_limit)
+        timeline = self.screen_readiness_timeline(limit=safe_limit)
+        evidence_bundle = {
+            "schema_version": "screen_readiness_evidence_export.v1",
+            "status": "export_ready",
+            "stage": "V4.5-P11",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "bundle_scope": [
+                "capabilities",
+                "provider_readiness",
+                "readiness_audit_report",
+                "readiness_audit_acknowledgements",
+                "readiness_timeline",
+            ],
+            "capabilities": capabilities,
+            "provider_readiness": readiness,
+            "readiness_audit_report": report,
+            "readiness_audit_acknowledgements": acknowledgements,
+            "readiness_timeline": timeline,
+            "export_metadata": {
+                "format": "json",
+                "delivery": "api_response_only",
+                "writes_file": False,
+                "download_created": False,
+                "operator_archive_ready": True,
+                "allowed_output": "review_only_screen_readiness_evidence_export",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            },
+            "safety": self._screen_evidence_export_safety(capabilities, readiness, report, acknowledgements, timeline),
+            "forbidden_actions": [
+                "write_env",
+                "execute_command",
+                "screen_click",
+                "keyboard_type",
+                "inspect_window",
+                "real_pixel_capture",
+                "pixel_storage",
+                "ocr_execution",
+                "broker_action",
+                "order_action",
+                "credential_access",
+                "live_auto_trading",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+        evidence_bundle["bundle_hash"] = self._screen_evidence_export_hash(evidence_bundle)
+        return evidence_bundle
 
     def screen_readiness_timeline(self, limit: int = 50) -> dict[str, Any]:
         safe_limit = max(1, min(limit, 200))
@@ -393,7 +451,7 @@ class ScreenMonitoringService:
             counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
         return {
             "status": "timeline_ready",
-            "stage": "V4.5-P10",
+            "stage": "V4.5-P11",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "item_count": len(ordered),
             "counts_by_type": counts_by_type,
@@ -455,7 +513,7 @@ class ScreenMonitoringService:
                     "acknowledged",
                     report_hash,
                     str(report.get("status") or "unknown"),
-                    str(report.get("stage") or "V4.5-P10"),
+                    str(report.get("stage") or "V4.5-P11"),
                     json.dumps(summary, ensure_ascii=False, default=str),
                     json.dumps(safety_matrix, ensure_ascii=False, default=str),
                     json.dumps(report, ensure_ascii=False, default=str),
@@ -1382,6 +1440,52 @@ class ScreenMonitoringService:
         }
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _screen_evidence_export_hash(self, bundle: dict[str, Any]) -> str:
+        payload = self._without_evidence_export_runtime_fields(bundle)
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _without_evidence_export_runtime_fields(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: self._without_evidence_export_runtime_fields(item)
+                for key, item in value.items()
+                if key not in {"generated_at", "bundle_hash"}
+            }
+        if isinstance(value, list):
+            return [self._without_evidence_export_runtime_fields(item) for item in value]
+        return value
+
+    def _screen_evidence_export_safety(
+        self,
+        capabilities: dict[str, Any],
+        readiness: dict[str, Any],
+        report: dict[str, Any],
+        acknowledgements: list[dict[str, Any]],
+        timeline: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "writes_env": False,
+            "executes_commands": False,
+            "writes_file": False,
+            "download_created": False,
+            "real_screen_capture": False,
+            "pixel_data_stored": False,
+            "ocr_executed": False,
+            "broker_action": False,
+            "order_action": False,
+            "credential_access": False,
+            "live_trading_enabled": False,
+            "capabilities_live_disabled": capabilities.get("live_trading_enabled") is False,
+            "readiness_live_disabled": readiness.get("live_trading_enabled") is False,
+            "report_live_disabled": report.get("live_trading_enabled") is False,
+            "acknowledgements_live_disabled": all(item.get("live_trading_enabled") is False for item in acknowledgements),
+            "timeline_live_disabled": timeline.get("live_trading_enabled") is False,
+            "allowed_output": "review_only_screen_readiness_evidence_export",
+            "review_only": True,
+            "simulation_only": True,
+        }
 
     def _timeline_item(
         self,
