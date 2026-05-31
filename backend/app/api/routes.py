@@ -451,6 +451,19 @@ def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest_
     )
 
 
+@router.get("/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-release-readiness")
+def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest_history_migration_release_readiness(
+    limit: int = 50,
+    max_age_days: int = 7,
+    repeat_checks: int = 2,
+) -> dict:
+    return TradeExecutionGatewayService().audit_ledger_migration_manual_release_health_digest_history_release_readiness(
+        limit=limit,
+        max_age_days=max_age_days,
+        repeat_checks=repeat_checks,
+    )
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()
