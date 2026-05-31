@@ -145,6 +145,9 @@
 - [ ] V4.5-P12 exposes `/api/screen-monitoring/readiness-export/verify` as a read-only verifier for current evidence bundles.
 - [ ] V4.5-P12 verifier checks schema, recomputable bundle hash, required evidence sections, safety flags, forbidden actions, and nested `live_trading_enabled=false`.
 - [ ] V4.5-P12 dashboard shows verifier pass/fail counts without writing files, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
+- [ ] V4.5-P13 exposes `/api/screen-monitoring/readiness-export/compare` as a read-only evidence stability comparison.
+- [ ] V4.5-P13 comparison performs two API-memory verifier reads, compares stable fields, and reports differences without persisting snapshots.
+- [ ] V4.5-P13 dashboard shows comparison stability/difference counts without writing files, creating downloads, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

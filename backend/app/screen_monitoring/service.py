@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P12",
+            "stage": "V4.5-P13",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -58,6 +58,7 @@ class ScreenMonitoringService:
                 "screen_readiness_timeline",
                 "screen_readiness_evidence_export",
                 "screen_readiness_evidence_verifier",
+                "screen_readiness_evidence_comparison",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -142,7 +143,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P12",
+            "stage": "V4.5-P13",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -245,7 +246,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P12",
+            "stage": "V4.5-P13",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -302,7 +303,7 @@ class ScreenMonitoringService:
         evidence_bundle = {
             "schema_version": "screen_readiness_evidence_export.v1",
             "status": "export_ready",
-            "stage": "V4.5-P12",
+            "stage": "V4.5-P13",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "bundle_scope": [
                 "capabilities",
@@ -510,7 +511,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_verifier.v1",
             "status": "verification_passed" if not failed else "verification_failed",
-            "stage": "V4.5-P12",
+            "stage": "V4.5-P13",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "export_bundle_hash": bundle.get("bundle_hash"),
             "verified_export_stage": bundle.get("stage"),
@@ -534,6 +535,50 @@ class ScreenMonitoringService:
             },
             "allowed_output": "review_only_screen_readiness_evidence_verifier",
             "forbidden_actions": bundle.get("forbidden_actions", []),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def compare_screen_readiness_evidence(self, limit: int = 50) -> dict[str, Any]:
+        baseline = self.verify_screen_readiness_evidence_export(limit=limit)
+        candidate = self.verify_screen_readiness_evidence_export(limit=limit)
+        baseline_summary = self._screen_verification_comparison_summary(baseline)
+        candidate_summary = self._screen_verification_comparison_summary(candidate)
+        differences = self._screen_verification_differences(baseline_summary, candidate_summary)
+        return {
+            "schema_version": "screen_readiness_evidence_comparison.v1",
+            "status": "comparison_stable" if not differences else "comparison_changed",
+            "stage": "V4.5-P13",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "baseline": baseline_summary,
+            "candidate": candidate_summary,
+            "difference_count": len(differences),
+            "differences": differences,
+            "comparison_scope": [
+                "export_bundle_hash",
+                "verification_status",
+                "check_counts",
+                "failed_check_names",
+                "check_statuses",
+                "safety_summary",
+                "forbidden_actions",
+            ],
+            "safety_summary": {
+                "writes_file": False,
+                "download_created": False,
+                "executes_commands": False,
+                "writes_env": False,
+                "real_screen_capture": False,
+                "pixel_data_stored": False,
+                "ocr_executed": False,
+                "broker_action": False,
+                "order_action": False,
+                "credential_access": False,
+                "live_trading_enabled": False,
+            },
+            "allowed_output": "review_only_screen_readiness_evidence_comparison",
+            "forbidden_actions": baseline.get("forbidden_actions", []),
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
@@ -642,7 +687,7 @@ class ScreenMonitoringService:
             counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
         return {
             "status": "timeline_ready",
-            "stage": "V4.5-P12",
+            "stage": "V4.5-P13",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "item_count": len(ordered),
             "counts_by_type": counts_by_type,
@@ -704,7 +749,7 @@ class ScreenMonitoringService:
                     "acknowledged",
                     report_hash,
                     str(report.get("status") or "unknown"),
-                    str(report.get("stage") or "V4.5-P12"),
+                    str(report.get("stage") or "V4.5-P13"),
                     json.dumps(summary, ensure_ascii=False, default=str),
                     json.dumps(safety_matrix, ensure_ascii=False, default=str),
                     json.dumps(report, ensure_ascii=False, default=str),
@@ -1691,6 +1736,66 @@ class ScreenMonitoringService:
             "live_auto_trading",
         }
         return required.issubset(set(bundle.get("forbidden_actions") or []))
+
+    def _screen_verification_comparison_summary(self, verification: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "schema_version": verification.get("schema_version"),
+            "status": verification.get("status"),
+            "stage": verification.get("stage"),
+            "export_bundle_hash": verification.get("export_bundle_hash"),
+            "verified_export_stage": verification.get("verified_export_stage"),
+            "check_count": verification.get("check_count"),
+            "passed_count": verification.get("passed_count"),
+            "failed_count": verification.get("failed_count"),
+            "failed_check_names": [item.get("name") for item in verification.get("failed_checks", [])],
+            "check_statuses": {
+                str(item.get("name")): item.get("status")
+                for item in verification.get("checks", [])
+            },
+            "safety_summary": verification.get("safety_summary", {}),
+            "allowed_output": verification.get("allowed_output"),
+            "forbidden_actions": sorted(verification.get("forbidden_actions") or []),
+            "review_only": verification.get("review_only") is True,
+            "simulation_only": verification.get("simulation_only") is True,
+            "live_trading_enabled": verification.get("live_trading_enabled") is True,
+        }
+
+    def _screen_verification_differences(
+        self,
+        baseline: dict[str, Any],
+        candidate: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        differences: list[dict[str, Any]] = []
+        for key in [
+            "schema_version",
+            "status",
+            "export_bundle_hash",
+            "verified_export_stage",
+            "check_count",
+            "passed_count",
+            "failed_count",
+            "failed_check_names",
+            "check_statuses",
+            "safety_summary",
+            "forbidden_actions",
+            "review_only",
+            "simulation_only",
+            "live_trading_enabled",
+        ]:
+            if baseline.get(key) != candidate.get(key):
+                differences.append(
+                    {
+                        "field": key,
+                        "status": "changed",
+                        "baseline": baseline.get(key),
+                        "candidate": candidate.get(key),
+                        "reason": "current evidence verification changed between two read-only checks",
+                        "review_only": True,
+                        "simulation_only": True,
+                        "live_trading_enabled": False,
+                    }
+                )
+        return differences
 
     def _screen_evidence_export_safety(
         self,
