@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P19"
+    stage = "V5.5-P20"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -72,6 +72,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier",
                 "audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval_metadata",
                 "audit_ledger_migration_manual_release_health_digest_history_release_readiness_review",
+                "audit_ledger_migration_manual_release_health_digest_history_approval_freshness_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -112,6 +113,7 @@ class TradeExecutionGatewayService:
                 "execute_manual_release_health_digest_history_migration_spec",
                 "approve_manual_release_health_digest_history_migration_as_execution",
                 "approve_manual_release_health_digest_history_release_from_readiness",
+                "reuse_expired_manual_release_health_digest_history_approval_as_current",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -4425,6 +4427,210 @@ class TradeExecutionGatewayService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def audit_ledger_migration_manual_release_health_digest_history_approval_review(
+        self,
+        limit: int = 50,
+        max_age_days: int = 7,
+        repeat_checks: int = 2,
+    ) -> dict[str, Any]:
+        safe_max_age_days = max(1, min(max_age_days, 365))
+        release = self.audit_ledger_migration_manual_release_health_digest_history_release_readiness(
+            limit=limit,
+            max_age_days=safe_max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        verification = self.verify_audit_ledger_migration_manual_release_health_digest_history_migration_spec(
+            limit=limit,
+            max_age_days=safe_max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        approvals = self.list_audit_ledger_migration_manual_release_health_digest_history_migration_spec_approvals(
+            limit=limit
+        )
+        latest_approval = approvals[0] if approvals else None
+        now = datetime.now()
+        approval_time = self._parse_datetime(
+            latest_approval.get("approved_at") or latest_approval.get("created_at") if latest_approval else None
+        )
+        approval_age_hours = round((now - approval_time).total_seconds() / 3600, 3) if approval_time else None
+        approval_age_days = round(float(approval_age_hours or 0) / 24, 3) if approval_age_hours is not None else None
+        expires_at = (
+            (approval_time + timedelta(days=safe_max_age_days)).isoformat(timespec="seconds")
+            if approval_time
+            else None
+        )
+        current_spec_hash = verification.get("spec_hash")
+        approved_spec_hash = latest_approval.get("spec_hash") if latest_approval else None
+        approval_recorded = bool(latest_approval)
+        approval_not_expired = bool(approval_time) and approval_age_days is not None and approval_age_days <= safe_max_age_days
+        spec_hash_matches = bool(latest_approval) and approved_spec_hash == current_spec_hash
+        release_ready = release.get("status") == "release_evidence_ready"
+        gates = [
+            self._release_readiness_gate(
+                "approval_recorded",
+                approval_recorded,
+                "latest health digest history migration approval metadata must exist before manual release review.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "approval_within_validity_window",
+                approval_not_expired,
+                f"health digest history migration approval metadata must be newer than {safe_max_age_days} day(s).",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "approval_matches_current_spec",
+                spec_hash_matches,
+                "latest approval spec hash must match the currently verified health digest history migration spec hash.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "release_readiness_evidence_ready",
+                release_ready,
+                "V5.5-P19 release readiness must be evidence-ready before approval can be treated as current.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "no_history_migration_execution_enabled",
+                release.get("decision", {}).get("migration_allowed_now") is False
+                and release.get("decision", {}).get("execution_allowed_now") is False
+                and verification.get("migration_allowed_now") is False
+                and (latest_approval or {}).get("migration_allowed_now", False) is False,
+                "approval review must not enable SQL, migrations, table creation, history-row writes, or release approval.",
+            ),
+            self._release_readiness_gate(
+                "live_trading_disabled",
+                not settings.enable_live_trading
+                and release.get("live_trading_enabled") is False
+                and verification.get("live_trading_enabled") is False,
+                "live trading must remain disabled.",
+            ),
+        ]
+        blocked = [gate for gate in gates if gate["status"] == "blocked"]
+        review_required = [gate for gate in gates if gate["status"] == "review_required"]
+        if blocked:
+            status = "approval_review_blocked"
+        elif not approval_recorded:
+            status = "approval_review_required"
+        elif review_required:
+            status = "approval_rotation_required"
+        else:
+            status = "approval_current"
+        next_required_action = "none"
+        if status == "approval_review_required":
+            next_required_action = "record_health_digest_history_migration_spec_approval_metadata"
+        elif status == "approval_rotation_required":
+            next_required_action = "refresh_health_digest_history_migration_spec_approval_metadata"
+        elif status == "approval_review_blocked":
+            next_required_action = "resolve_blocked_health_digest_history_release_evidence"
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_manual_release_health_digest_history_approval_review.v1",
+            "status": status,
+            "stage": self.stage,
+            "generated_at": now.isoformat(timespec="seconds"),
+            "review_policy": {
+                "max_age_days": safe_max_age_days,
+                "rotation_required_when": [
+                    "approval_missing",
+                    "approval_expired",
+                    "spec_hash_changed",
+                    "release_readiness_not_ready",
+                ],
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "latest_approval": {
+                "event_id": latest_approval.get("event_id") if latest_approval else None,
+                "status": latest_approval.get("status") if latest_approval else None,
+                "approved_at": latest_approval.get("approved_at") if latest_approval else None,
+                "created_at": latest_approval.get("created_at") if latest_approval else None,
+                "approved_by": latest_approval.get("approved_by") if latest_approval else None,
+                "spec_hash": approved_spec_hash,
+                "verification_status": latest_approval.get("verification_status") if latest_approval else None,
+                "approval_age_hours": approval_age_hours,
+                "approval_age_days": approval_age_days,
+                "expires_at": expires_at,
+                "is_expired": False if approval_not_expired else bool(latest_approval),
+                "matches_current_spec": spec_hash_matches,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "current_spec": {
+                "spec_hash": current_spec_hash,
+                "verification_status": verification.get("status"),
+                "failed_count": verification.get("summary", {}).get("failed_count"),
+                "migration_allowed_now": False,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "release_readiness": {
+                "status": release.get("status"),
+                "go_no_go": release.get("decision", {}).get("go_no_go"),
+                "approval_count": release.get("evidence", {}).get("approval_count"),
+                "latest_approval_event_id": release.get("evidence", {}).get("latest_approval_event_id"),
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "release_approved_now": False,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "gates": gates,
+            "blocked_gates": blocked,
+            "review_required_gates": review_required,
+            "decision": {
+                "next_required_action": next_required_action,
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "release_approved_now": False,
+                "approval_can_be_reused_for_manual_release_review": status == "approval_current",
+                "requires_human_release_approval": True,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "persists_manual_release_health_digest_history": False,
+                "writes_history_row_now": False,
+                "creates_table_now": False,
+                "runs_migration_now": False,
+                "executes_sql": False,
+                "writes_database_now": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "approves_release_now": False,
+                "enables_gateway_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+            },
+            "allowed_output": "review_only_manual_release_health_digest_history_approval_review",
+            "forbidden_actions": [
+                "execute_sql",
+                "run_history_migration",
+                "create_history_table",
+                "write_migration_file",
+                "write_history_row",
+                "persist_manual_release_health_digest_history",
+                "approve_release_now",
+                "reuse_expired_approval_as_current",
+                "enable_gateway_now",
+                "connect_broker",
+                "submit_order",
+                "store_credentials",
+                "screen_click",
+                "keyboard_type",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -4658,12 +4864,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_release_health_digest_history_release_readiness",
                 "V5.5-P19 summarizes P15-P18 health digest history migration evidence for manual release review without approving or executing migrations.",
             ),
+            self._gate(
+                "audit_ledger_migration_manual_release_health_digest_history_approval_freshness_required",
+                "passed",
+                "audit_ledger_migration_manual_release_health_digest_history_approval_freshness_ready",
+                "review_only_manual_release_health_digest_history_approval_freshness_review",
+                "V5.5-P20 reviews history migration approval freshness, expiry, and spec-hash rotation without approving releases or executing migrations.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_release_readiness_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_approval_freshness_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -4701,9 +4914,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_health_digest_history_migration_spec_verifier_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval_metadata_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_release_readiness_ready": True,
+                "audit_ledger_migration_manual_release_health_digest_history_approval_freshness_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_release_readiness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_approval_freshness",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -4884,6 +5098,12 @@ class TradeExecutionGatewayService:
             {
                 "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryReleaseReadiness",
                 "status": "review_manual_release_health_digest_history_release_readiness_defined",
+                "required_before": "any_manual_release_health_digest_history_approval_freshness_review",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryApprovalFreshnessReview",
+                "status": "review_manual_release_health_digest_history_approval_freshness_defined",
                 "required_before": "any_manual_release_health_digest_history_release_package",
                 "review_only": True,
             },
