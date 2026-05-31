@@ -179,6 +179,16 @@ def trade_execution_gateway_final_readiness_report() -> dict:
     return TradeExecutionGatewayService().final_readiness_report()
 
 
+@router.get("/trade-execution-gateway/broker-adapter-threat-model")
+def trade_execution_gateway_broker_adapter_threat_model() -> dict:
+    return TradeExecutionGatewayService().broker_adapter_threat_model()
+
+
+@router.get("/trade-execution-gateway/broker-adapter-interface-draft")
+def trade_execution_gateway_broker_adapter_interface_draft() -> dict:
+    return TradeExecutionGatewayService().broker_adapter_interface_draft()
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()

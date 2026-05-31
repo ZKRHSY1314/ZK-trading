@@ -200,7 +200,16 @@
 - [ ] V5.0-P5 dashboard shows report id, completed review modules, safety matrix, remaining blockers, and the next V5.5 threat-modeling track.
 - [ ] V5.0-P5 must keep `v5_review_only_baseline_complete=true`, `ready_for_v5_5_threat_modeling=true`, `ready_for_live_enablement=false`, `api_can_enable_gateway=false`, `gateway_can_execute=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
 
-## 14. Desired Workday Schedule Cadence
+## 14. V5.5 Broker Adapter Threat Model Milestone
+- [ ] V5.5-P0 exposes `GET /api/trade-execution-gateway/broker-adapter-threat-model` as review-only threat metadata.
+- [ ] V5.5-P0 exposes `GET /api/trade-execution-gateway/broker-adapter-interface-draft` as a provider-neutral interface draft, not an implemented adapter.
+- [ ] Threat modeling covers credential exposure, unauthorized order execution, account-data leakage, screen-click bypass, and risk-gate bypass as `blocked_by_design`.
+- [ ] Interface draft methods are metadata/fixture/review only and must report `implemented_now=false`, `calls_broker_now=false`, `places_order_now=false`, `reads_account_now=false`, and `stores_credentials_now=false`.
+- [ ] Forbidden adapter methods include login, submit/cancel/modify order, account funds/position reads, credential storage, and broker-screen clicking.
+- [ ] Dashboard shows threat categories, protected assets, interface draft methods, and forbidden adapter methods without adding broker/order/credential/account/screen-click controls.
+- [ ] V5.5-P0 must keep `broker_adapter_allowed_now=false`, `credential_handling_allowed_now=false`, `account_read_allowed_now=false`, `order_execution_allowed_now=false`, `interface_implemented_now=false`, `adapter_can_connect_now=false`, `adapter_can_execute_now=false`, `adapter_can_read_account_now=false`, and `live_trading_enabled=false`.
+
+## 15. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
 - **10:00 AM:** First cycle (Candidate scan, morning momentum check).
 - **1:00 PM (13:00):** Mid-day cycle (Trend persistence, early reversals).

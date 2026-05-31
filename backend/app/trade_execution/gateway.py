@@ -12,7 +12,7 @@ from app.risk.portfolio import DEFAULT_LIMITS
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.0-P5"
+    stage = "V5.5-P0"
 
     def capabilities(self) -> dict[str, Any]:
         gates = self.review_gates()["gates"]
@@ -47,6 +47,8 @@ class TradeExecutionGatewayService:
                 "operator_acceptance_checklist_review",
                 "disabled_release_gate_review",
                 "final_readiness_report_review",
+                "broker_adapter_threat_model_review",
+                "broker_adapter_interface_draft_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -60,6 +62,8 @@ class TradeExecutionGatewayService:
                 "bypass_risk_gate",
                 "enable_gateway_by_api",
                 "approve_release_by_api",
+                "instantiate_broker_adapter",
+                "read_broker_account",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -731,7 +735,7 @@ class TradeExecutionGatewayService:
                 "gateway_can_execute": False,
                 "api_can_enable_gateway": False,
                 "api_can_record_release_approval": False,
-                "next_required_action": "start_v5_5_broker_adapter_threat_model_review_only",
+                "next_required_action": "review_broker_adapter_threat_model_and_interface_draft",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -743,6 +747,159 @@ class TradeExecutionGatewayService:
                 "places_real_trade": False,
             },
             "allowed_output": "review_only_trade_execution_final_readiness_report",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def broker_adapter_threat_model(self) -> dict[str, Any]:
+        threat_categories = [
+            {
+                "name": "credential_exposure",
+                "risk": "Broker passwords, tokens, SMS codes, cookies, account numbers, and trading PINs must never enter this API.",
+                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P0.",
+                "status": "blocked_by_design",
+            },
+            {
+                "name": "unauthorized_order_execution",
+                "risk": "A model, scheduler, screen process, or API caller could attempt to submit/cancel/modify a real order.",
+                "mitigation": "No order endpoint, no broker client, no execution method, and risk gates remain review-only blockers.",
+                "status": "blocked_by_design",
+            },
+            {
+                "name": "account_data_leakage",
+                "risk": "Future account, position, fund, or trade-confirm data could expose sensitive financial state.",
+                "mitigation": "No account/funds/position read surface exists; future design requires redaction and explicit threat review.",
+                "status": "blocked_by_design",
+            },
+            {
+                "name": "screen_click_bypass",
+                "risk": "A screen-control workflow could bypass API safety gates and operate broker UI directly.",
+                "mitigation": "Screen-click trading remains forbidden; screen monitoring is read-only metadata.",
+                "status": "blocked_by_design",
+            },
+            {
+                "name": "risk_gate_bypass",
+                "risk": "Manual confirmation or AI suggestions could override portfolio, symbol, liquidity, or market-quality blockers.",
+                "mitigation": "Risk gate contract remains hard-blocking and cannot be overridden by AI or manual confirmation.",
+                "status": "blocked_by_design",
+            },
+        ]
+        return {
+            "schema_version": "trade_execution_broker_adapter_threat_model.v1",
+            "status": "broker_adapter_threat_model_review_ready",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "model_state": "review_only_no_adapter",
+            "scope": "Threat model for a future broker adapter boundary before any implementation or connectivity.",
+            "protected_assets": [
+                "broker_credentials",
+                "account_identity",
+                "positions_and_funds",
+                "order_intent",
+                "manual_confirmation_evidence",
+                "audit_hash_chain",
+                "risk_gate_evidence",
+            ],
+            "trust_boundaries": [
+                "frontend_to_backend_api",
+                "backend_to_future_broker_adapter",
+                "model_gateway_to_review_metadata",
+                "screen_monitoring_to_read_only_evidence",
+                "operator_manual_review_to_disabled_release_gate",
+            ],
+            "threat_categories": threat_categories,
+            "required_future_reviews": [
+                "credential_handling_threat_model",
+                "broker_sandbox_contract_tests",
+                "order_lifecycle_failure_modes",
+                "account_data_redaction_policy",
+                "manual_confirmation_release_process",
+                "legal_or_compliance_review_if_real_money_is_considered",
+            ],
+            "decision": {
+                "threat_model_ready_for_review": True,
+                "broker_adapter_allowed_now": False,
+                "credential_handling_allowed_now": False,
+                "account_read_allowed_now": False,
+                "order_execution_allowed_now": False,
+                "ready_for_live_enablement": False,
+                "next_required_action": "review_broker_adapter_interface_draft",
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "broker_adapter_enabled": False,
+                "credential_storage_enabled": False,
+                "reads_live_account_funds": False,
+                "places_real_trade": False,
+                "connects_broker": False,
+            },
+            "allowed_output": "review_only_trade_execution_broker_adapter_threat_model",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def broker_adapter_interface_draft(self) -> dict[str, Any]:
+        draft_methods = [
+            self._draft_method("describe_capabilities", "Return static adapter capabilities only.", "metadata_only"),
+            self._draft_method("validate_config_shape", "Validate non-secret config schema without reading credentials.", "dry_run_only"),
+            self._draft_method("build_order_preview", "Build a non-executable order preview payload for manual review.", "simulation_only"),
+            self._draft_method("map_rejection_reason", "Normalize future broker rejection codes from fixture data.", "fixture_only"),
+            self._draft_method("redact_account_snapshot", "Describe redaction rules for future account snapshots.", "design_only"),
+        ]
+        return {
+            "schema_version": "trade_execution_broker_adapter_interface_draft.v1",
+            "status": "broker_adapter_interface_draft_review_ready",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "interface_state": "draft_only_not_implemented",
+            "adapter_contract_name": "BrokerAdapterBoundaryDraft",
+            "draft_methods": draft_methods,
+            "forbidden_methods": [
+                "login",
+                "submit_order",
+                "cancel_order",
+                "modify_order",
+                "read_account_funds",
+                "read_live_positions",
+                "store_credentials",
+                "click_broker_screen",
+            ],
+            "required_inputs_policy": {
+                "allows_credentials": False,
+                "allows_account_number": False,
+                "allows_sms_code": False,
+                "allows_trading_pin": False,
+                "allows_plaintext_secret": False,
+            },
+            "future_test_requirements": [
+                "fixture_only_adapter_contract_tests",
+                "no_network_call_unit_tests",
+                "credential_field_rejection_tests",
+                "order_preview_non_execution_tests",
+                "risk_gate_hard_block_tests",
+                "audit_redaction_tests",
+            ],
+            "decision": {
+                "interface_draft_ready_for_review": True,
+                "interface_implemented_now": False,
+                "adapter_can_connect_now": False,
+                "adapter_can_execute_now": False,
+                "adapter_can_read_account_now": False,
+                "ready_for_live_enablement": False,
+                "next_required_action": "design_fixture_only_adapter_contract_tests",
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "implements_adapter_now": False,
+                "makes_network_calls": False,
+                "writes_credentials": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "reads_live_account_funds": False,
+            },
+            "allowed_output": "review_only_trade_execution_broker_adapter_interface_draft",
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -834,12 +991,26 @@ class TradeExecutionGatewayService:
                 "v5_review_only_gateway_baseline",
                 "V5.0-P5 aggregates all gateway review evidence and still cannot enable live trading.",
             ),
+            self._gate(
+                "broker_adapter_threat_model_required",
+                "passed",
+                "broker_adapter_threat_model_review_ready",
+                "future_broker_adapter_threat_model",
+                "V5.5-P0 defines threat categories and mitigations without implementing broker connectivity.",
+            ),
+            self._gate(
+                "broker_adapter_interface_draft_required",
+                "passed",
+                "broker_adapter_interface_draft_review_ready",
+                "future_broker_adapter_interface_draft",
+                "V5.5-P0 defines provider-neutral interface metadata without executable adapter methods.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "final_readiness_report_metadata_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "broker_adapter_review_metadata_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -856,9 +1027,11 @@ class TradeExecutionGatewayService:
                 "operator_acceptance_checklist_ready": True,
                 "disabled_release_gate_ready": True,
                 "final_readiness_report_ready": True,
+                "broker_adapter_threat_model_ready": True,
+                "broker_adapter_interface_draft_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "start_v5_5_broker_adapter_threat_model_review_only",
+                "next_required_action": "design_fixture_only_adapter_contract_tests",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -916,6 +1089,18 @@ class TradeExecutionGatewayService:
                 "required_before": "any_v5_5_live_adapter_threat_model",
                 "review_only": True,
             },
+            {
+                "name": "BrokerAdapterThreatModel",
+                "status": "review_threat_model_defined",
+                "required_before": "any_broker_adapter_implementation",
+                "review_only": True,
+            },
+            {
+                "name": "BrokerAdapterInterfaceDraft",
+                "status": "review_interface_draft_defined",
+                "required_before": "any_fixture_adapter_contract_tests",
+                "review_only": True,
+            },
         ]
 
     def _safety_summary(self) -> dict[str, bool]:
@@ -958,6 +1143,21 @@ class TradeExecutionGatewayService:
             "blocking_if_missing": True,
             "operator_review_required": True,
             "api_can_mark_complete": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _draft_method(self, name: str, purpose: str, mode: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "purpose": purpose,
+            "mode": mode,
+            "implemented_now": False,
+            "calls_broker_now": False,
+            "places_order_now": False,
+            "reads_account_now": False,
+            "stores_credentials_now": False,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
