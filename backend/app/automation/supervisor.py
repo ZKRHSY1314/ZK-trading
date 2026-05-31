@@ -30,6 +30,7 @@ class AutomationSupervisor:
                 "intraday_monitoring",
                 "realtime_refresh_simulation_only",
                 "realtime_monitoring_sync_review_only",
+                "realtime_cycle_scheduler_safe",
                 "single_symbol_review",
                 "offhour_potential_search",
                 "event_logging",
@@ -42,6 +43,7 @@ class AutomationSupervisor:
             "realtime_capabilities": {
                 "refresh": "simulation-only cached market events",
                 "monitoring_sync": "review-only monitoring alerts from persisted realtime events",
+                "cycle": "scheduler-safe refresh -> monitoring sync -> replay evidence loop",
                 "forbidden": ["broker_order", "credential_access", "screen_click_trading", "live_auto_trading"],
             },
             "guardrails": [

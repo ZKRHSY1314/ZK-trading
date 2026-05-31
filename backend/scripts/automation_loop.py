@@ -172,6 +172,19 @@ def run_realtime_monitoring_sync(api_base: str, limit: int) -> dict:
     return request_json("POST", f"{api_base}/api/realtime/monitoring-sync?{query}")
 
 
+def run_realtime_cycle(api_base: str, symbols: str, limit: int) -> dict:
+    """Run refresh -> monitoring sync -> replay as one scheduler-safe cycle."""
+    query = urllib.parse.urlencode(
+        {
+            "symbols": symbols,
+            "refresh_limit": limit,
+            "sync_limit": max(limit, 100),
+            "replay_limit": max(limit, 100),
+        }
+    )
+    return request_json("POST", f"{api_base}/api/realtime/cycle?{query}")
+
+
 def run_browser_cycle() -> dict:
     completed = subprocess.run(
         ["npm.cmd", "run", "automation:browser"],
@@ -198,7 +211,7 @@ def append_log(payload: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe simulation automation loop.")
     parser.add_argument("--api-base", default=DEFAULT_API_BASE)
-    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest", "experience-review", "code-evolution-review", "realtime-refresh", "realtime-monitoring-sync"], default="cycle")
+    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest", "experience-review", "code-evolution-review", "realtime-refresh", "realtime-monitoring-sync", "realtime-cycle"], default="cycle")
     parser.add_argument("--task-type", default="offhour_potential_search", help="Task type for agent-task mode")
     parser.add_argument("--interval-seconds", type=int, default=60)
     parser.add_argument("--max-cycles", type=int, default=1, help="Use 0 to run forever.")
@@ -261,6 +274,8 @@ def main() -> int:
                 entry["result"] = run_realtime_refresh(args.api_base, args.symbols, args.limit)
             elif args.mode == "realtime-monitoring-sync":
                 entry["result"] = run_realtime_monitoring_sync(args.api_base, args.limit)
+            elif args.mode == "realtime-cycle":
+                entry["result"] = run_realtime_cycle(args.api_base, args.symbols, args.limit)
             else:
                 entry["result"] = run_api_cycle(args.api_base, args.limit)
             entry["status"] = "completed"

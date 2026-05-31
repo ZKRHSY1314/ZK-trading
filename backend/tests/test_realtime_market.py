@@ -210,6 +210,27 @@ def test_realtime_monitoring_bridge_dedupes_repeated_sync(test_db):
     assert len(alerts) == 1
 
 
+def test_realtime_cycle_runs_refresh_sync_and_replay_summary(test_db):
+    _reset_realtime(test_db)
+    service = RealtimeMarketService(provider=MockRealtimeMarketProvider())
+    service.ingest_quote(_quote(symbol="SZ002081", price=10.0, seconds_ago=10))
+    cycle_service = RealtimeMarketService(
+        provider=MockRealtimeMarketProvider(
+            [_quote(symbol="SZ002081", price=10.4, seconds_ago=1)]
+        )
+    )
+
+    result = cycle_service.run_cycle(symbols=["SZ002081"], refresh_limit=10, sync_limit=100, replay_limit=100)
+
+    assert result["status"] == "review_required"
+    assert result["summary"]["refreshed_count"] == 1
+    assert result["summary"]["created_alert_count"] == 1
+    assert result["summary"]["replay_event_count"] == 2
+    assert result["summary"]["signal_counts"]["momentum_up"] == 1
+    assert result["steps"]["replay"]["summary"]["symbol_count"] == 1
+    assert result["live_trading_enabled"] is False
+
+
 def test_realtime_replay_orders_events_and_generates_signals(test_db):
     _reset_realtime(test_db)
     service = RealtimeMarketService(provider=MockRealtimeMarketProvider())
@@ -234,6 +255,9 @@ def test_realtime_replay_orders_events_and_generates_signals(test_db):
         "momentum_up",
         "momentum_down",
     ]
+    assert replay["summary"]["signal_counts"]["momentum_up"] == 1
+    assert replay["summary"]["signal_counts"]["momentum_down"] == 1
+    assert replay["summary"]["quality_counts"]["mock_realtime"] == 3
     assert replay["live_trading_enabled"] is False
 
 
@@ -248,6 +272,7 @@ def test_realtime_api_smoke(client, test_db):
     refresh_resp = client.post("/api/realtime/refresh?symbols=SZ002081,SZ002115&limit=5")
     sync_resp = client.post("/api/realtime/monitoring-sync?limit=5")
     alerts_resp = client.get("/api/monitoring/alerts?limit=5")
+    cycle_resp = client.post("/api/realtime/cycle?symbols=SZ002081,SZ002115&refresh_limit=5&sync_limit=5&replay_limit=5")
     replay_resp = client.post("/api/realtime/replay?symbol=SZ002081&limit=5")
 
     assert capabilities_resp.status_code == 200
@@ -257,11 +282,13 @@ def test_realtime_api_smoke(client, test_db):
     assert refresh_resp.status_code == 200
     assert sync_resp.status_code == 200
     assert alerts_resp.status_code == 200
+    assert cycle_resp.status_code == 200
     assert replay_resp.status_code == 200
     assert snapshot_resp.json()["event"]["symbol"] == "SZ002081"
     assert events_resp.json()
     assert refresh_resp.json()["live_trading_enabled"] is False
     assert sync_resp.json()["simulation_only"] is True
     assert isinstance(alerts_resp.json(), list)
+    assert cycle_resp.json()["summary"]["fallback_required"] is True
     assert replay_resp.json()["simulation_only"] is True
     assert client.get("/health").json()["live_trading_enabled"] is False

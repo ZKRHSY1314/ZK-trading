@@ -582,6 +582,24 @@ def realtime_monitoring_sync(limit: int = 100) -> dict:
     return RealtimeMonitoringBridge().sync(limit=limit)
 
 
+@router.post("/realtime/cycle")
+def realtime_cycle(
+    symbols: str = "SZ002081,SZ002115",
+    refresh_limit: int = 20,
+    sync_limit: int = 100,
+    replay_limit: int = 100,
+) -> dict:
+    from app.realtime.service import RealtimeMarketService
+
+    symbol_list = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
+    return RealtimeMarketService().run_cycle(
+        symbols=symbol_list,
+        refresh_limit=refresh_limit,
+        sync_limit=sync_limit,
+        replay_limit=replay_limit,
+    )
+
+
 @router.post("/realtime/replay")
 def realtime_replay(symbol: str | None = None, limit: int = 100) -> dict:
     from app.realtime.service import RealtimeMarketService

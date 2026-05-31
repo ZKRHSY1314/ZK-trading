@@ -89,6 +89,9 @@
 - [ ] V4.0-P1 alerts include `source_event_id`, `quality_status`, `latency_ms`, `review_only=true`, `simulation_only=true`, and `live_trading_enabled=false`.
 - [ ] V4.0-P1 dedupes repeated sync by source realtime event and symbol/event_ts/alert type.
 - [ ] V4.0-P1 CLI modes `realtime-refresh` and `realtime-monitoring-sync` call local API only.
+- [ ] V4.0-P2 exposes a scheduler-safe realtime cycle for refresh -> monitoring sync -> replay.
+- [ ] V4.0-P2 replay summaries include signal counts, quality counts, latency stats, strongest simulated signals, and ordering evidence.
+- [ ] V4.0-P2 CLI mode `realtime-cycle` calls local API only and remains review-only/simulation-only.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 12. Desired Workday Schedule Cadence

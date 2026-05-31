@@ -247,6 +247,42 @@ class RealtimeMarketService:
             "live_trading_enabled": False,
         }
 
+    def run_cycle(
+        self,
+        symbols: list[str] | None = None,
+        refresh_limit: int = 20,
+        sync_limit: int = 100,
+        replay_limit: int = 100,
+    ) -> dict[str, Any]:
+        from app.realtime.monitoring_bridge import RealtimeMonitoringBridge
+
+        refresh = self.refresh_symbols(symbols=symbols, limit=refresh_limit)
+        sync = RealtimeMonitoringBridge().sync(limit=sync_limit)
+        replay = self.replay(limit=replay_limit)
+        status = "completed"
+        if refresh.get("fallback_required") or sync.get("created_alert_count", 0) > 0:
+            status = "review_required"
+        return {
+            "status": status,
+            "steps": {
+                "refresh": refresh,
+                "monitoring_sync": sync,
+                "replay": replay,
+            },
+            "summary": {
+                "refreshed_count": refresh.get("refreshed_count", 0),
+                "refresh_failed_count": refresh.get("failed_count", 0),
+                "created_alert_count": sync.get("created_alert_count", 0),
+                "replay_event_count": replay.get("event_count", 0),
+                "signal_counts": replay.get("summary", {}).get("signal_counts", {}),
+                "quality_counts": replay.get("summary", {}).get("quality_counts", {}),
+                "fallback_required": bool(refresh.get("fallback_required")),
+            },
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
     def replay(self, symbol: str | None = None, limit: int = 100) -> dict[str, Any]:
         events = list(reversed(self.list_events(symbol=symbol, limit=limit)))
         signals: list[dict[str, Any]] = []
@@ -261,6 +297,7 @@ class RealtimeMarketService:
             "status": "replayed",
             "event_count": len(events),
             "signals": signals,
+            "summary": self._replay_summary(events, signals),
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
@@ -294,6 +331,41 @@ class RealtimeMarketService:
             "previous_price": prev_price,
             "quality_status": event["quality_status"],
             "reason": "replay_price_change",
+        }
+
+    def _replay_summary(self, events: list[dict[str, Any]], signals: list[dict[str, Any]]) -> dict[str, Any]:
+        signal_counts: dict[str, int] = {}
+        quality_counts: dict[str, int] = {}
+        latency_values: list[float] = []
+        for signal in signals:
+            signal_type = str(signal.get("signal_type") or "unknown")
+            signal_counts[signal_type] = signal_counts.get(signal_type, 0) + 1
+        for event in events:
+            quality = str(event.get("quality_status") or "unknown")
+            quality_counts[quality] = quality_counts.get(quality, 0) + 1
+            latency = event.get("latency_ms")
+            if latency is not None:
+                latency_values.append(float(latency))
+        strongest = sorted(
+            [signal for signal in signals if signal.get("signal_type") != "observe"],
+            key=lambda item: float(item.get("strength") or 0),
+            reverse=True,
+        )[:5]
+        return {
+            "symbol_count": len({event["symbol"] for event in events}),
+            "symbols": sorted({event["symbol"] for event in events}),
+            "signal_counts": signal_counts,
+            "quality_counts": quality_counts,
+            "latency_ms": {
+                "min": round(min(latency_values), 3) if latency_values else None,
+                "max": round(max(latency_values), 3) if latency_values else None,
+                "avg": round(sum(latency_values) / len(latency_values), 3) if latency_values else None,
+            },
+            "strongest_signals": strongest,
+            "ordered_by": ["event_ts", "strength_desc", "symbol"],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
         }
 
     def _quality_status(self, requested: str, latency_ms: float, fallback_used: bool) -> str:

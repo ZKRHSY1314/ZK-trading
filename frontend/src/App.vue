@@ -81,6 +81,9 @@
           <button data-testid="sync-realtime-monitoring-button" @click="syncRealtimeMonitoring" :disabled="realtimeLoading">
             同步监控提醒
           </button>
+          <button data-testid="run-realtime-cycle-button" @click="runRealtimeCycle" :disabled="realtimeLoading">
+            运行实时闭环
+          </button>
           <button data-testid="run-realtime-replay-button" @click="runRealtimeReplay" :disabled="realtimeLoading">
             运行信号 Replay
           </button>
@@ -90,9 +93,10 @@
           <span>状态 {{ realtimeCapabilities?.provider_status ?? "未加载" }}</span>
           <span>事件 {{ realtimeEvents.length }}</span>
           <span>提醒 {{ realtimeMonitoringSync?.created_alert_count ?? 0 }}</span>
+          <span>闭环 {{ realtimeCycleResult?.status ?? "未运行" }}</span>
           <span>实盘 {{ realtimeCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
-        <div v-if="realtimeRefreshResult || realtimeMonitoringSync" class="score-list">
+        <div v-if="realtimeRefreshResult || realtimeMonitoringSync || realtimeCycleResult" class="score-list">
           <div v-if="realtimeRefreshResult" class="score-item">
             <strong>Refresh / {{ realtimeRefreshResult.status }}</strong>
             <span>写入 {{ realtimeRefreshResult.refreshed_count }} / 失败 {{ realtimeRefreshResult.failed_count }} / 请求 {{ realtimeRefreshResult.requested_count }}</span>
@@ -102,6 +106,11 @@
             <strong>Monitoring Sync / {{ realtimeMonitoringSync.status }}</strong>
             <span>事件 {{ realtimeMonitoringSync.created_event_count }} / 提醒 {{ realtimeMonitoringSync.created_alert_count }} / 去重 {{ realtimeMonitoringSync.skipped_duplicate_count }}</span>
             <small>review-only / live trading disabled</small>
+          </div>
+          <div v-if="realtimeCycleResult" class="score-item">
+            <strong>Realtime Cycle / {{ realtimeCycleResult.status }}</strong>
+            <span>刷新 {{ realtimeCycleResult.summary.refreshed_count }} / 失败 {{ realtimeCycleResult.summary.refresh_failed_count }} / Replay {{ realtimeCycleResult.summary.replay_event_count }}</span>
+            <small>提醒 {{ realtimeCycleResult.summary.created_alert_count }} / fallback {{ realtimeCycleResult.summary.fallback_required ? "required" : "not required" }}</small>
           </div>
         </div>
         <div v-if="realtimeHealth.length" class="score-list">
@@ -129,8 +138,8 @@
         <div v-if="realtimeReplay" class="score-list">
           <div class="score-item">
             <strong>Replay / {{ realtimeReplay.status }}</strong>
-            <span>事件 {{ realtimeReplay.event_count }} / 信号 {{ realtimeReplay.signals.length }}</span>
-            <small>simulation-only / live trading disabled</small>
+            <span>事件 {{ realtimeReplay.event_count }} / 标的 {{ realtimeReplay.summary.symbol_count }} / 信号 {{ realtimeReplay.signals.length }}</span>
+            <small>延迟均值 {{ realtimeReplay.summary.latency_ms.avg ?? "N/A" }} ms / simulation-only</small>
           </div>
           <div v-for="signal in realtimeReplay.signals.slice(0, 5)" :key="`${signal.symbol}-${signal.event_ts}-${signal.signal_type}`" class="score-item">
             <strong>{{ signal.symbol }} / {{ signal.signal_type }}</strong>
@@ -1351,6 +1360,23 @@ type RealtimeSnapshot = {
   live_trading_enabled: boolean;
 };
 
+type RealtimeReplaySummary = {
+  symbol_count: number;
+  symbols: string[];
+  signal_counts: Record<string, number>;
+  quality_counts: Record<string, number>;
+  latency_ms: {
+    min: number | null;
+    max: number | null;
+    avg: number | null;
+  };
+  strongest_signals: Array<Record<string, any>>;
+  ordered_by: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type RealtimeReplay = {
   status: string;
   event_count: number;
@@ -1364,6 +1390,7 @@ type RealtimeReplay = {
     quality_status: string;
     reason: string;
   }>;
+  summary: RealtimeReplaySummary;
   review_only: boolean;
   simulation_only: boolean;
   live_trading_enabled: boolean;
@@ -1391,6 +1418,27 @@ type RealtimeMonitoringSyncResult = {
   created_alert_count: number;
   skipped_duplicate_count: number;
   alerts_by_type: Record<string, number>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type RealtimeCycleResult = {
+  status: string;
+  steps: {
+    refresh: RealtimeRefreshResult;
+    monitoring_sync: RealtimeMonitoringSyncResult;
+    replay: RealtimeReplay;
+  };
+  summary: {
+    refreshed_count: number;
+    refresh_failed_count: number;
+    created_alert_count: number;
+    replay_event_count: number;
+    signal_counts: Record<string, number>;
+    quality_counts: Record<string, number>;
+    fallback_required: boolean;
+  };
   review_only: boolean;
   simulation_only: boolean;
   live_trading_enabled: boolean;
@@ -1611,6 +1659,7 @@ const realtimeEvents = ref<RealtimeEvent[]>([]);
 const realtimeReplay = ref<RealtimeReplay | null>(null);
 const realtimeRefreshResult = ref<RealtimeRefreshResult | null>(null);
 const realtimeMonitoringSync = ref<RealtimeMonitoringSyncResult | null>(null);
+const realtimeCycleResult = ref<RealtimeCycleResult | null>(null);
 const realtimeLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -2492,6 +2541,25 @@ async function syncRealtimeMonitoring() {
     await loadRealtimeData();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "实时监控提醒同步失败";
+  } finally {
+    realtimeLoading.value = false;
+  }
+}
+
+async function runRealtimeCycle() {
+  realtimeLoading.value = true;
+  error.value = "";
+  try {
+    realtimeCycleResult.value = await fetchJson<RealtimeCycleResult>(
+      "/api/realtime/cycle?symbols=SZ002081,SZ002115&refresh_limit=20&sync_limit=100&replay_limit=100",
+      { method: "POST" }
+    );
+    realtimeRefreshResult.value = realtimeCycleResult.value.steps.refresh;
+    realtimeMonitoringSync.value = realtimeCycleResult.value.steps.monitoring_sync;
+    realtimeReplay.value = realtimeCycleResult.value.steps.replay;
+    await loadRealtimeData();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "实时闭环运行失败";
   } finally {
     realtimeLoading.value = false;
   }
