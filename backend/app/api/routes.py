@@ -128,6 +128,10 @@ class TradeAuditLedgerMigrationSpecApprovalInput(BaseModel):
     note: str | None = None
 
 
+class TradeManualReleaseEvidenceInput(BaseModel):
+    evidence: dict = Field(default_factory=dict)
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -291,6 +295,22 @@ def trade_execution_gateway_audit_ledger_migration_manual_release_review_rehears
     repeat_checks: int = 2,
 ) -> dict:
     return TradeExecutionGatewayService().audit_ledger_migration_manual_release_review_rehearsal(
+        limit=limit,
+        max_age_days=max_age_days,
+        repeat_checks=repeat_checks,
+    )
+
+
+@router.post("/trade-execution-gateway/audit-ledger-migration-release-evidence/verify")
+def trade_execution_gateway_audit_ledger_migration_manual_release_evidence_verify(
+    input_data: TradeManualReleaseEvidenceInput | None = None,
+    limit: int = 50,
+    max_age_days: int = 7,
+    repeat_checks: int = 2,
+) -> dict:
+    payload = input_data or TradeManualReleaseEvidenceInput()
+    return TradeExecutionGatewayService().verify_audit_ledger_migration_manual_release_evidence(
+        evidence=payload.evidence,
         limit=limit,
         max_age_days=max_age_days,
         repeat_checks=repeat_checks,
