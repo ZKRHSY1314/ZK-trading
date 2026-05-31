@@ -154,6 +154,9 @@
 - [ ] V4.5-P15 exposes `/api/screen-monitoring/readiness-health/history-proposal` as review-only metadata for a future digest history retention design.
 - [ ] V4.5-P15 proposal lists required fields, excluded sensitive fields, retention/dedupe policy, manual review gates, and safety evidence without writing database records now.
 - [ ] V4.5-P15 dashboard shows history proposal status/default state without persisting snapshots, writing files, creating downloads, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
+- [ ] V4.5-P16 exposes `/api/screen-monitoring/readiness-health/history-migration-checklist` as a review-only migration readiness checklist for future digest history persistence.
+- [ ] V4.5-P16 checklist reports target table, field mapping, required future artifacts, review-required checks, rollback/test requirements, and safety evidence without creating tables or running migrations now.
+- [ ] V4.5-P16 dashboard shows migration readiness/default state without writing database records, migration files, downloads, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

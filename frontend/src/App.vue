@@ -234,6 +234,9 @@
           <button data-testid="screen-digest-history-proposal-button" @click="refreshScreenDigestHistoryProposal" :disabled="screenMonitoringLoading">
             历史保留方案
           </button>
+          <button data-testid="screen-digest-migration-checklist-button" @click="refreshScreenDigestMigrationChecklist" :disabled="screenMonitoringLoading">
+            迁移就绪清单
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -254,6 +257,7 @@
           <span>Compare {{ screenReadinessComparison?.status ?? "未对比" }}</span>
           <span>Health {{ screenReadinessHealth?.status ?? "未生成" }}</span>
           <span>History {{ screenDigestHistoryProposal?.status ?? "未生成" }}</span>
+          <span>Migration {{ screenDigestMigrationChecklist?.status ?? "未生成" }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -356,6 +360,11 @@
             <strong>Digest History / {{ screenDigestHistoryProposal.status }}</strong>
             <span>{{ screenDigestHistoryProposal.proposal.default_state }} / {{ screenDigestHistoryProposal.allowed_output }}</span>
             <small>DB {{ screenDigestHistoryProposal.safety_summary.writes_database_now ? "写入" : "不写" }} / 保留 {{ screenDigestHistoryProposal.proposal.recommended_retention_days }} 天 / gates {{ screenDigestHistoryProposal.review_gates.length }}</small>
+          </div>
+          <div v-if="screenDigestMigrationChecklist" class="score-item">
+            <strong>History Migration / {{ screenDigestMigrationChecklist.status }}</strong>
+            <span>{{ screenDigestMigrationChecklist.migration_plan.default_state }} / {{ screenDigestMigrationChecklist.allowed_output }}</span>
+            <small>允许迁移 {{ screenDigestMigrationChecklist.summary.migration_allowed_now ? "是" : "否" }} / 需复核 {{ screenDigestMigrationChecklist.summary.review_required_count }} / DB {{ screenDigestMigrationChecklist.safety_summary.writes_database_now ? "写入" : "不写" }}</small>
           </div>
           <div
             v-for="item in screenReadinessAudit?.safety_matrix.slice(0, 6) ?? []"
@@ -2425,6 +2434,72 @@ type ScreenDigestHistoryProposal = {
   live_trading_enabled: boolean;
 };
 
+type ScreenDigestMigrationChecklist = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  migration_plan: {
+    target_table: string;
+    source_schema: string;
+    source_digest_stage: string;
+    migration_type: string;
+    default_state: string;
+    table_exists_now: boolean;
+    create_table_now: boolean;
+    backfill_now: boolean;
+    writes_database_now: boolean;
+    writes_migration_file_now: boolean;
+    apply_automatically: boolean;
+    operator_review_required: boolean;
+    rollback_required: boolean;
+    test_required: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  field_mapping: Array<{
+    source: string;
+    target: string;
+    storage: string;
+  }>;
+  excluded_fields: string[];
+  checks: Array<{
+    name: string;
+    status: string;
+    required: boolean;
+    reason: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  summary: {
+    required_check_count: number;
+    passed_check_count: number;
+    review_required_count: number;
+    blocked_check_count: number;
+    migration_allowed_now: boolean;
+    manual_review_required: boolean;
+    current_export_bundle_hash: string;
+    proposal_allowed_output: string;
+    allowed_output: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  required_future_artifacts: string[];
+  safety_summary: ScreenDigestHistoryProposal["safety_summary"] & {
+    creates_table_now: boolean;
+    runs_migration_now: boolean;
+    writes_migration_file_now: boolean;
+  };
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2670,6 +2745,7 @@ const screenReadinessVerification = ref<ScreenReadinessVerification | null>(null
 const screenReadinessComparison = ref<ScreenReadinessComparison | null>(null);
 const screenReadinessHealth = ref<ScreenReadinessHealth | null>(null);
 const screenDigestHistoryProposal = ref<ScreenDigestHistoryProposal | null>(null);
+const screenDigestMigrationChecklist = ref<ScreenDigestMigrationChecklist | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3625,7 +3701,8 @@ async function loadScreenMonitoring() {
       readinessVerificationData,
       readinessComparisonData,
       readinessHealthData,
-      digestHistoryProposalData
+      digestHistoryProposalData,
+      digestMigrationChecklistData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3643,7 +3720,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenReadinessVerification>("/api/screen-monitoring/readiness-export/verify?limit=40"),
       fetchJson<ScreenReadinessComparison>("/api/screen-monitoring/readiness-export/compare?limit=40"),
       fetchJson<ScreenReadinessHealth>("/api/screen-monitoring/readiness-health?limit=40"),
-      fetchJson<ScreenDigestHistoryProposal>("/api/screen-monitoring/readiness-health/history-proposal?limit=40")
+      fetchJson<ScreenDigestHistoryProposal>("/api/screen-monitoring/readiness-health/history-proposal?limit=40"),
+      fetchJson<ScreenDigestMigrationChecklist>("/api/screen-monitoring/readiness-health/history-migration-checklist?limit=40")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3662,6 +3740,7 @@ async function loadScreenMonitoring() {
     screenReadinessComparison.value = readinessComparisonData;
     screenReadinessHealth.value = readinessHealthData;
     screenDigestHistoryProposal.value = digestHistoryProposalData;
+    screenDigestMigrationChecklist.value = digestMigrationChecklistData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3680,6 +3759,7 @@ async function loadScreenMonitoring() {
     screenReadinessComparison.value = null;
     screenReadinessHealth.value = null;
     screenDigestHistoryProposal.value = null;
+    screenDigestMigrationChecklist.value = null;
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -3802,6 +3882,20 @@ async function refreshScreenDigestHistoryProposal() {
     );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Digest history proposal 生成失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function refreshScreenDigestMigrationChecklist() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenDigestMigrationChecklist.value = await fetchJson<ScreenDigestMigrationChecklist>(
+      "/api/screen-monitoring/readiness-health/history-migration-checklist?limit=40"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Digest history migration checklist 生成失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

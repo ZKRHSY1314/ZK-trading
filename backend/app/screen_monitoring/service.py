@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P15",
+            "stage": "V4.5-P16",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -61,6 +61,7 @@ class ScreenMonitoringService:
                 "screen_readiness_evidence_comparison",
                 "screen_readiness_health_digest",
                 "screen_readiness_digest_history_proposal",
+                "screen_readiness_digest_history_migration_checklist",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -145,7 +146,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P15",
+            "stage": "V4.5-P16",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -248,7 +249,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P15",
+            "stage": "V4.5-P16",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -305,7 +306,7 @@ class ScreenMonitoringService:
         evidence_bundle = {
             "schema_version": "screen_readiness_evidence_export.v1",
             "status": "export_ready",
-            "stage": "V4.5-P15",
+            "stage": "V4.5-P16",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "bundle_scope": [
                 "capabilities",
@@ -513,7 +514,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_verifier.v1",
             "status": "verification_passed" if not failed else "verification_failed",
-            "stage": "V4.5-P15",
+            "stage": "V4.5-P16",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "export_bundle_hash": bundle.get("bundle_hash"),
             "verified_export_stage": bundle.get("stage"),
@@ -551,7 +552,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_comparison.v1",
             "status": "comparison_stable" if not differences else "comparison_changed",
-            "stage": "V4.5-P15",
+            "stage": "V4.5-P16",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "baseline": baseline_summary,
             "candidate": candidate_summary,
@@ -632,7 +633,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_health_digest.v1",
             "status": "health_digest_clean" if not failed_flags else "health_digest_review_required",
-            "stage": "V4.5-P15",
+            "stage": "V4.5-P16",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": {
                 "capture_provider": capabilities.get("capture_provider"),
@@ -717,7 +718,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_digest_history_proposal.v1",
             "status": "proposal_ready",
-            "stage": "V4.5-P15",
+            "stage": "V4.5-P16",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "proposal": {
                 "name": "screen_readiness_digest_history",
@@ -791,6 +792,178 @@ class ScreenMonitoringService:
                 "write_file",
                 "create_download",
                 "persist_snapshot_without_review",
+                "screen_click",
+                "keyboard_type",
+                "inspect_window",
+                "real_pixel_capture",
+                "pixel_storage",
+                "ocr_execution",
+                "broker_action",
+                "order_action",
+                "credential_access",
+                "live_auto_trading",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def screen_readiness_digest_history_migration_checklist(self, limit: int = 50) -> dict[str, Any]:
+        proposal_doc = self.screen_readiness_digest_history_proposal(limit=limit)
+        proposal = proposal_doc.get("proposal", {})
+        current_digest = proposal_doc.get("current_digest_summary", {})
+        required_fields = proposal.get("required_fields") or []
+        excluded_fields = proposal.get("excluded_fields") or []
+        forbidden_sensitive_fields = [
+            "raw_pixels",
+            "ocr_text",
+            "broker_credentials",
+            "orders",
+            "positions",
+            "plaintext_secrets",
+        ]
+        sensitive_fields_excluded = all(field in excluded_fields for field in forbidden_sensitive_fields)
+        checks = [
+            self._screen_digest_migration_check(
+                "proposal_available",
+                proposal_doc.get("status") == "proposal_ready",
+                "P15 digest history proposal must exist before migration review",
+            ),
+            self._screen_digest_migration_check(
+                "required_fields_defined",
+                len(required_fields) >= 10,
+                "future table fields must cover digest status, hashes, module statuses, counts, failed flags, and safety summary",
+            ),
+            self._screen_digest_migration_check(
+                "sensitive_fields_excluded",
+                sensitive_fields_excluded,
+                "migration must exclude pixels, OCR text, broker data, orders, positions, credentials, and secrets",
+            ),
+            self._screen_digest_migration_check(
+                "retention_policy_defined",
+                int(proposal.get("recommended_retention_days") or 0) > 0 and int(proposal.get("max_records_per_day") or 0) > 0,
+                "retention duration and per-day cap must be explicit before a migration can be reviewed",
+            ),
+            self._screen_digest_migration_check(
+                "dedupe_key_defined",
+                bool(proposal.get("dedupe_key")),
+                "dedupe key must prevent repeated digest snapshots from expanding history indefinitely",
+            ),
+            self._screen_digest_migration_check(
+                "current_digest_hash_available",
+                bool(current_digest.get("export_bundle_hash")),
+                "current digest export hash is required as the future history snapshot identity input",
+            ),
+            self._screen_digest_migration_check(
+                "manual_operator_approval_required",
+                bool(proposal.get("operator_review_required")) and not bool(proposal.get("apply_automatically")),
+                "future persistence must require manual operator review and must not apply automatically",
+            ),
+            self._screen_digest_migration_check(
+                "migration_file_required",
+                False,
+                "a future reviewed SQLite migration file is required before any table can be created",
+                status_if_false="review_required",
+            ),
+            self._screen_digest_migration_check(
+                "rollback_plan_required",
+                False,
+                "future migration must include a rollback plan and tests before persistence is enabled",
+                status_if_false="review_required",
+            ),
+            self._screen_digest_migration_check(
+                "persistence_not_enabled_now",
+                not bool(proposal.get("writes_database_now")),
+                "this endpoint must not create tables, insert snapshots, or enable retention jobs",
+            ),
+            self._screen_digest_migration_check(
+                "live_trading_disabled",
+                not settings.enable_live_trading and proposal_doc.get("live_trading_enabled") is False,
+                "migration planning must preserve disabled live trading state",
+            ),
+        ]
+        blocked_checks = [item for item in checks if item["status"] == "blocked"]
+        review_required_checks = [item for item in checks if item["status"] == "review_required"]
+        safety_summary = {
+            "writes_database_now": False,
+            "creates_table_now": False,
+            "runs_migration_now": False,
+            "writes_migration_file_now": False,
+            "writes_file": False,
+            "download_created": False,
+            "executes_commands": False,
+            "writes_env": False,
+            "real_screen_capture": False,
+            "pixel_data_stored": False,
+            "ocr_executed": False,
+            "broker_action": False,
+            "order_action": False,
+            "credential_access": False,
+            "live_trading_enabled": False,
+        }
+        return {
+            "schema_version": "screen_readiness_digest_history_migration_checklist.v1",
+            "status": "migration_review_ready" if not blocked_checks else "migration_blocked",
+            "stage": "V4.5-P16",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "migration_plan": {
+                "target_table": "screen_readiness_digest_history",
+                "source_schema": proposal_doc.get("schema_version"),
+                "source_digest_stage": current_digest.get("digest_stage"),
+                "migration_type": "future_reviewed_sqlite_metadata_table",
+                "default_state": "not_applied",
+                "table_exists_now": False,
+                "create_table_now": False,
+                "backfill_now": False,
+                "writes_database_now": False,
+                "writes_migration_file_now": False,
+                "apply_automatically": False,
+                "operator_review_required": True,
+                "rollback_required": True,
+                "test_required": True,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            },
+            "field_mapping": [
+                {"source": field, "target": field, "storage": "metadata_json_or_column"}
+                for field in required_fields
+            ],
+            "excluded_fields": excluded_fields,
+            "checks": checks,
+            "summary": {
+                "required_check_count": len(checks),
+                "passed_check_count": len([item for item in checks if item["status"] == "passed"]),
+                "review_required_count": len(review_required_checks),
+                "blocked_check_count": len(blocked_checks),
+                "migration_allowed_now": False,
+                "manual_review_required": True,
+                "current_export_bundle_hash": current_digest.get("export_bundle_hash"),
+                "proposal_allowed_output": proposal_doc.get("allowed_output"),
+                "allowed_output": "review_only_screen_readiness_digest_history_migration_checklist",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            },
+            "required_future_artifacts": [
+                "reviewed_sqlite_migration",
+                "rollback_plan",
+                "migration_unit_tests",
+                "api_smoke_tests",
+                "forbidden_tracked_file_scan",
+                "operator_approval_record",
+            ],
+            "safety_summary": safety_summary,
+            "allowed_output": "review_only_screen_readiness_digest_history_migration_checklist",
+            "forbidden_actions": [
+                "create_table_now",
+                "run_migration_now",
+                "write_migration_file_now",
+                "insert_digest_snapshot_now",
+                "write_env",
+                "execute_command",
+                "write_file",
+                "create_download",
                 "screen_click",
                 "keyboard_type",
                 "inspect_window",
@@ -910,7 +1083,7 @@ class ScreenMonitoringService:
             counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
         return {
             "status": "timeline_ready",
-            "stage": "V4.5-P15",
+            "stage": "V4.5-P16",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "item_count": len(ordered),
             "counts_by_type": counts_by_type,
@@ -972,7 +1145,7 @@ class ScreenMonitoringService:
                     "acknowledged",
                     report_hash,
                     str(report.get("status") or "unknown"),
-                    str(report.get("stage") or "V4.5-P15"),
+                    str(report.get("stage") or "V4.5-P16"),
                     json.dumps(summary, ensure_ascii=False, default=str),
                     json.dumps(safety_matrix, ensure_ascii=False, default=str),
                     json.dumps(report, ensure_ascii=False, default=str),
@@ -2053,6 +2226,24 @@ class ScreenMonitoringService:
         return {
             "name": name,
             "status": "required" if required else "optional",
+            "reason": reason,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def _screen_digest_migration_check(
+        self,
+        name: str,
+        passed: bool,
+        reason: str,
+        *,
+        status_if_false: str = "blocked",
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "passed" if passed else status_if_false,
+            "required": True,
             "reason": reason,
             "review_only": True,
             "simulation_only": True,
