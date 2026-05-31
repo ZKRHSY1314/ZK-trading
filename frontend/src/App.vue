@@ -771,7 +771,7 @@
           <button class="disabled-live" disabled>实盘执行未启用</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P3" }}</span>
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P4" }}</span>
           <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
           <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
@@ -781,6 +781,8 @@
           <span>风险契约 {{ tradeGatewayRiskContract?.status ?? "未加载" }}</span>
           <span>回滚 {{ tradeGatewayRollbackRunbook?.status ?? "未加载" }}</span>
           <span>Pre-live {{ tradeGatewayPreLivePackage?.status ?? "未加载" }}</span>
+          <span>验收 {{ tradeGatewayAcceptanceChecklist?.status ?? "未加载" }}</span>
+          <span>发布门禁 {{ tradeGatewayReleaseGate?.status ?? "未加载" }}</span>
           <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
           <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
           <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
@@ -846,6 +848,21 @@
             <span>{{ tradeGatewayPreLivePackage.manifest.map((item) => `${item.name}:${item.status}`).join(" / ") }}</span>
             <small>{{ tradeGatewayPreLivePackage.required_manual_artifacts.slice(0, 3).join(" / ") }}</small>
           </div>
+          <div v-if="tradeGatewayAcceptanceChecklist" class="score-item">
+            <strong>Operator Acceptance / {{ tradeGatewayAcceptanceChecklist.status }}</strong>
+            <span>{{ tradeGatewayAcceptanceChecklist.checklist_items.map((item) => `${item.id}:${item.required ? "必需" : "可选"}`).join(" / ") }}</span>
+            <small>API记录验收 {{ tradeGatewayAcceptanceChecklist.acceptance_policy.api_can_record_acceptance ? "允许" : "禁止" }} / 启用网关 {{ tradeGatewayAcceptanceChecklist.acceptance_policy.api_can_enable_gateway ? "允许" : "禁止" }}</small>
+          </div>
+          <div v-if="tradeGatewayReleaseGate" class="score-item">
+            <strong>Disabled Release Gate / {{ tradeGatewayReleaseGate.status }}</strong>
+            <span>{{ tradeGatewayReleaseGate.default_state }} / {{ tradeGatewayReleaseGate.release_gate_state }}</span>
+            <small>可启用 {{ tradeGatewayReleaseGate.decision.release_gate_allows_enablement_now ? "是" : "否" }} / API启用 {{ tradeGatewayReleaseGate.decision.api_can_enable_gateway ? "允许" : "禁止" }}</small>
+          </div>
+          <div v-if="tradeGatewayReleaseGate" class="score-item">
+            <strong>Release Blockers</strong>
+            <span>{{ tradeGatewayReleaseGate.release_blockers.join(" / ") }}</span>
+            <small>这些阻断项只能由独立实盘集成项目和人工审查处理，当前面板不提供启用动作。</small>
+          </div>
           <div
             v-for="component in tradeGatewayCapabilities.required_future_components"
             :key="component.name"
@@ -872,7 +889,7 @@
           <div class="score-item">
             <strong>Forbidden Modes</strong>
             <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
-            <small>这些能力在 V5.0-P3 只能作为阻断项展示。</small>
+            <small>这些能力在 V5.0-P4 只能作为阻断项展示。</small>
           </div>
         </div>
         <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
@@ -1606,6 +1623,8 @@ type TradeGatewayReviewGates = {
     audit_contract_ready: boolean;
     rollback_runbook_ready: boolean;
     pre_live_package_ready: boolean;
+    operator_acceptance_checklist_ready: boolean;
+    disabled_release_gate_ready: boolean;
     ready_for_live_enablement: boolean;
     live_trading_enabled: boolean;
     next_required_action: string;
@@ -1788,6 +1807,72 @@ type TradeGatewayPreLivePackage = {
     gateway_can_execute: boolean;
     requires_operator_release_review: boolean;
     requires_separate_live_integration_plan: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+  allowed_output: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayAcceptanceChecklist = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  checklist_state: string;
+  checklist_items: {
+    id: string;
+    requirement: string;
+    required_evidence: string;
+    required: boolean;
+    blocking_if_missing: boolean;
+    operator_review_required: boolean;
+    api_can_mark_complete: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }[];
+  operator_attestation_phrase: string;
+  acceptance_policy: {
+    all_items_required: boolean;
+    operator_review_required: boolean;
+    api_can_record_acceptance: boolean;
+    api_can_enable_gateway: boolean;
+    missing_item_effect: string;
+  };
+  decision: {
+    checklist_ready_for_review: boolean;
+    operator_acceptance_recorded_now: boolean;
+    acceptance_allows_enablement_now: boolean;
+    ready_for_live_enablement: boolean;
+    gateway_can_execute: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+  allowed_output: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayReleaseGate = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  gate_name: string;
+  default_state: string;
+  release_gate_state: string;
+  preconditions_for_future_external_review: string[];
+  release_blockers: string[];
+  gate_evidence: Record<string, string | number | boolean>;
+  decision: {
+    release_gate_ready_for_review: boolean;
+    release_gate_allows_enablement_now: boolean;
+    ready_for_live_enablement: boolean;
+    gateway_can_execute: boolean;
+    api_can_enable_gateway: boolean;
+    api_can_record_release_approval: boolean;
     next_required_action: string;
   };
   safety_summary: Record<string, boolean>;
@@ -3375,6 +3460,8 @@ const tradeGatewayAuditSchema = ref<TradeGatewayAuditSchema | null>(null);
 const tradeGatewayRiskContract = ref<TradeGatewayRiskContract | null>(null);
 const tradeGatewayRollbackRunbook = ref<TradeGatewayRollbackRunbook | null>(null);
 const tradeGatewayPreLivePackage = ref<TradeGatewayPreLivePackage | null>(null);
+const tradeGatewayAcceptanceChecklist = ref<TradeGatewayAcceptanceChecklist | null>(null);
+const tradeGatewayReleaseGate = ref<TradeGatewayReleaseGate | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -3817,7 +3904,9 @@ async function loadTradeExecutionGateway() {
       auditSchemaData,
       riskContractData,
       rollbackRunbookData,
-      preLivePackageData
+      preLivePackageData,
+      acceptanceChecklistData,
+      releaseGateData
     ] = await Promise.all([
       fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
       fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates"),
@@ -3825,7 +3914,9 @@ async function loadTradeExecutionGateway() {
       fetchJson<TradeGatewayAuditSchema>("/api/trade-execution-gateway/audit-evidence-schema"),
       fetchJson<TradeGatewayRiskContract>("/api/trade-execution-gateway/risk-gate-contract"),
       fetchJson<TradeGatewayRollbackRunbook>("/api/trade-execution-gateway/rollback-runbook"),
-      fetchJson<TradeGatewayPreLivePackage>("/api/trade-execution-gateway/pre-live-review-package")
+      fetchJson<TradeGatewayPreLivePackage>("/api/trade-execution-gateway/pre-live-review-package"),
+      fetchJson<TradeGatewayAcceptanceChecklist>("/api/trade-execution-gateway/operator-acceptance-checklist"),
+      fetchJson<TradeGatewayReleaseGate>("/api/trade-execution-gateway/disabled-release-gate")
     ]);
     tradeGatewayCapabilities.value = capabilitiesData;
     tradeGatewayReviewGates.value = gatesData;
@@ -3834,6 +3925,8 @@ async function loadTradeExecutionGateway() {
     tradeGatewayRiskContract.value = riskContractData;
     tradeGatewayRollbackRunbook.value = rollbackRunbookData;
     tradeGatewayPreLivePackage.value = preLivePackageData;
+    tradeGatewayAcceptanceChecklist.value = acceptanceChecklistData;
+    tradeGatewayReleaseGate.value = releaseGateData;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
   } finally {

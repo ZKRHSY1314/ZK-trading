@@ -1,11 +1,11 @@
-from app.config import settings
+﻿from app.config import settings
 from app.trade_execution.gateway import TradeExecutionGatewayService
 
 
 def test_trade_execution_gateway_capabilities_are_review_only():
     data = TradeExecutionGatewayService().capabilities()
 
-    assert data["stage"] == "V5.0-P3"
+    assert data["stage"] == "V5.0-P4"
     assert data["status"] == "review_only_ready"
     assert data["gateway_enabled"] is False
     assert data["execution_enabled"] is False
@@ -21,13 +21,18 @@ def test_trade_execution_gateway_capabilities_are_review_only():
     assert "portfolio_symbol_risk_gate_contract_review" in data["allowed_modes"]
     assert "rollback_runbook_review" in data["allowed_modes"]
     assert "pre_live_review_package_review" in data["allowed_modes"]
+    assert "operator_acceptance_checklist_review" in data["allowed_modes"]
+    assert "disabled_release_gate_review" in data["allowed_modes"]
     assert "place_real_trade" in data["forbidden_modes"]
+    assert "enable_gateway_by_api" in data["forbidden_modes"]
     components = {item["name"]: item for item in data["required_future_components"]}
     assert components["ManualConfirmationContract"]["status"] == "review_contract_defined"
     assert components["PortfolioRiskGateContract"]["status"] == "review_contract_defined"
     assert components["ExecutionAuditLedger"]["status"] == "review_schema_defined_not_persisted"
     assert components["ManualRollbackRunbook"]["status"] == "review_runbook_defined"
     assert components["PreLiveReviewPackage"]["status"] == "review_package_defined"
+    assert components["OperatorAcceptanceChecklist"]["status"] == "review_checklist_defined"
+    assert components["DisabledByDefaultReleaseGate"]["status"] == "review_gate_defined"
     assert data["safety_summary"]["places_real_trade"] is False
     assert data["safety_summary"]["connects_broker"] is False
 
@@ -36,8 +41,8 @@ def test_trade_execution_gateway_review_gates_are_pre_live_metadata_only():
     data = TradeExecutionGatewayService().review_gates()
     gates = {gate["name"]: gate for gate in data["gates"]}
 
-    assert data["stage"] == "V5.0-P3"
-    assert data["status"] == "pre_live_review_metadata_ready"
+    assert data["stage"] == "V5.0-P4"
+    assert data["status"] == "disabled_release_gate_metadata_ready"
     assert gates["live_trading_disabled"]["status"] == "passed"
     assert gates["broker_adapter_absent"]["status"] == "passed"
     assert gates["credential_storage_absent"]["status"] == "passed"
@@ -46,12 +51,16 @@ def test_trade_execution_gateway_review_gates_are_pre_live_metadata_only():
     assert gates["audit_and_rollback_required"]["status"] == "passed"
     assert gates["audit_and_rollback_required"]["value"] == "audit_schema_and_rollback_runbook_review_ready"
     assert gates["pre_live_review_package_required"]["status"] == "passed"
+    assert gates["operator_acceptance_checklist_required"]["status"] == "passed"
+    assert gates["disabled_release_gate_required"]["status"] == "passed"
     assert data["decision"]["gateway_can_execute"] is False
     assert data["decision"]["manual_confirmation_contract_ready"] is True
     assert data["decision"]["risk_contract_ready"] is True
     assert data["decision"]["audit_contract_ready"] is True
     assert data["decision"]["rollback_runbook_ready"] is True
     assert data["decision"]["pre_live_package_ready"] is True
+    assert data["decision"]["operator_acceptance_checklist_ready"] is True
+    assert data["decision"]["disabled_release_gate_ready"] is True
     assert data["decision"]["ready_for_live_enablement"] is False
     assert data["decision"]["live_trading_enabled"] is False
     assert data["safety_summary"]["real_money_execution_enabled"] is False
@@ -62,7 +71,7 @@ def test_manual_confirmation_contract_is_review_only():
     input_names = {item["name"] for item in data["required_operator_inputs"]}
 
     assert data["schema_version"] == "trade_execution_manual_confirmation_contract.v1"
-    assert data["stage"] == "V5.0-P3"
+    assert data["stage"] == "V5.0-P4"
     assert data["status"] == "confirmation_contract_review_ready"
     assert data["contract_state"] == "defined_for_review_only"
     assert "operator_id" in input_names
@@ -82,7 +91,7 @@ def test_audit_evidence_schema_is_not_persisted_or_migrated():
     fields = {item["name"]: item for item in data["fields"]}
 
     assert data["schema_version"] == "trade_execution_audit_evidence_schema.v1"
-    assert data["stage"] == "V5.0-P3"
+    assert data["stage"] == "V5.0-P4"
     assert data["status"] == "audit_schema_review_ready"
     assert data["storage_state"] == "not_persisted"
     assert data["target_future_table"] == "trade_execution_audit_ledger"
@@ -106,7 +115,7 @@ def test_risk_gate_contract_is_review_only_and_blocks_overrides():
     symbol_gates = {item["name"]: item for item in data["symbol_gates"]}
 
     assert data["schema_version"] == "trade_execution_risk_gate_contract.v1"
-    assert data["stage"] == "V5.0-P3"
+    assert data["stage"] == "V5.0-P4"
     assert data["status"] == "risk_gate_contract_review_ready"
     assert data["contract_state"] == "defined_for_review_only"
     assert portfolio_gates["total_exposure"]["limit"] == 0.60
@@ -129,7 +138,7 @@ def test_rollback_runbook_is_review_only_and_non_executable():
     step_names = {item["step"] for item in data["rollback_steps"]}
 
     assert data["schema_version"] == "trade_execution_rollback_runbook.v1"
-    assert data["stage"] == "V5.0-P3"
+    assert data["stage"] == "V5.0-P4"
     assert data["status"] == "rollback_runbook_review_ready"
     assert data["runbook_state"] == "defined_for_review_only"
     assert "risk_gate_blocked" in data["trigger_events"]
@@ -152,7 +161,7 @@ def test_pre_live_review_package_assembles_contracts_without_enablement():
     manifest = {item["name"]: item for item in data["manifest"]}
 
     assert data["schema_version"] == "trade_execution_pre_live_review_package.v1"
-    assert data["stage"] == "V5.0-P3"
+    assert data["stage"] == "V5.0-P4"
     assert data["status"] == "pre_live_review_package_ready"
     assert len(data["package_id"]) == 64
     assert set(manifest) == {
@@ -162,9 +171,13 @@ def test_pre_live_review_package_assembles_contracts_without_enablement():
         "risk_gate_contract",
         "rollback_runbook",
         "review_gates",
+        "operator_acceptance_checklist",
+        "disabled_release_gate",
     }
     assert manifest["rollback_runbook"]["status"] == "rollback_runbook_review_ready"
-    assert manifest["review_gates"]["status"] == "pre_live_review_metadata_ready"
+    assert manifest["review_gates"]["status"] == "disabled_release_gate_metadata_ready"
+    assert manifest["operator_acceptance_checklist"]["status"] == "operator_acceptance_checklist_review_ready"
+    assert manifest["disabled_release_gate"]["status"] == "disabled_release_gate_review_ready"
     assert "rollback_drill_evidence" in data["required_manual_artifacts"]
     assert data["included_safety_evidence"]["blocked_gate_count"] == 0
     assert data["decision"]["package_ready_for_manual_review"] is True
@@ -173,6 +186,54 @@ def test_pre_live_review_package_assembles_contracts_without_enablement():
     assert data["safety_summary"]["writes_database_now"] is False
     assert data["safety_summary"]["runs_migration_now"] is False
     assert data["safety_summary"]["stores_credentials"] is False
+    assert data["safety_summary"]["connects_broker"] is False
+    assert data["safety_summary"]["places_real_trade"] is False
+
+
+def test_operator_acceptance_checklist_is_review_only_and_cannot_record_acceptance():
+    data = TradeExecutionGatewayService().operator_acceptance_checklist()
+    item_ids = {item["id"] for item in data["checklist_items"]}
+
+    assert data["schema_version"] == "trade_execution_operator_acceptance_checklist.v1"
+    assert data["stage"] == "V5.0-P4"
+    assert data["status"] == "operator_acceptance_checklist_review_ready"
+    assert data["checklist_state"] == "defined_for_manual_review_only"
+    assert "health_live_trading_disabled" in item_ids
+    assert "forbidden_surfaces_absent" in item_ids
+    assert all(item["blocking_if_missing"] is True for item in data["checklist_items"])
+    assert all(item["api_can_mark_complete"] is False for item in data["checklist_items"])
+    assert data["acceptance_policy"]["api_can_record_acceptance"] is False
+    assert data["acceptance_policy"]["api_can_enable_gateway"] is False
+    assert data["decision"]["operator_acceptance_recorded_now"] is False
+    assert data["decision"]["acceptance_allows_enablement_now"] is False
+    assert data["decision"]["ready_for_live_enablement"] is False
+    assert data["decision"]["gateway_can_execute"] is False
+    assert data["safety_summary"]["records_acceptance_now"] is False
+    assert data["safety_summary"]["enables_gateway_now"] is False
+    assert data["safety_summary"]["writes_database_now"] is False
+    assert data["safety_summary"]["places_real_trade"] is False
+
+
+def test_disabled_release_gate_is_review_only_and_default_disabled():
+    data = TradeExecutionGatewayService().disabled_release_gate()
+
+    assert data["schema_version"] == "trade_execution_disabled_release_gate.v1"
+    assert data["stage"] == "V5.0-P4"
+    assert data["status"] == "disabled_release_gate_review_ready"
+    assert data["default_state"] == "disabled"
+    assert data["release_gate_state"] == "review_only_metadata"
+    assert "no_api_enablement_surface" in data["release_blockers"]
+    assert "separate_live_integration_plan_required" in data["release_blockers"]
+    assert data["gate_evidence"]["blocked_gate_count"] == 0
+    assert data["gate_evidence"]["live_trading_enabled"] is False
+    assert data["decision"]["release_gate_allows_enablement_now"] is False
+    assert data["decision"]["ready_for_live_enablement"] is False
+    assert data["decision"]["gateway_can_execute"] is False
+    assert data["decision"]["api_can_enable_gateway"] is False
+    assert data["decision"]["api_can_record_release_approval"] is False
+    assert data["safety_summary"]["default_disabled"] is True
+    assert data["safety_summary"]["enables_gateway_now"] is False
+    assert data["safety_summary"]["writes_database_now"] is False
     assert data["safety_summary"]["connects_broker"] is False
     assert data["safety_summary"]["places_real_trade"] is False
 
@@ -199,6 +260,8 @@ def test_trade_execution_gateway_api_smoke(client):
     risk_contract_resp = client.get("/api/trade-execution-gateway/risk-gate-contract")
     rollback_resp = client.get("/api/trade-execution-gateway/rollback-runbook")
     pre_live_resp = client.get("/api/trade-execution-gateway/pre-live-review-package")
+    checklist_resp = client.get("/api/trade-execution-gateway/operator-acceptance-checklist")
+    release_gate_resp = client.get("/api/trade-execution-gateway/disabled-release-gate")
     health_resp = client.get("/health")
 
     assert caps_resp.status_code == 200
@@ -208,6 +271,8 @@ def test_trade_execution_gateway_api_smoke(client):
     assert risk_contract_resp.status_code == 200
     assert rollback_resp.status_code == 200
     assert pre_live_resp.status_code == 200
+    assert checklist_resp.status_code == 200
+    assert release_gate_resp.status_code == 200
     assert health_resp.status_code == 200
     assert caps_resp.json()["status"] == "review_only_ready"
     assert caps_resp.json()["execution_enabled"] is False
@@ -216,6 +281,7 @@ def test_trade_execution_gateway_api_smoke(client):
     assert gates_resp.json()["decision"]["manual_confirmation_contract_ready"] is True
     assert gates_resp.json()["decision"]["risk_contract_ready"] is True
     assert gates_resp.json()["decision"]["rollback_runbook_ready"] is True
+    assert gates_resp.json()["decision"]["disabled_release_gate_ready"] is True
     assert gates_resp.json()["decision"]["ready_for_live_enablement"] is False
     assert contract_resp.json()["decision"]["contract_allows_execution_now"] is False
     assert audit_schema_resp.json()["writes_database_now"] is False
@@ -225,5 +291,8 @@ def test_trade_execution_gateway_api_smoke(client):
     assert rollback_resp.json()["decision"]["runbook_allows_execution_now"] is False
     assert pre_live_resp.json()["decision"]["gateway_can_execute"] is False
     assert pre_live_resp.json()["decision"]["ready_for_live_enablement"] is False
+    assert checklist_resp.json()["decision"]["acceptance_allows_enablement_now"] is False
+    assert release_gate_resp.json()["decision"]["release_gate_allows_enablement_now"] is False
+    assert release_gate_resp.json()["default_state"] == "disabled"
     assert gates_resp.json()["blocked_gate_count"] == 0
     assert health_resp.json()["live_trading_enabled"] is False

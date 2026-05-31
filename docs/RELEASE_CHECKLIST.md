@@ -191,6 +191,10 @@
 - [ ] V5.0-P3 exposes `GET /api/trade-execution-gateway/pre-live-review-package` as a review-only manifest over capabilities, confirmation, audit schema, risk gates, rollback, and review gates.
 - [ ] V5.0-P3 dashboard shows rollback triggers/steps, package hash, manifest status, required manual artifacts, and disabled live-trading evidence.
 - [ ] V5.0-P3 must keep `runbook_allows_execution_now=false`, `ready_for_live_enablement=false`, `gateway_can_execute=false`, `writes_database_now=false`, `runs_migration_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
+- [ ] V5.0-P4 exposes `GET /api/trade-execution-gateway/operator-acceptance-checklist` as review-only metadata for final manual acceptance requirements.
+- [ ] V5.0-P4 exposes `GET /api/trade-execution-gateway/disabled-release-gate` as a disabled-by-default release gate that cannot enable the gateway through API.
+- [ ] V5.0-P4 dashboard shows checklist items, required evidence, release blockers, default disabled state, and explicit no API enablement evidence.
+- [ ] V5.0-P4 must keep `acceptance_allows_enablement_now=false`, `release_gate_allows_enablement_now=false`, `api_can_enable_gateway=false`, `gateway_can_execute=false`, `writes_database_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
 
 ## 14. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:

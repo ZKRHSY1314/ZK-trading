@@ -12,7 +12,7 @@ from app.risk.portfolio import DEFAULT_LIMITS
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.0-P3"
+    stage = "V5.0-P4"
 
     def capabilities(self) -> dict[str, Any]:
         gates = self.review_gates()["gates"]
@@ -44,6 +44,8 @@ class TradeExecutionGatewayService:
                 "portfolio_symbol_risk_gate_contract_review",
                 "rollback_runbook_review",
                 "pre_live_review_package_review",
+                "operator_acceptance_checklist_review",
+                "disabled_release_gate_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -55,6 +57,8 @@ class TradeExecutionGatewayService:
                 "screen_click_trading",
                 "live_auto_trading",
                 "bypass_risk_gate",
+                "enable_gateway_by_api",
+                "approve_release_by_api",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -131,7 +135,7 @@ class TradeExecutionGatewayService:
                 "requires_future_risk_contract": False,
                 "requires_future_audit_storage": True,
                 "requires_future_rollback_runbook": False,
-                "next_required_action": "review_pre_live_package",
+                "next_required_action": "review_operator_acceptance_checklist",
             },
             "forbidden_inputs": [
                 "broker_password",
@@ -202,7 +206,7 @@ class TradeExecutionGatewayService:
                 "schema_allows_execution_now": False,
                 "schema_persistence_enabled_now": False,
                 "migration_allowed_now": False,
-                "next_required_action": "review_pre_live_package",
+                "next_required_action": "review_operator_acceptance_checklist",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -346,7 +350,7 @@ class TradeExecutionGatewayService:
                 "risk_gate_can_override_manual_confirmation": True,
                 "requires_fresh_risk_snapshot": True,
                 "requires_future_rollback_runbook": False,
-                "next_required_action": "review_pre_live_package",
+                "next_required_action": "review_operator_acceptance_checklist",
             },
             "integration_notes": {
                 "source_portfolio_limits": "app.risk.portfolio.DEFAULT_LIMITS",
@@ -430,7 +434,7 @@ class TradeExecutionGatewayService:
                 "runbook_allows_execution_now": False,
                 "requires_manual_postmortem": True,
                 "ready_for_live_enablement": False,
-                "next_required_action": "assemble_pre_live_review_package",
+                "next_required_action": "review_operator_acceptance_checklist",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -460,6 +464,8 @@ class TradeExecutionGatewayService:
             self._package_item("risk_gate_contract", risk_contract),
             self._package_item("rollback_runbook", rollback_runbook),
             self._package_item("review_gates", review_gates),
+            self._package_item("operator_acceptance_checklist", self.operator_acceptance_checklist()),
+            self._package_item("disabled_release_gate", self.disabled_release_gate()),
         ]
         package_seed = {
             "stage": self.stage,
@@ -486,6 +492,8 @@ class TradeExecutionGatewayService:
                 "audit_hash_chain_review",
                 "legal_or_compliance_review_if_real_money_is_considered",
                 "fresh_health_live_trading_enabled_false",
+                "operator_acceptance_checklist_reviewed",
+                "disabled_release_gate_reviewed",
             ],
             "included_safety_evidence": {
                 "capabilities_status": capabilities["status"],
@@ -500,7 +508,7 @@ class TradeExecutionGatewayService:
                 "gateway_can_execute": False,
                 "requires_operator_release_review": True,
                 "requires_separate_live_integration_plan": True,
-                "next_required_action": "keep_gateway_disabled_until_separate_live_integration_plan",
+                "next_required_action": "complete_manual_operator_acceptance_outside_api",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -512,6 +520,138 @@ class TradeExecutionGatewayService:
                 "places_real_trade": False,
             },
             "allowed_output": "review_only_trade_execution_pre_live_review_package",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def operator_acceptance_checklist(self) -> dict[str, Any]:
+        checklist_items = [
+            self._checklist_item(
+                "health_live_trading_disabled",
+                "Fresh `/health` evidence shows live_trading_enabled=false.",
+                "health_response_hash",
+            ),
+            self._checklist_item(
+                "pre_live_package_reviewed",
+                "Operator reviewed the pre-live package manifest and package hash.",
+                "pre_live_package_hash",
+            ),
+            self._checklist_item(
+                "manual_confirmation_contract_reviewed",
+                "Manual confirmation fields, TTL, dual control, and forbidden sensitive inputs were reviewed.",
+                "manual_confirmation_contract_hash",
+            ),
+            self._checklist_item(
+                "risk_gate_contract_reviewed",
+                "Portfolio and symbol hard-block gates were reviewed and no override path is allowed.",
+                "risk_gate_contract_hash",
+            ),
+            self._checklist_item(
+                "rollback_runbook_drill_reviewed",
+                "Manual rollback triggers, stop steps, and postmortem requirements were reviewed.",
+                "rollback_runbook_hash",
+            ),
+            self._checklist_item(
+                "audit_evidence_schema_reviewed",
+                "Future append-only audit evidence schema was reviewed without enabling persistence now.",
+                "audit_evidence_schema_hash",
+            ),
+            self._checklist_item(
+                "forbidden_surfaces_absent",
+                "No broker, order, credential, account/funds, screen-click, or live-trading route is present.",
+                "forbidden_route_scan_summary",
+            ),
+        ]
+        return {
+            "schema_version": "trade_execution_operator_acceptance_checklist.v1",
+            "status": "operator_acceptance_checklist_review_ready",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "checklist_state": "defined_for_manual_review_only",
+            "checklist_items": checklist_items,
+            "operator_attestation_phrase": "我确认这是发布前人工验收清单，不是实盘启用授权",
+            "acceptance_policy": {
+                "all_items_required": True,
+                "operator_review_required": True,
+                "api_can_record_acceptance": False,
+                "api_can_enable_gateway": False,
+                "missing_item_effect": "block_live_integration_review",
+            },
+            "decision": {
+                "checklist_ready_for_review": True,
+                "operator_acceptance_recorded_now": False,
+                "acceptance_allows_enablement_now": False,
+                "ready_for_live_enablement": False,
+                "gateway_can_execute": False,
+                "next_required_action": "review_disabled_release_gate",
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "writes_database_now": False,
+                "records_acceptance_now": False,
+                "enables_gateway_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+            },
+            "allowed_output": "review_only_trade_execution_operator_acceptance_checklist",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def disabled_release_gate(self) -> dict[str, Any]:
+        gates = self.review_gates()
+        release_blockers = [
+            "gateway_default_state_disabled",
+            "no_api_enablement_surface",
+            "no_broker_adapter",
+            "no_credential_storage",
+            "no_order_execution_route",
+            "no_account_or_funds_read_route",
+            "operator_acceptance_not_recorded_by_api",
+            "separate_live_integration_plan_required",
+        ]
+        return {
+            "schema_version": "trade_execution_disabled_release_gate.v1",
+            "status": "disabled_release_gate_review_ready",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "gate_name": "DisabledByDefaultReleaseGate",
+            "default_state": "disabled",
+            "release_gate_state": "review_only_metadata",
+            "preconditions_for_future_external_review": [
+                "all_review_gates_passed",
+                "operator_acceptance_checklist_completed_outside_api",
+                "separate_live_integration_plan_reviewed",
+                "legal_or_compliance_review_if_real_money_is_considered",
+                "new_tests_for_any_live_adapter_before_code_merge",
+            ],
+            "release_blockers": release_blockers,
+            "gate_evidence": {
+                "review_gates_status": gates["status"],
+                "blocked_gate_count": gates["blocked_gate_count"],
+                "review_required_count": gates["review_required_count"],
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "decision": {
+                "release_gate_ready_for_review": True,
+                "release_gate_allows_enablement_now": False,
+                "ready_for_live_enablement": False,
+                "gateway_can_execute": False,
+                "api_can_enable_gateway": False,
+                "api_can_record_release_approval": False,
+                "next_required_action": "keep_disabled_until_separate_live_integration_project",
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "default_disabled": True,
+                "enables_gateway_now": False,
+                "writes_database_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+            },
+            "allowed_output": "review_only_trade_execution_disabled_release_gate",
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -582,12 +722,26 @@ class TradeExecutionGatewayService:
                 "operator_pre_live_review_package",
                 "V5.0-P3 assembles a manual review package, but it still cannot enable or execute live trading.",
             ),
+            self._gate(
+                "operator_acceptance_checklist_required",
+                "passed",
+                "operator_acceptance_checklist_review_ready",
+                "manual_operator_acceptance_checklist",
+                "V5.0-P4 defines a manual acceptance checklist, but the API cannot record acceptance or enable the gateway.",
+            ),
+            self._gate(
+                "disabled_release_gate_required",
+                "passed",
+                "disabled_release_gate_review_ready",
+                "disabled_by_default_release_gate",
+                "V5.0-P4 defines a disabled-by-default release gate; enablement still requires a separate live-integration project.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "pre_live_review_metadata_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "disabled_release_gate_metadata_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -601,9 +755,11 @@ class TradeExecutionGatewayService:
                 "audit_contract_ready": True,
                 "rollback_runbook_ready": True,
                 "pre_live_package_ready": True,
+                "operator_acceptance_checklist_ready": True,
+                "disabled_release_gate_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "keep_gateway_disabled_until_separate_live_integration_plan",
+                "next_required_action": "keep_disabled_until_separate_live_integration_project",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -643,6 +799,18 @@ class TradeExecutionGatewayService:
                 "required_before": "any_operator_release_review",
                 "review_only": True,
             },
+            {
+                "name": "OperatorAcceptanceChecklist",
+                "status": "review_checklist_defined",
+                "required_before": "any_external_live_integration_review",
+                "review_only": True,
+            },
+            {
+                "name": "DisabledByDefaultReleaseGate",
+                "status": "review_gate_defined",
+                "required_before": "any_gateway_enablement_discussion",
+                "review_only": True,
+            },
         ]
 
     def _safety_summary(self) -> dict[str, bool]:
@@ -671,6 +839,20 @@ class TradeExecutionGatewayService:
             "status": payload.get("status"),
             "stage": payload.get("stage"),
             "included": True,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _checklist_item(self, item_id: str, requirement: str, evidence: str) -> dict[str, Any]:
+        return {
+            "id": item_id,
+            "requirement": requirement,
+            "required_evidence": evidence,
+            "required": True,
+            "blocking_if_missing": True,
+            "operator_review_required": True,
+            "api_can_mark_complete": False,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,

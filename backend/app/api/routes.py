@@ -164,6 +164,16 @@ def trade_execution_gateway_pre_live_review_package() -> dict:
     return TradeExecutionGatewayService().pre_live_review_package()
 
 
+@router.get("/trade-execution-gateway/operator-acceptance-checklist")
+def trade_execution_gateway_operator_acceptance_checklist() -> dict:
+    return TradeExecutionGatewayService().operator_acceptance_checklist()
+
+
+@router.get("/trade-execution-gateway/disabled-release-gate")
+def trade_execution_gateway_disabled_release_gate() -> dict:
+    return TradeExecutionGatewayService().disabled_release_gate()
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()
