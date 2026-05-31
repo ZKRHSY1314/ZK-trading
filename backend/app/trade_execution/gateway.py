@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P20"
+    stage = "V5.5-P21"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -73,6 +73,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval_metadata",
                 "audit_ledger_migration_manual_release_health_digest_history_release_readiness_review",
                 "audit_ledger_migration_manual_release_health_digest_history_approval_freshness_review",
+                "audit_ledger_migration_manual_release_health_digest_history_release_package_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -114,6 +115,7 @@ class TradeExecutionGatewayService:
                 "approve_manual_release_health_digest_history_migration_as_execution",
                 "approve_manual_release_health_digest_history_release_from_readiness",
                 "reuse_expired_manual_release_health_digest_history_approval_as_current",
+                "treat_manual_release_health_digest_history_package_as_release_approval",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -4631,6 +4633,269 @@ class TradeExecutionGatewayService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def audit_ledger_migration_manual_release_health_digest_history_release_package(
+        self,
+        limit: int = 50,
+        max_age_days: int = 7,
+        repeat_checks: int = 2,
+    ) -> dict[str, Any]:
+        safe_max_age_days = max(1, min(max_age_days, 365))
+        proposal = self.audit_ledger_migration_manual_release_health_digest_history_retention_proposal(
+            limit=limit,
+            max_age_days=safe_max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        checklist = self.audit_ledger_migration_manual_release_health_digest_history_migration_readiness_checklist(
+            limit=limit,
+            max_age_days=safe_max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        verification = self.verify_audit_ledger_migration_manual_release_health_digest_history_migration_spec(
+            limit=limit,
+            max_age_days=safe_max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        approvals = self.list_audit_ledger_migration_manual_release_health_digest_history_migration_spec_approvals(
+            limit=limit
+        )
+        latest_approval = approvals[0] if approvals else None
+        release = self.audit_ledger_migration_manual_release_health_digest_history_release_readiness(
+            limit=limit,
+            max_age_days=safe_max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        approval_review = self.audit_ledger_migration_manual_release_health_digest_history_approval_review(
+            limit=limit,
+            max_age_days=safe_max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        manifest_items = [
+            self._release_package_item(
+                "P15_health_digest_history_retention_proposal",
+                proposal.get("status"),
+                proposal.get("allowed_output"),
+                proposal.get("generated_at"),
+                proposal.get("status") == "history_retention_proposal_ready"
+                and proposal.get("safety_summary", {}).get("persists_manual_release_health_digest_history") is False
+                and proposal.get("safety_summary", {}).get("writes_database_now") is False,
+            ),
+            self._release_package_item(
+                "P16_health_digest_history_migration_checklist",
+                checklist.get("status"),
+                checklist.get("allowed_output"),
+                checklist.get("generated_at"),
+                checklist.get("status") == "history_migration_readiness_review_ready"
+                and checklist.get("summary", {}).get("migration_allowed_now") is False
+                and checklist.get("safety_summary", {}).get("runs_migration_now") is False,
+            ),
+            self._release_package_item(
+                "P17_health_digest_history_migration_spec_verifier",
+                verification.get("status"),
+                verification.get("allowed_output"),
+                verification.get("generated_at"),
+                verification.get("status") == "spec_verification_passed"
+                and verification.get("summary", {}).get("failed_count") == 0
+                and verification.get("safety_summary", {}).get("executes_sql") is False,
+            ),
+            self._release_package_item(
+                "P18_health_digest_history_spec_approval_metadata",
+                latest_approval.get("status") if latest_approval else "missing",
+                latest_approval.get("allowed_output") if latest_approval else "missing",
+                latest_approval.get("approved_at") if latest_approval else None,
+                bool(latest_approval)
+                and latest_approval.get("verification_status") == "spec_verification_passed"
+                and latest_approval.get("migration_allowed_now") is False,
+            ),
+            self._release_package_item(
+                "P19_health_digest_history_release_readiness",
+                release.get("status"),
+                release.get("allowed_output"),
+                release.get("generated_at"),
+                release.get("status") == "release_evidence_ready"
+                and release.get("decision", {}).get("migration_allowed_now") is False
+                and release.get("decision", {}).get("release_approved_now") is False,
+            ),
+            self._release_package_item(
+                "P20_health_digest_history_approval_freshness",
+                approval_review.get("status"),
+                approval_review.get("allowed_output"),
+                approval_review.get("generated_at"),
+                approval_review.get("status") == "approval_current"
+                and approval_review.get("decision", {}).get("migration_allowed_now") is False
+                and approval_review.get("decision", {}).get("release_approved_now") is False,
+            ),
+        ]
+        package_id_inputs = {
+            "proposal_status": proposal.get("status"),
+            "checklist_status": checklist.get("status"),
+            "verification_status": verification.get("status"),
+            "spec_hash": verification.get("spec_hash"),
+            "latest_approval_event_id": latest_approval.get("event_id") if latest_approval else None,
+            "latest_approval_spec_hash": latest_approval.get("spec_hash") if latest_approval else None,
+            "release_status": release.get("status"),
+            "approval_review_status": approval_review.get("status"),
+            "max_age_days": safe_max_age_days,
+            "repeat_checks": max(1, min(repeat_checks, 10)),
+        }
+        package_id = self._stable_hash(package_id_inputs)
+        gates = [
+            self._release_readiness_gate(
+                "history_retention_proposal_ready",
+                proposal.get("status") == "history_retention_proposal_ready",
+                "V5.5-P15 health digest history retention proposal must be ready.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "history_migration_checklist_ready",
+                checklist.get("status") == "history_migration_readiness_review_ready",
+                "V5.5-P16 health digest history migration checklist must be review-ready.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "history_migration_spec_verified",
+                verification.get("status") == "spec_verification_passed"
+                and verification.get("summary", {}).get("failed_count") == 0,
+                "V5.5-P17 health digest history dry-run verifier must pass without failed checks.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "history_release_readiness_ready",
+                release.get("status") == "release_evidence_ready",
+                "V5.5-P19 health digest history release readiness must be evidence-ready.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "history_approval_current",
+                approval_review.get("status") == "approval_current",
+                "V5.5-P20 approval freshness review must be current before package review.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "no_history_migration_execution_enabled",
+                proposal.get("safety_summary", {}).get("writes_database_now") is False
+                and checklist.get("safety_summary", {}).get("runs_migration_now") is False
+                and verification.get("safety_summary", {}).get("executes_sql") is False
+                and release.get("safety_summary", {}).get("runs_migration_now") is False
+                and approval_review.get("safety_summary", {}).get("writes_database_now") is False,
+                "release package must not enable SQL, migrations, table creation, history-row writes, or release-file writes.",
+            ),
+            self._release_readiness_gate(
+                "live_trading_disabled",
+                not settings.enable_live_trading
+                and proposal.get("live_trading_enabled") is False
+                and release.get("live_trading_enabled") is False
+                and approval_review.get("live_trading_enabled") is False,
+                "live trading must remain disabled.",
+            ),
+        ]
+        blocked = [gate for gate in gates if gate["status"] == "blocked"]
+        review_required = [gate for gate in gates if gate["status"] == "review_required"]
+        if blocked:
+            status = "release_package_blocked"
+        elif review_required:
+            status = "release_package_review_required"
+        else:
+            status = "release_package_ready_for_manual_review"
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_manual_release_health_digest_history_release_package.v1",
+            "status": status,
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "package_id": package_id,
+            "package_id_inputs": package_id_inputs,
+            "manifest": {
+                "name": "trade_execution_audit_ledger_migration_manual_release_health_digest_history_package",
+                "purpose": "manual review evidence for a future SQLite manual release health digest history migration",
+                "items": manifest_items,
+                "required_manual_artifacts_before_execution": [
+                    "reviewed_sqlite_migration_file",
+                    "explicit_operator_release_approval",
+                    "database_backup_and_restore_drill",
+                    "rollback_plan_review",
+                    "migration_unit_tests",
+                    "api_smoke_tests",
+                    "health_digest_history_retention_policy_review",
+                    "spec_hash_freshness_review",
+                    "forbidden_tracked_file_scan",
+                    "separate_live_integration_review",
+                ],
+                "delivery": "api_response_only",
+                "writes_file": False,
+                "download_created": False,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "evidence": {
+                "proposal_status": proposal.get("status"),
+                "checklist_status": checklist.get("status"),
+                "verification_status": verification.get("status"),
+                "verification_failed_count": verification.get("summary", {}).get("failed_count"),
+                "latest_approval_event_id": latest_approval.get("event_id") if latest_approval else None,
+                "latest_approval_status": latest_approval.get("status") if latest_approval else None,
+                "release_readiness_status": release.get("status"),
+                "approval_review_status": approval_review.get("status"),
+                "spec_hash": verification.get("spec_hash"),
+                "approved_spec_hash": latest_approval.get("spec_hash") if latest_approval else None,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "gates": gates,
+            "blocked_gates": blocked,
+            "review_required_gates": review_required,
+            "decision": {
+                "go_no_go": "ready_for_manual_release_review" if status == "release_package_ready_for_manual_review" else "no_go",
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "release_approved_now": False,
+                "requires_human_release_approval": True,
+                "next_required_action": "manual_release_review" if status == "release_package_ready_for_manual_review" else "complete_missing_release_evidence",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "persists_manual_release_health_digest_history": False,
+                "writes_history_row_now": False,
+                "creates_table_now": False,
+                "runs_migration_now": False,
+                "executes_sql": False,
+                "writes_database_now": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "approves_release_now": False,
+                "enables_gateway_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+            },
+            "allowed_output": "review_only_manual_release_health_digest_history_release_package",
+            "forbidden_actions": [
+                "execute_sql",
+                "run_history_migration",
+                "create_history_table",
+                "write_migration_file",
+                "write_history_row",
+                "persist_manual_release_health_digest_history",
+                "write_release_package_file",
+                "create_download",
+                "approve_release_now",
+                "treat_package_as_release_approval",
+                "enable_gateway_now",
+                "connect_broker",
+                "submit_order",
+                "store_credentials",
+                "screen_click",
+                "keyboard_type",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -4871,12 +5136,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_release_health_digest_history_approval_freshness_review",
                 "V5.5-P20 reviews history migration approval freshness, expiry, and spec-hash rotation without approving releases or executing migrations.",
             ),
+            self._gate(
+                "audit_ledger_migration_manual_release_health_digest_history_release_package_required",
+                "passed",
+                "audit_ledger_migration_manual_release_health_digest_history_release_package_ready",
+                "review_only_manual_release_health_digest_history_release_package",
+                "V5.5-P21 packages P15-P20 health digest history migration evidence into an API-only manifest without writing files, approving releases, or executing migrations.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_approval_freshness_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_release_package_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -4915,9 +5187,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_health_digest_history_migration_spec_approval_metadata_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_release_readiness_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_approval_freshness_ready": True,
+                "audit_ledger_migration_manual_release_health_digest_history_release_package_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_approval_freshness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_release_package",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -5105,6 +5378,12 @@ class TradeExecutionGatewayService:
                 "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryApprovalFreshnessReview",
                 "status": "review_manual_release_health_digest_history_approval_freshness_defined",
                 "required_before": "any_manual_release_health_digest_history_release_package",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryReleasePackageManifest",
+                "status": "review_manual_release_health_digest_history_release_package_defined",
+                "required_before": "any_manual_release_health_digest_history_migration",
                 "review_only": True,
             },
         ]
