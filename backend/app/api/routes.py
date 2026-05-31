@@ -80,6 +80,10 @@ class ScreenFixtureReplayInput(BaseModel):
     session_id: int | None = None
 
 
+class ScreenCapturePreflightInput(BaseModel):
+    target_window_title: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -738,6 +742,14 @@ def replay_screen_monitoring_fixture(input_data: ScreenFixtureReplayInput | None
         fixture_name=payload.fixture_name,
         session_id=payload.session_id,
     )
+
+
+@router.post("/screen-monitoring/capture-preflight")
+def screen_monitoring_capture_preflight(input_data: ScreenCapturePreflightInput | None = None) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenCapturePreflightInput()
+    return ScreenMonitoringService().capture_preflight(target_window_title=payload.target_window_title)
 
 
 @router.post("/data/daily-bars/refresh")

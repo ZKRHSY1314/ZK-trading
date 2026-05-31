@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     asharehub_base_url: str = "https://asharehub.com/api"
     realtime_request_timeout_seconds: float = 5.0
     screen_capture_provider: str = "disabled"
+    screen_capture_allow_real_capture: bool = False
+    screen_capture_allowed_windows: str = ""
+    screen_capture_block_broker_windows: bool = True
+    screen_capture_broker_window_terms: str = "broker,trading,交易,证券,券商,委托,买入,卖出,持仓,资金,同花顺,东方财富,通达信"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -195,6 +195,9 @@
           <button data-testid="fixture-screen-replay-button" @click="replayScreenFixture" :disabled="screenMonitoringLoading">
             回放屏幕 Fixture
           </button>
+          <button data-testid="screen-preflight-button" @click="runScreenCapturePreflight" :disabled="screenMonitoringLoading">
+            截图预检
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -227,6 +230,11 @@
             <span>{{ screenFixtureReplayResult.fixture_name }} / {{ screenFixtureReplayResult.observation.app_status }}</span>
             <small>真实截图 {{ screenFixtureReplayResult.real_screen_capture ? "是" : "否" }} / OCR {{ screenFixtureReplayResult.ocr_executed ? "是" : "否" }}</small>
           </div>
+          <div v-if="screenPreflightResult" class="score-item">
+            <strong>Capture Preflight / {{ screenPreflightResult.status }}</strong>
+            <span>{{ screenPreflightResult.target_window_title ?? "未指定窗口" }} / {{ screenPreflightResult.reason }}</span>
+            <small>允许 {{ screenPreflightResult.capture_would_be_allowed ? "是" : "否" }} / 真实截图 {{ screenPreflightResult.real_screen_capture ? "是" : "否" }} / OCR {{ screenPreflightResult.ocr_executed ? "是" : "否" }}</small>
+          </div>
           <div v-if="screenObservationResult" class="score-item">
             <strong>Latest Observation / {{ screenObservationResult.app_status }}</strong>
             <span>置信度 {{ screenObservationResult.confidence }} / 插入 {{ screenObservationResult.inserted ? "是" : "去重" }}</span>
@@ -240,7 +248,7 @@
             <small>{{ item.observed_at }} / read-only evidence</small>
           </div>
         </div>
-        <p v-else>暂无屏幕观测证据。V4.5-P0 仅支持 mock/manual 观测记录，不控制交易软件。</p>
+        <p v-else>暂无屏幕观测证据。V4.5 仅支持 mock、fixture 和截图预检证据，不控制交易软件。</p>
       </article>
 <article class="panel wide">
         <h2>V2.0 可信度证据面板</h2>
@@ -1642,6 +1650,7 @@ type ScreenProviderCapabilities = {
   status: string;
   configured: boolean;
   capture_supported: boolean;
+  capture_preflight_supported: boolean;
   ocr_supported: boolean;
   fixture_replay_supported: boolean;
   last_error?: string | null;
@@ -1700,6 +1709,25 @@ type ScreenFixtureReplayResult = {
   observation: ScreenObservation;
   real_screen_capture: boolean;
   ocr_executed: boolean;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type ScreenPreflightResult = {
+  status: string;
+  provider: string;
+  reason: string;
+  target_window_title?: string | null;
+  configured: boolean;
+  capture_preflight_supported: boolean;
+  capture_would_be_allowed: boolean;
+  real_screen_capture: boolean;
+  ocr_executed: boolean;
+  artifact_ref?: string | null;
+  redaction_required: boolean;
+  operator_review_required: boolean;
+  observation: ScreenObservation;
   review_only: boolean;
   simulation_only: boolean;
   live_trading_enabled: boolean;
@@ -1931,6 +1959,7 @@ const screenMonitoringSession = ref<ScreenMonitoringSession | null>(null);
 const screenObservations = ref<ScreenObservation[]>([]);
 const screenObservationResult = ref<ScreenObservation | null>(null);
 const screenFixtureReplayResult = ref<ScreenFixtureReplayResult | null>(null);
+const screenPreflightResult = ref<ScreenPreflightResult | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -2906,6 +2935,27 @@ async function replayScreenFixture() {
     await loadScreenMonitoring();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "屏幕 fixture 回放失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function runScreenCapturePreflight() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenPreflightResult.value = await fetchJson<ScreenPreflightResult>(
+      "/api/screen-monitoring/capture-preflight",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_window_title: "Untitled - Notepad" })
+      }
+    );
+    screenObservationResult.value = screenPreflightResult.value.observation;
+    await loadScreenMonitoring();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "屏幕截图预检失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

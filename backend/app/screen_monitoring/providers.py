@@ -30,6 +30,9 @@ class ScreenCaptureProvider(Protocol):
     def capture_fixture(self, fixture_name: str = "trading_client_online") -> ScreenObservationDraft:
         ...
 
+    def capture_preflight(self, target_window_title: str | None = None) -> dict[str, Any]:
+        ...
+
 
 class DisabledScreenCaptureProvider:
     name = "disabled"
@@ -43,6 +46,7 @@ class DisabledScreenCaptureProvider:
             "status": "disabled",
             "configured": False,
             "capture_supported": False,
+            "capture_preflight_supported": True,
             "ocr_supported": False,
             "fixture_replay_supported": False,
             "last_error": "No screen capture provider is enabled.",
@@ -55,6 +59,15 @@ class DisabledScreenCaptureProvider:
 
     def capture_fixture(self, fixture_name: str = "trading_client_online") -> ScreenObservationDraft:
         raise RuntimeError("Screen capture provider is disabled.")
+
+    def capture_preflight(self, target_window_title: str | None = None) -> dict[str, Any]:
+        return _preflight_result(
+            provider=self.name,
+            status="blocked",
+            reason="screen_capture_provider_disabled",
+            target_window_title=target_window_title,
+            configured=False,
+        )
 
 
 class FixtureScreenCaptureProvider:
@@ -69,6 +82,7 @@ class FixtureScreenCaptureProvider:
             "status": "fixture_only",
             "configured": True,
             "capture_supported": False,
+            "capture_preflight_supported": True,
             "ocr_supported": False,
             "fixture_replay_supported": True,
             "last_error": None,
@@ -105,6 +119,118 @@ class FixtureScreenCaptureProvider:
             observed_at=now,
         )
 
+    def capture_preflight(self, target_window_title: str | None = None) -> dict[str, Any]:
+        return _preflight_result(
+            provider=self.name,
+            status="blocked",
+            reason="fixture_provider_cannot_capture_real_screen",
+            target_window_title=target_window_title,
+            configured=True,
+        )
+
+
+class LocalSafeScreenCaptureProvider:
+    name = "local_safe"
+
+    def __init__(
+        self,
+        allow_real_capture: bool = False,
+        allowed_windows: list[str] | None = None,
+        block_broker_windows: bool = True,
+        broker_window_terms: list[str] | None = None,
+    ) -> None:
+        self.allow_real_capture = bool(allow_real_capture)
+        self.allowed_windows = [item.strip() for item in allowed_windows or [] if item.strip()]
+        self.block_broker_windows = bool(block_broker_windows)
+        self.broker_window_terms = [item.strip().lower() for item in broker_window_terms or [] if item.strip()]
+
+    def configured(self) -> bool:
+        return self.allow_real_capture and bool(self.allowed_windows)
+
+    def capabilities(self) -> dict[str, Any]:
+        configured = self.configured()
+        return {
+            "provider": self.name,
+            "status": "preflight_ready" if configured else "needs_explicit_config",
+            "configured": configured,
+            "capture_supported": False,
+            "capture_preflight_supported": True,
+            "ocr_supported": False,
+            "fixture_replay_supported": False,
+            "last_error": None if configured else "SCREEN_CAPTURE_ALLOW_REAL_CAPTURE and SCREEN_CAPTURE_ALLOWED_WINDOWS are required.",
+            "details": {
+                "allowed_windows": self.allowed_windows,
+                "block_broker_windows": self.block_broker_windows,
+                "broker_window_terms": self.broker_window_terms,
+                "real_screen_capture": False,
+                "preflight_only": True,
+                "redaction_required": True,
+                "operator_review_required": True,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            },
+        }
+
+    def capture_fixture(self, fixture_name: str = "trading_client_online") -> ScreenObservationDraft:
+        raise RuntimeError("local_safe provider does not replay fixtures.")
+
+    def capture_preflight(self, target_window_title: str | None = None) -> dict[str, Any]:
+        title = (target_window_title or "").strip()
+        if not self.allow_real_capture:
+            return _preflight_result(
+                provider=self.name,
+                status="blocked",
+                reason="real_capture_not_explicitly_enabled",
+                target_window_title=title,
+                configured=False,
+            )
+        if not self.allowed_windows:
+            return _preflight_result(
+                provider=self.name,
+                status="blocked",
+                reason="allowed_window_list_empty",
+                target_window_title=title,
+                configured=False,
+            )
+        if not title:
+            return _preflight_result(
+                provider=self.name,
+                status="blocked",
+                reason="target_window_title_required",
+                target_window_title=title,
+                configured=self.configured(),
+            )
+        lower_title = title.lower()
+        matched_broker_terms = [term for term in self.broker_window_terms if term and term in lower_title]
+        if self.block_broker_windows and matched_broker_terms:
+            return _preflight_result(
+                provider=self.name,
+                status="blocked",
+                reason="broker_or_trading_window_blocked",
+                target_window_title=title,
+                configured=self.configured(),
+                matched_terms=matched_broker_terms,
+            )
+        allow_match = any(allowed.lower() in lower_title for allowed in self.allowed_windows)
+        if not allow_match:
+            return _preflight_result(
+                provider=self.name,
+                status="blocked",
+                reason="target_window_not_in_allowlist",
+                target_window_title=title,
+                configured=self.configured(),
+                allowed_windows=self.allowed_windows,
+            )
+        return _preflight_result(
+            provider=self.name,
+            status="preflight_passed",
+            reason="harmless_window_allowlisted",
+            target_window_title=title,
+            configured=True,
+            allowed_windows=self.allowed_windows,
+        )
+
 
 FIXTURES: dict[str, dict[str, Any]] = {
     "trading_client_online": {
@@ -131,8 +257,55 @@ FIXTURES: dict[str, dict[str, Any]] = {
 }
 
 
-def configured_screen_capture_provider(provider_name: str = "disabled") -> ScreenCaptureProvider:
+def _preflight_result(
+    provider: str,
+    status: str,
+    reason: str,
+    target_window_title: str | None,
+    configured: bool,
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "provider": provider,
+        "reason": reason,
+        "target_window_title": target_window_title,
+        "configured": configured,
+        "capture_preflight_supported": True,
+        "capture_would_be_allowed": status == "preflight_passed",
+        "real_screen_capture": False,
+        "ocr_executed": False,
+        "artifact_ref": None,
+        "redaction_required": True,
+        "operator_review_required": True,
+        "review_only": True,
+        "simulation_only": True,
+        "live_trading_enabled": False,
+        **extra,
+    }
+
+
+def _split_csv(value: str | None) -> list[str]:
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
+def configured_screen_capture_provider(
+    provider_name: str = "disabled",
+    allow_real_capture: bool = False,
+    allowed_windows: str | list[str] | None = None,
+    block_broker_windows: bool = True,
+    broker_window_terms: str | list[str] | None = None,
+) -> ScreenCaptureProvider:
     normalized = (provider_name or "disabled").strip().lower()
     if normalized == "fixture":
         return FixtureScreenCaptureProvider()
+    if normalized == "local_safe":
+        return LocalSafeScreenCaptureProvider(
+            allow_real_capture=allow_real_capture,
+            allowed_windows=_split_csv(allowed_windows) if isinstance(allowed_windows, str) else allowed_windows,
+            block_broker_windows=block_broker_windows,
+            broker_window_terms=_split_csv(broker_window_terms)
+            if isinstance(broker_window_terms, str)
+            else broker_window_terms,
+        )
     return DisabledScreenCaptureProvider()

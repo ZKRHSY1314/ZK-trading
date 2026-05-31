@@ -24,7 +24,13 @@ class ScreenMonitoringService:
     def __init__(self, provider: ScreenCaptureProvider | None = None) -> None:
         self.store = SQLiteStore(settings.database_path)
         self.store.init()
-        self.provider = provider or configured_screen_capture_provider(settings.screen_capture_provider)
+        self.provider = provider or configured_screen_capture_provider(
+            settings.screen_capture_provider,
+            allow_real_capture=settings.screen_capture_allow_real_capture,
+            allowed_windows=settings.screen_capture_allowed_windows,
+            block_broker_windows=settings.screen_capture_block_broker_windows,
+            broker_window_terms=settings.screen_capture_broker_window_terms,
+        )
 
     def capabilities(self) -> dict[str, Any]:
         provider_capabilities = self.provider.capabilities()
@@ -60,6 +66,13 @@ class ScreenMonitoringService:
     def provider_capabilities(self) -> list[dict[str, Any]]:
         providers = [
             self.provider.capabilities(),
+            configured_screen_capture_provider(
+                "local_safe",
+                allow_real_capture=settings.screen_capture_allow_real_capture,
+                allowed_windows=settings.screen_capture_allowed_windows,
+                block_broker_windows=settings.screen_capture_block_broker_windows,
+                broker_window_terms=settings.screen_capture_broker_window_terms,
+            ).capabilities(),
             FixtureScreenCaptureProvider().capabilities(),
             configured_screen_capture_provider("disabled").capabilities(),
         ]
@@ -150,6 +163,34 @@ class ScreenMonitoringService:
             "observation": observation,
             "real_screen_capture": False,
             "ocr_executed": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def capture_preflight(self, target_window_title: str | None = None) -> dict[str, Any]:
+        result = self.provider.capture_preflight(target_window_title=target_window_title)
+        app_status = "capture_preflight_ready" if result.get("capture_would_be_allowed") else "capture_preflight_blocked"
+        warnings = [] if result.get("capture_would_be_allowed") else [str(result.get("reason") or "preflight_blocked")]
+        observation = self.record_observation(
+            source=f"preflight:{result.get('provider', 'unknown')}",
+            app_status=app_status,
+            window_title=target_window_title,
+            confidence=1.0 if result.get("capture_would_be_allowed") else 0.2,
+            detected_items=[
+                {
+                    "type": "capture_preflight",
+                    "value": result.get("status"),
+                    "reason": result.get("reason"),
+                }
+            ],
+            warnings=warnings,
+            raw_payload=result,
+            artifact_ref=result.get("artifact_ref"),
+        )
+        return {
+            **result,
+            "observation": observation,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
@@ -293,7 +334,8 @@ class ScreenMonitoringService:
             "broker_action",
             "credential",
             "password",
-            "live_trading",
+            "enable_live_trading",
+            "live_auto_trading",
         )
         action_text = json.dumps(payload, ensure_ascii=False, default=str).lower()
         return [f"blocked_readonly_payload_term:{term}" for term in blocked_terms if term in action_text]

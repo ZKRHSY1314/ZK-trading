@@ -1,3 +1,4 @@
+from app.screen_monitoring.providers import LocalSafeScreenCaptureProvider
 from app.screen_monitoring.service import ScreenMonitoringService
 
 
@@ -126,6 +127,68 @@ def test_screen_provider_capabilities_include_fixture_but_default_disabled(test_
     assert all(item["live_trading_enabled"] is False for item in providers)
 
 
+def test_local_safe_preflight_requires_explicit_config(test_db):
+    _reset_screen_monitoring(test_db)
+    provider = LocalSafeScreenCaptureProvider(
+        allow_real_capture=False,
+        allowed_windows=["Notepad"],
+        broker_window_terms=["trading", "证券"],
+    )
+    service = ScreenMonitoringService(provider=provider)
+
+    result = service.capture_preflight("Notepad")
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "real_capture_not_explicitly_enabled"
+    assert result["capture_would_be_allowed"] is False
+    assert result["real_screen_capture"] is False
+    assert result["ocr_executed"] is False
+    assert result["observation"]["app_status"] == "capture_preflight_blocked"
+    assert result["live_trading_enabled"] is False
+
+
+def test_local_safe_preflight_blocks_broker_windows_even_if_allowlisted(test_db):
+    _reset_screen_monitoring(test_db)
+    provider = LocalSafeScreenCaptureProvider(
+        allow_real_capture=True,
+        allowed_windows=["Mock", "Trading"],
+        broker_window_terms=["trading", "证券"],
+    )
+    service = ScreenMonitoringService(provider=provider)
+
+    result = service.capture_preflight("Mock Trading Client")
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "broker_or_trading_window_blocked"
+    assert "trading" in result["matched_terms"]
+    assert result["capture_would_be_allowed"] is False
+    assert result["real_screen_capture"] is False
+    assert result["observation"]["warnings"] == ["broker_or_trading_window_blocked"]
+
+
+def test_local_safe_preflight_passes_harmless_allowlisted_window(test_db):
+    _reset_screen_monitoring(test_db)
+    provider = LocalSafeScreenCaptureProvider(
+        allow_real_capture=True,
+        allowed_windows=["Notepad", "Calculator"],
+        broker_window_terms=["trading", "证券"],
+    )
+    service = ScreenMonitoringService(provider=provider)
+
+    result = service.capture_preflight("Untitled - Notepad")
+    latest = service.latest_session()
+
+    assert result["status"] == "preflight_passed"
+    assert result["reason"] == "harmless_window_allowlisted"
+    assert result["capture_would_be_allowed"] is True
+    assert result["real_screen_capture"] is False
+    assert result["ocr_executed"] is False
+    assert result["redaction_required"] is True
+    assert result["operator_review_required"] is True
+    assert result["observation"]["app_status"] == "capture_preflight_ready"
+    assert latest["summary"]["status_counts"]["capture_preflight_ready"] == 1
+
+
 def test_screen_monitoring_api_smoke(client, test_db):
     _reset_screen_monitoring(test_db)
 
@@ -141,6 +204,10 @@ def test_screen_monitoring_api_smoke(client, test_db):
         "/api/screen-monitoring/observations/fixture-replay",
         json={"fixture_name": "trading_client_online"},
     )
+    preflight_resp = client.post(
+        "/api/screen-monitoring/capture-preflight",
+        json={"target_window_title": "Mock Trading Client"},
+    )
     observations_resp = client.get("/api/screen-monitoring/observations?limit=5")
     latest_resp = client.get("/api/screen-monitoring/sessions/latest")
 
@@ -150,6 +217,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert session_resp.status_code == 200
     assert observation_resp.status_code == 200
     assert fixture_resp.status_code == 200
+    assert preflight_resp.status_code == 200
     assert observations_resp.status_code == 200
     assert latest_resp.status_code == 200
     assert capabilities_resp.json()["live_trading_enabled"] is False
@@ -163,6 +231,9 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert fixture_resp.json()["real_screen_capture"] is False
     assert fixture_resp.json()["ocr_executed"] is False
     assert fixture_resp.json()["observation"]["raw_payload"]["fixture_replay"] is True
+    assert preflight_resp.json()["status"] == "blocked"
+    assert preflight_resp.json()["capture_would_be_allowed"] is False
+    assert preflight_resp.json()["real_screen_capture"] is False
     assert observations_resp.json()
-    assert latest_resp.json()["summary"]["observation_count"] == 2
+    assert latest_resp.json()["summary"]["observation_count"] == 3
     assert client.get("/health").json()["live_trading_enabled"] is False

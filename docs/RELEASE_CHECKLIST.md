@@ -112,6 +112,9 @@
 - [ ] V4.5-P1 exposes disabled-by-default screen capture provider capabilities plus fixture-only replay.
 - [ ] V4.5-P1 fixture replay records screen observations without real screenshot capture or OCR execution.
 - [ ] V4.5-P1 dashboard shows provider status, fixture replay status, and confirms real capture/OCR remain disabled.
+- [ ] V4.5-P2 exposes `/api/screen-monitoring/capture-preflight` for explicit local-safe screenshot readiness checks.
+- [ ] V4.5-P2 blocks capture preflight unless real capture is explicitly enabled and the target window matches a harmless allowlist.
+- [ ] V4.5-P2 always blocks broker/trading windows even if they accidentally match the allowlist, and records the block as audit evidence only.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence
