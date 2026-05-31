@@ -111,6 +111,12 @@ class ScreenDigestMigrationSpecInput(BaseModel):
     spec_text: str | None = None
 
 
+class ScreenDigestMigrationSpecApprovalInput(BaseModel):
+    spec_text: str | None = None
+    approved_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -815,6 +821,29 @@ def screen_monitoring_readiness_health_history_migration_spec_verify(
         spec_text=payload.spec_text,
         limit=limit,
     )
+
+
+@router.post("/screen-monitoring/readiness-health/history-migration-spec/approve")
+def screen_monitoring_readiness_health_history_migration_spec_approve(
+    input_data: ScreenDigestMigrationSpecApprovalInput | None = None,
+    limit: int = 50,
+) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or ScreenDigestMigrationSpecApprovalInput()
+    return ScreenMonitoringService().approve_screen_readiness_digest_history_migration_spec(
+        spec_text=payload.spec_text,
+        approved_by=payload.approved_by,
+        note=payload.note,
+        limit=limit,
+    )
+
+
+@router.get("/screen-monitoring/readiness-health/history-migration-spec/approvals")
+def screen_monitoring_readiness_health_history_migration_spec_approvals(limit: int = 20) -> list[dict]:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    return ScreenMonitoringService().list_screen_readiness_digest_history_migration_spec_approvals(limit=limit)
 
 
 @router.post("/screen-monitoring/provider-config-proposals")

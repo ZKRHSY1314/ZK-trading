@@ -160,6 +160,9 @@
 - [ ] V4.5-P17 exposes `POST /api/screen-monitoring/readiness-health/history-migration-spec/verify` as an in-memory dry-run verifier for a future digest history migration spec.
 - [ ] V4.5-P17 verifier checks target table, guarded create-table shape, required metadata fields, sensitive field exclusion, dangerous SQL terms, and disabled live-trading state without executing SQL.
 - [ ] V4.5-P17 dashboard shows migration spec verification results without creating tables, running migrations, writing migration files, writing database records, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
+- [ ] V4.5-P18 exposes `POST /api/screen-monitoring/readiness-health/history-migration-spec/approve` and `GET /api/screen-monitoring/readiness-health/history-migration-spec/approvals` for operator approval metadata over verified migration specs.
+- [ ] V4.5-P18 approval writes only an audit event to the existing `events` table when the dry-run spec verification passed; failed specs are blocked and not recorded as approvals.
+- [ ] V4.5-P18 dashboard shows approval metadata/history without creating tables, running migrations, executing SQL, writing migration files, writing digest history records, capturing pixels, running OCR, clicking screens, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

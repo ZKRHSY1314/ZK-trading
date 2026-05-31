@@ -240,6 +240,9 @@
           <button data-testid="screen-digest-migration-spec-button" @click="verifyScreenDigestMigrationSpec" :disabled="screenMonitoringLoading">
             校验迁移草案
           </button>
+          <button data-testid="screen-digest-migration-spec-approval-button" @click="approveScreenDigestMigrationSpec" :disabled="screenMonitoringLoading">
+            确认草案已审阅
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -262,6 +265,7 @@
           <span>History {{ screenDigestHistoryProposal?.status ?? "未生成" }}</span>
           <span>Migration {{ screenDigestMigrationChecklist?.status ?? "未生成" }}</span>
           <span>Spec {{ screenDigestMigrationSpecVerification?.status ?? "未校验" }}</span>
+          <span>Spec审批 {{ screenDigestMigrationSpecApprovals.length }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -374,6 +378,16 @@
             <strong>Migration Spec / {{ screenDigestMigrationSpecVerification.status }}</strong>
             <span>{{ screenDigestMigrationSpecVerification.passed_count }}/{{ screenDigestMigrationSpecVerification.check_count }} checks / {{ screenDigestMigrationSpecVerification.allowed_output }}</span>
             <small>执行 SQL {{ screenDigestMigrationSpecVerification.safety_summary.executes_sql ? "是" : "否" }} / 失败 {{ screenDigestMigrationSpecVerification.failed_count }} / 迁移 {{ screenDigestMigrationSpecVerification.migration_allowed_now ? "允许" : "禁止" }}</small>
+          </div>
+          <div v-if="screenDigestMigrationSpecApprovalResult" class="score-item">
+            <strong>Spec Approval / {{ screenDigestMigrationSpecApprovalResult.status }}</strong>
+            <span>{{ screenDigestMigrationSpecApprovalResult.approved_by }} / {{ screenDigestMigrationSpecApprovalResult.approval_effect }}</span>
+            <small>事件 #{{ screenDigestMigrationSpecApprovalResult.event_id ?? "未记录" }} / 建表 {{ screenDigestMigrationSpecApprovalResult.safety_summary.creates_table_now ? "是" : "否" }} / 迁移 {{ screenDigestMigrationSpecApprovalResult.migration_allowed_now ? "允许" : "禁止" }}</small>
+          </div>
+          <div v-if="screenDigestMigrationSpecApprovals.length" class="score-item">
+            <strong>Spec Approval History / {{ screenDigestMigrationSpecApprovals.length }}</strong>
+            <span>{{ screenDigestMigrationSpecApprovals[0].approved_by }} / {{ screenDigestMigrationSpecApprovals[0].verification_status }}</span>
+            <small>{{ screenDigestMigrationSpecApprovals[0].spec_hash.slice(0, 16) }} / {{ screenDigestMigrationSpecApprovals[0].approval_effect }}</small>
           </div>
           <div
             v-for="item in screenReadinessAudit?.safety_matrix.slice(0, 6) ?? []"
@@ -2556,6 +2570,43 @@ type ScreenDigestMigrationSpecVerification = {
   live_trading_enabled: boolean;
 };
 
+type ScreenDigestMigrationSpecApproval = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  event_id: number | null;
+  event_type?: string;
+  created_at?: string;
+  approved_at: string;
+  approved_by: string;
+  approval_note: string | null;
+  approval_effect: string;
+  spec_hash: string;
+  verification_status: string;
+  verification_failed_count: number;
+  source_checklist_status: string;
+  migration_allowed_now: boolean;
+  future_migration_still_requires: string[];
+  safety_summary: ScreenDigestMigrationSpecVerification["safety_summary"] & {
+    writes_database_event_now: boolean;
+    writes_digest_history_table_now: boolean;
+  };
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+  verification?: {
+    schema_version: string;
+    status: string;
+    spec_hash: string;
+    failed_count: number;
+    allowed_output: string;
+    migration_allowed_now: boolean;
+    live_trading_enabled: boolean;
+  };
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2803,6 +2854,8 @@ const screenReadinessHealth = ref<ScreenReadinessHealth | null>(null);
 const screenDigestHistoryProposal = ref<ScreenDigestHistoryProposal | null>(null);
 const screenDigestMigrationChecklist = ref<ScreenDigestMigrationChecklist | null>(null);
 const screenDigestMigrationSpecVerification = ref<ScreenDigestMigrationSpecVerification | null>(null);
+const screenDigestMigrationSpecApprovalResult = ref<ScreenDigestMigrationSpecApproval | null>(null);
+const screenDigestMigrationSpecApprovals = ref<ScreenDigestMigrationSpecApproval[]>([]);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3759,7 +3812,8 @@ async function loadScreenMonitoring() {
       readinessComparisonData,
       readinessHealthData,
       digestHistoryProposalData,
-      digestMigrationChecklistData
+      digestMigrationChecklistData,
+      digestMigrationSpecApprovalsData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3778,7 +3832,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenReadinessComparison>("/api/screen-monitoring/readiness-export/compare?limit=40"),
       fetchJson<ScreenReadinessHealth>("/api/screen-monitoring/readiness-health?limit=40"),
       fetchJson<ScreenDigestHistoryProposal>("/api/screen-monitoring/readiness-health/history-proposal?limit=40"),
-      fetchJson<ScreenDigestMigrationChecklist>("/api/screen-monitoring/readiness-health/history-migration-checklist?limit=40")
+      fetchJson<ScreenDigestMigrationChecklist>("/api/screen-monitoring/readiness-health/history-migration-checklist?limit=40"),
+      fetchJson<ScreenDigestMigrationSpecApproval[]>("/api/screen-monitoring/readiness-health/history-migration-spec/approvals?limit=10")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3798,6 +3853,7 @@ async function loadScreenMonitoring() {
     screenReadinessHealth.value = readinessHealthData;
     screenDigestHistoryProposal.value = digestHistoryProposalData;
     screenDigestMigrationChecklist.value = digestMigrationChecklistData;
+    screenDigestMigrationSpecApprovals.value = digestMigrationSpecApprovalsData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3817,6 +3873,7 @@ async function loadScreenMonitoring() {
     screenReadinessHealth.value = null;
     screenDigestHistoryProposal.value = null;
     screenDigestMigrationChecklist.value = null;
+    screenDigestMigrationSpecApprovals.value = [];
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -3972,6 +4029,32 @@ async function verifyScreenDigestMigrationSpec() {
     );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Digest history migration spec 校验失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function approveScreenDigestMigrationSpec() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenDigestMigrationSpecApprovalResult.value = await fetchJson<ScreenDigestMigrationSpecApproval>(
+      "/api/screen-monitoring/readiness-health/history-migration-spec/approve?limit=40",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          spec_text: null,
+          approved_by: "operator",
+          note: "UI reviewed dry-run migration spec metadata"
+        }),
+        headers: { "Content-Type": "application/json" }
+      }
+    );
+    screenDigestMigrationSpecApprovals.value = await fetchJson<ScreenDigestMigrationSpecApproval[]>(
+      "/api/screen-monitoring/readiness-health/history-migration-spec/approvals?limit=10"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Digest history migration spec 审批记录失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

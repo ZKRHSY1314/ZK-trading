@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -63,6 +63,7 @@ class ScreenMonitoringService:
                 "screen_readiness_digest_history_proposal",
                 "screen_readiness_digest_history_migration_checklist",
                 "screen_readiness_digest_history_migration_spec_verifier",
+                "screen_readiness_digest_history_migration_spec_approval",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -147,7 +148,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -250,7 +251,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -307,7 +308,7 @@ class ScreenMonitoringService:
         evidence_bundle = {
             "schema_version": "screen_readiness_evidence_export.v1",
             "status": "export_ready",
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "bundle_scope": [
                 "capabilities",
@@ -515,7 +516,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_verifier.v1",
             "status": "verification_passed" if not failed else "verification_failed",
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "export_bundle_hash": bundle.get("bundle_hash"),
             "verified_export_stage": bundle.get("stage"),
@@ -553,7 +554,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_comparison.v1",
             "status": "comparison_stable" if not differences else "comparison_changed",
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "baseline": baseline_summary,
             "candidate": candidate_summary,
@@ -634,7 +635,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_health_digest.v1",
             "status": "health_digest_clean" if not failed_flags else "health_digest_review_required",
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": {
                 "capture_provider": capabilities.get("capture_provider"),
@@ -719,7 +720,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_digest_history_proposal.v1",
             "status": "proposal_ready",
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "proposal": {
                 "name": "screen_readiness_digest_history",
@@ -905,7 +906,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_digest_history_migration_checklist.v1",
             "status": "migration_review_ready" if not blocked_checks else "migration_blocked",
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "migration_plan": {
                 "target_table": "screen_readiness_digest_history",
@@ -1094,7 +1095,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_digest_history_migration_spec_verifier.v1",
             "status": "spec_verification_passed" if not failed else "spec_verification_failed",
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "spec_hash": spec_hash,
             "spec_preview": spec[:800],
@@ -1138,6 +1139,137 @@ class ScreenMonitoringService:
             "simulation_only": True,
             "live_trading_enabled": False,
         }
+
+    def approve_screen_readiness_digest_history_migration_spec(
+        self,
+        spec_text: str | None = None,
+        approved_by: str = "operator",
+        note: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        verification = self.verify_screen_readiness_digest_history_migration_spec(spec_text=spec_text, limit=limit)
+        now = datetime.now().isoformat(timespec="seconds")
+        verification_passed = verification.get("status") == "spec_verification_passed"
+        approval = {
+            "schema_version": "screen_readiness_digest_history_migration_spec_approval.v1",
+            "status": "approval_metadata_recorded" if verification_passed else "approval_blocked",
+            "stage": "V4.5-P18",
+            "approved_at": now,
+            "approved_by": (approved_by or "operator")[:80],
+            "approval_note": note,
+            "approval_effect": "audit_metadata_only",
+            "spec_hash": verification.get("spec_hash"),
+            "verification_status": verification.get("status"),
+            "verification_failed_count": verification.get("failed_count", 0),
+            "source_checklist_status": verification.get("source_checklist_status"),
+            "migration_allowed_now": False,
+            "future_migration_still_requires": [
+                "reviewed_sqlite_migration",
+                "rollback_plan",
+                "migration_unit_tests",
+                "api_smoke_tests",
+                "forbidden_tracked_file_scan",
+                "explicit_release_approval",
+            ],
+            "safety_summary": {
+                "writes_database_event_now": verification_passed,
+                "creates_table_now": False,
+                "runs_migration_now": False,
+                "executes_sql": False,
+                "writes_digest_history_table_now": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "executes_commands": False,
+                "writes_env": False,
+                "real_screen_capture": False,
+                "pixel_data_stored": False,
+                "ocr_executed": False,
+                "broker_action": False,
+                "order_action": False,
+                "credential_access": False,
+                "live_trading_enabled": False,
+            },
+            "allowed_output": "review_only_screen_readiness_digest_history_migration_spec_approval",
+            "forbidden_actions": [
+                "execute_sql",
+                "run_migration_now",
+                "create_table_now",
+                "write_migration_file_now",
+                "insert_digest_snapshot_now",
+                "write_env",
+                "execute_command",
+                "write_file",
+                "create_download",
+                "screen_click",
+                "keyboard_type",
+                "inspect_window",
+                "real_pixel_capture",
+                "pixel_storage",
+                "ocr_execution",
+                "broker_action",
+                "order_action",
+                "credential_access",
+                "live_auto_trading",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+        if not verification_passed:
+            approval["event_id"] = None
+            approval["verification"] = verification
+            return approval
+
+        payload = dict(approval)
+        payload["verification"] = {
+            "schema_version": verification.get("schema_version"),
+            "status": verification.get("status"),
+            "spec_hash": verification.get("spec_hash"),
+            "failed_count": verification.get("failed_count"),
+            "allowed_output": verification.get("allowed_output"),
+            "migration_allowed_now": verification.get("migration_allowed_now"),
+            "live_trading_enabled": verification.get("live_trading_enabled"),
+        }
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO events(event_type, payload_json)
+                VALUES (?, ?)
+                """,
+                (
+                    "screen_digest_migration_spec_approval",
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid or 0)
+        approval["event_id"] = event_id
+        approval["verification"] = payload["verification"]
+        return approval
+
+    def list_screen_readiness_digest_history_migration_spec_approvals(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            ("screen_digest_migration_spec_approval", max(1, min(limit, 200))),
+        )
+        approvals: list[dict[str, Any]] = []
+        for row in rows:
+            payload = self._decode_json(row.get("payload_json") or "{}")
+            item = payload if isinstance(payload, dict) else {}
+            item["event_id"] = row.get("id")
+            item["event_type"] = row.get("event_type")
+            item["created_at"] = row.get("created_at")
+            item["review_only"] = True
+            item["simulation_only"] = True
+            item["live_trading_enabled"] = False
+            approvals.append(item)
+        return approvals
 
     def screen_readiness_timeline(self, limit: int = 50) -> dict[str, Any]:
         safe_limit = max(1, min(limit, 200))
@@ -1235,6 +1367,22 @@ class ScreenMonitoringService:
                     },
                 )
             )
+        for approval in self.list_screen_readiness_digest_history_migration_spec_approvals(limit=safe_limit):
+            items.append(
+                self._timeline_item(
+                    "digest_history_migration_spec_approval",
+                    approval.get("event_id"),
+                    approval.get("created_at") or approval.get("approved_at"),
+                    f"Migration spec approval / {approval.get('approved_by')}",
+                    str(approval.get("status") or "unknown"),
+                    {
+                        "approval_effect": approval.get("approval_effect"),
+                        "spec_hash": approval.get("spec_hash"),
+                        "verification_status": approval.get("verification_status"),
+                        "migration_allowed_now": approval.get("migration_allowed_now"),
+                    },
+                )
+            )
         ordered = sorted(items, key=lambda item: item["event_ts"] or "", reverse=True)[:safe_limit]
         counts_by_type: dict[str, int] = {}
         for item in ordered:
@@ -1242,7 +1390,7 @@ class ScreenMonitoringService:
             counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
         return {
             "status": "timeline_ready",
-            "stage": "V4.5-P17",
+            "stage": "V4.5-P18",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "item_count": len(ordered),
             "counts_by_type": counts_by_type,
@@ -1304,7 +1452,7 @@ class ScreenMonitoringService:
                     "acknowledged",
                     report_hash,
                     str(report.get("status") or "unknown"),
-                    str(report.get("stage") or "V4.5-P17"),
+                    str(report.get("stage") or "V4.5-P18"),
                     json.dumps(summary, ensure_ascii=False, default=str),
                     json.dumps(safety_matrix, ensure_ascii=False, default=str),
                     json.dumps(report, ensure_ascii=False, default=str),
