@@ -771,7 +771,7 @@
           <button class="disabled-live" disabled>实盘执行未启用</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P4" }}</span>
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.0-P5" }}</span>
           <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
           <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
@@ -783,6 +783,7 @@
           <span>Pre-live {{ tradeGatewayPreLivePackage?.status ?? "未加载" }}</span>
           <span>验收 {{ tradeGatewayAcceptanceChecklist?.status ?? "未加载" }}</span>
           <span>发布门禁 {{ tradeGatewayReleaseGate?.status ?? "未加载" }}</span>
+          <span>最终报告 {{ tradeGatewayFinalReport?.status ?? "未加载" }}</span>
           <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
           <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
           <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
@@ -863,6 +864,21 @@
             <span>{{ tradeGatewayReleaseGate.release_blockers.join(" / ") }}</span>
             <small>这些阻断项只能由独立实盘集成项目和人工审查处理，当前面板不提供启用动作。</small>
           </div>
+          <div v-if="tradeGatewayFinalReport" class="score-item">
+            <strong>Final Readiness / {{ tradeGatewayFinalReport.status }}</strong>
+            <span>{{ tradeGatewayFinalReport.report_id.slice(0, 16) }} / {{ tradeGatewayFinalReport.report_state }}</span>
+            <small>V5基线 {{ tradeGatewayFinalReport.decision.v5_review_only_baseline_complete ? "完成" : "未完成" }} / V5.5威胁建模 {{ tradeGatewayFinalReport.decision.ready_for_v5_5_threat_modeling ? "可开始" : "等待" }}</small>
+          </div>
+          <div v-if="tradeGatewayFinalReport" class="score-item">
+            <strong>Final Safety Matrix</strong>
+            <span>{{ Object.entries(tradeGatewayFinalReport.safety_matrix).map(([key, value]) => `${key}:${value}`).join(" / ") }}</span>
+            <small>实盘启用 {{ tradeGatewayFinalReport.decision.ready_for_live_enablement ? "允许" : "禁止" }} / gateway execute {{ tradeGatewayFinalReport.decision.gateway_can_execute ? "允许" : "禁止" }}</small>
+          </div>
+          <div v-if="tradeGatewayFinalReport" class="score-item">
+            <strong>Remaining Blockers</strong>
+            <span>{{ tradeGatewayFinalReport.remaining_blockers.join(" / ") }}</span>
+            <small>{{ tradeGatewayFinalReport.summary.next_track }}</small>
+          </div>
           <div
             v-for="component in tradeGatewayCapabilities.required_future_components"
             :key="component.name"
@@ -889,7 +905,7 @@
           <div class="score-item">
             <strong>Forbidden Modes</strong>
             <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
-            <small>这些能力在 V5.0-P4 只能作为阻断项展示。</small>
+            <small>这些能力在 V5.0-P5 只能作为阻断项展示。</small>
           </div>
         </div>
         <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
@@ -1625,6 +1641,7 @@ type TradeGatewayReviewGates = {
     pre_live_package_ready: boolean;
     operator_acceptance_checklist_ready: boolean;
     disabled_release_gate_ready: boolean;
+    final_readiness_report_ready: boolean;
     ready_for_live_enablement: boolean;
     live_trading_enabled: boolean;
     next_required_action: string;
@@ -1869,6 +1886,48 @@ type TradeGatewayReleaseGate = {
   decision: {
     release_gate_ready_for_review: boolean;
     release_gate_allows_enablement_now: boolean;
+    ready_for_live_enablement: boolean;
+    gateway_can_execute: boolean;
+    api_can_enable_gateway: boolean;
+    api_can_record_release_approval: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+  allowed_output: string;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type TradeGatewayFinalReport = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  report_id: string;
+  report_state: string;
+  manifest: {
+    name: string;
+    schema_version: string;
+    status: string;
+    stage: string;
+    included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }[];
+  summary: {
+    completed_review_modules: number;
+    blocked_gate_count: number;
+    review_required_count: number;
+    pre_live_package_id: string;
+    default_release_state: string;
+    next_track: string;
+  };
+  safety_matrix: Record<string, boolean>;
+  remaining_blockers: string[];
+  decision: {
+    v5_review_only_baseline_complete: boolean;
+    ready_for_v5_5_threat_modeling: boolean;
     ready_for_live_enablement: boolean;
     gateway_can_execute: boolean;
     api_can_enable_gateway: boolean;
@@ -3462,6 +3521,7 @@ const tradeGatewayRollbackRunbook = ref<TradeGatewayRollbackRunbook | null>(null
 const tradeGatewayPreLivePackage = ref<TradeGatewayPreLivePackage | null>(null);
 const tradeGatewayAcceptanceChecklist = ref<TradeGatewayAcceptanceChecklist | null>(null);
 const tradeGatewayReleaseGate = ref<TradeGatewayReleaseGate | null>(null);
+const tradeGatewayFinalReport = ref<TradeGatewayFinalReport | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -3906,7 +3966,8 @@ async function loadTradeExecutionGateway() {
       rollbackRunbookData,
       preLivePackageData,
       acceptanceChecklistData,
-      releaseGateData
+      releaseGateData,
+      finalReportData
     ] = await Promise.all([
       fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
       fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates"),
@@ -3916,7 +3977,8 @@ async function loadTradeExecutionGateway() {
       fetchJson<TradeGatewayRollbackRunbook>("/api/trade-execution-gateway/rollback-runbook"),
       fetchJson<TradeGatewayPreLivePackage>("/api/trade-execution-gateway/pre-live-review-package"),
       fetchJson<TradeGatewayAcceptanceChecklist>("/api/trade-execution-gateway/operator-acceptance-checklist"),
-      fetchJson<TradeGatewayReleaseGate>("/api/trade-execution-gateway/disabled-release-gate")
+      fetchJson<TradeGatewayReleaseGate>("/api/trade-execution-gateway/disabled-release-gate"),
+      fetchJson<TradeGatewayFinalReport>("/api/trade-execution-gateway/final-readiness-report")
     ]);
     tradeGatewayCapabilities.value = capabilitiesData;
     tradeGatewayReviewGates.value = gatesData;
@@ -3927,6 +3989,7 @@ async function loadTradeExecutionGateway() {
     tradeGatewayPreLivePackage.value = preLivePackageData;
     tradeGatewayAcceptanceChecklist.value = acceptanceChecklistData;
     tradeGatewayReleaseGate.value = releaseGateData;
+    tradeGatewayFinalReport.value = finalReportData;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
   } finally {

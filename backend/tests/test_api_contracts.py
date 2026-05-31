@@ -26,13 +26,13 @@ def test_trade_execution_gateway_capabilities(client):
     resp = client.get("/api/trade-execution-gateway/capabilities")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["stage"] == "V5.0-P4"
+    assert data["stage"] == "V5.0-P5"
     assert data["review_only"] is True
     assert data["simulation_only"] is True
     assert data["execution_enabled"] is False
     assert data["live_trading_enabled"] is False
 
-def test_trade_execution_gateway_p1_p4_contracts(client):
+def test_trade_execution_gateway_p1_p5_contracts(client):
     contract_resp = client.get("/api/trade-execution-gateway/manual-confirmation-contract")
     audit_resp = client.get("/api/trade-execution-gateway/audit-evidence-schema")
     risk_resp = client.get("/api/trade-execution-gateway/risk-gate-contract")
@@ -40,6 +40,7 @@ def test_trade_execution_gateway_p1_p4_contracts(client):
     pre_live_resp = client.get("/api/trade-execution-gateway/pre-live-review-package")
     checklist_resp = client.get("/api/trade-execution-gateway/operator-acceptance-checklist")
     release_gate_resp = client.get("/api/trade-execution-gateway/disabled-release-gate")
+    final_report_resp = client.get("/api/trade-execution-gateway/final-readiness-report")
     assert contract_resp.status_code == 200
     assert audit_resp.status_code == 200
     assert risk_resp.status_code == 200
@@ -47,24 +48,29 @@ def test_trade_execution_gateway_p1_p4_contracts(client):
     assert pre_live_resp.status_code == 200
     assert checklist_resp.status_code == 200
     assert release_gate_resp.status_code == 200
-    assert contract_resp.json()["stage"] == "V5.0-P4"
+    assert final_report_resp.status_code == 200
+    assert contract_resp.json()["stage"] == "V5.0-P5"
     assert contract_resp.json()["decision"]["contract_allows_execution_now"] is False
-    assert audit_resp.json()["stage"] == "V5.0-P4"
+    assert audit_resp.json()["stage"] == "V5.0-P5"
     assert audit_resp.json()["writes_database_now"] is False
     assert audit_resp.json()["decision"]["schema_persistence_enabled_now"] is False
-    assert risk_resp.json()["stage"] == "V5.0-P4"
+    assert risk_resp.json()["stage"] == "V5.0-P5"
     assert risk_resp.json()["decision"]["contract_allows_execution_now"] is False
     assert risk_resp.json()["integration_notes"]["manual_confirmation_override_allowed"] is False
-    assert rollback_resp.json()["stage"] == "V5.0-P4"
+    assert rollback_resp.json()["stage"] == "V5.0-P5"
     assert rollback_resp.json()["decision"]["runbook_allows_execution_now"] is False
-    assert pre_live_resp.json()["stage"] == "V5.0-P4"
+    assert pre_live_resp.json()["stage"] == "V5.0-P5"
     assert pre_live_resp.json()["decision"]["ready_for_live_enablement"] is False
     assert pre_live_resp.json()["decision"]["gateway_can_execute"] is False
-    assert checklist_resp.json()["stage"] == "V5.0-P4"
+    assert checklist_resp.json()["stage"] == "V5.0-P5"
     assert checklist_resp.json()["decision"]["acceptance_allows_enablement_now"] is False
-    assert release_gate_resp.json()["stage"] == "V5.0-P4"
+    assert release_gate_resp.json()["stage"] == "V5.0-P5"
     assert release_gate_resp.json()["default_state"] == "disabled"
     assert release_gate_resp.json()["decision"]["release_gate_allows_enablement_now"] is False
+    assert final_report_resp.json()["stage"] == "V5.0-P5"
+    assert final_report_resp.json()["decision"]["v5_review_only_baseline_complete"] is True
+    assert final_report_resp.json()["decision"]["ready_for_live_enablement"] is False
+    assert final_report_resp.json()["decision"]["gateway_can_execute"] is False
 
 def test_learning_summary(client):
     resp = client.get("/api/learning/summary")

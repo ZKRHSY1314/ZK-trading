@@ -174,6 +174,11 @@ def trade_execution_gateway_disabled_release_gate() -> dict:
     return TradeExecutionGatewayService().disabled_release_gate()
 
 
+@router.get("/trade-execution-gateway/final-readiness-report")
+def trade_execution_gateway_final_readiness_report() -> dict:
+    return TradeExecutionGatewayService().final_readiness_report()
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()

@@ -195,6 +195,10 @@
 - [ ] V5.0-P4 exposes `GET /api/trade-execution-gateway/disabled-release-gate` as a disabled-by-default release gate that cannot enable the gateway through API.
 - [ ] V5.0-P4 dashboard shows checklist items, required evidence, release blockers, default disabled state, and explicit no API enablement evidence.
 - [ ] V5.0-P4 must keep `acceptance_allows_enablement_now=false`, `release_gate_allows_enablement_now=false`, `api_can_enable_gateway=false`, `gateway_can_execute=false`, `writes_database_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
+- [ ] V5.0-P5 exposes `GET /api/trade-execution-gateway/final-readiness-report` as the final review-only V5.0 gateway baseline.
+- [ ] V5.0-P5 final report aggregates capabilities, review gates, manual confirmation, audit schema, risk contract, rollback runbook, pre-live package, operator checklist, and disabled release gate.
+- [ ] V5.0-P5 dashboard shows report id, completed review modules, safety matrix, remaining blockers, and the next V5.5 threat-modeling track.
+- [ ] V5.0-P5 must keep `v5_review_only_baseline_complete=true`, `ready_for_v5_5_threat_modeling=true`, `ready_for_live_enablement=false`, `api_can_enable_gateway=false`, `gateway_can_execute=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
 
 ## 14. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
