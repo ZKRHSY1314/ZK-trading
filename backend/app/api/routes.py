@@ -530,6 +530,21 @@ def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest_
         max_age_days=max_age_days,
         repeat_checks=repeat_checks,
     )
+@router.post("/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-release-evidence/compare")
+def trade_execution_gateway_audit_ledger_migration_manual_release_health_digest_history_release_evidence_compare(
+    input_data: TradeManualReleaseEvidenceComparisonInput | None = None,
+    limit: int = 50,
+    max_age_days: int = 7,
+    repeat_checks: int = 2,
+) -> dict:
+    payload = input_data or TradeManualReleaseEvidenceComparisonInput()
+    return TradeExecutionGatewayService().compare_audit_ledger_migration_manual_release_health_digest_history_release_evidence(
+        baseline_evidence=payload.baseline_evidence,
+        candidate_evidence=payload.candidate_evidence,
+        limit=limit,
+        max_age_days=max_age_days,
+        repeat_checks=repeat_checks,
+    )
 
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:

@@ -26,7 +26,7 @@ def test_trade_execution_gateway_capabilities(client):
     resp = client.get("/api/trade-execution-gateway/capabilities")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["stage"] == "V5.5-P24"
+    assert data["stage"] == "V5.5-P25"
     assert data["review_only"] is True
     assert data["simulation_only"] is True
     assert data["execution_enabled"] is False
@@ -163,6 +163,10 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
         "/api/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-release-evidence/verify?limit=5&max_age_days=7&repeat_checks=2",
         json={"evidence": history_evidence_payload},
     )
+    migration_release_health_digest_history_evidence_comparison_resp = client.post(
+        "/api/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-release-evidence/compare?limit=5&max_age_days=7&repeat_checks=2",
+        json={"baseline_evidence": history_evidence_payload, "candidate_evidence": history_evidence_payload},
+    )
     assert contract_resp.status_code == 200
     assert audit_resp.status_code == 200
     assert risk_resp.status_code == 200
@@ -199,63 +203,64 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_health_digest_history_package_integrity_resp.status_code == 200
     assert migration_release_health_digest_history_release_rehearsal_resp.status_code == 200
     assert migration_release_health_digest_history_evidence_resp.status_code == 200
-    assert contract_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_evidence_comparison_resp.status_code == 200
+    assert contract_resp.json()["stage"] == "V5.5-P25"
     assert contract_resp.json()["decision"]["contract_allows_execution_now"] is False
-    assert audit_resp.json()["stage"] == "V5.5-P24"
+    assert audit_resp.json()["stage"] == "V5.5-P25"
     assert audit_resp.json()["writes_database_now"] is False
     assert audit_resp.json()["decision"]["schema_persistence_enabled_now"] is False
-    assert risk_resp.json()["stage"] == "V5.5-P24"
+    assert risk_resp.json()["stage"] == "V5.5-P25"
     assert risk_resp.json()["decision"]["contract_allows_execution_now"] is False
     assert risk_resp.json()["integration_notes"]["manual_confirmation_override_allowed"] is False
-    assert rollback_resp.json()["stage"] == "V5.5-P24"
+    assert rollback_resp.json()["stage"] == "V5.5-P25"
     assert rollback_resp.json()["decision"]["runbook_allows_execution_now"] is False
-    assert pre_live_resp.json()["stage"] == "V5.5-P24"
+    assert pre_live_resp.json()["stage"] == "V5.5-P25"
     assert pre_live_resp.json()["decision"]["ready_for_live_enablement"] is False
     assert pre_live_resp.json()["decision"]["gateway_can_execute"] is False
-    assert checklist_resp.json()["stage"] == "V5.5-P24"
+    assert checklist_resp.json()["stage"] == "V5.5-P25"
     assert checklist_resp.json()["decision"]["acceptance_allows_enablement_now"] is False
-    assert release_gate_resp.json()["stage"] == "V5.5-P24"
+    assert release_gate_resp.json()["stage"] == "V5.5-P25"
     assert release_gate_resp.json()["default_state"] == "disabled"
     assert release_gate_resp.json()["decision"]["release_gate_allows_enablement_now"] is False
-    assert final_report_resp.json()["stage"] == "V5.5-P24"
+    assert final_report_resp.json()["stage"] == "V5.5-P25"
     assert final_report_resp.json()["decision"]["v5_review_only_baseline_complete"] is True
     assert final_report_resp.json()["decision"]["ready_for_live_enablement"] is False
     assert final_report_resp.json()["decision"]["gateway_can_execute"] is False
-    assert threat_model_resp.json()["stage"] == "V5.5-P24"
+    assert threat_model_resp.json()["stage"] == "V5.5-P25"
     assert threat_model_resp.json()["decision"]["broker_adapter_allowed_now"] is False
-    assert interface_draft_resp.json()["stage"] == "V5.5-P24"
+    assert interface_draft_resp.json()["stage"] == "V5.5-P25"
     assert interface_draft_resp.json()["decision"]["interface_implemented_now"] is False
     assert interface_draft_resp.json()["decision"]["adapter_can_execute_now"] is False
-    assert contract_verification_resp.json()["stage"] == "V5.5-P24"
+    assert contract_verification_resp.json()["stage"] == "V5.5-P25"
     assert contract_verification_resp.json()["status"] == "fixture_contract_verification_passed"
     assert contract_verification_resp.json()["decision"]["adapter_can_connect_now"] is False
     assert contract_verification_resp.json()["summary"]["network_calls"] is False
-    assert order_failure_resp.json()["stage"] == "V5.5-P24"
+    assert order_failure_resp.json()["stage"] == "V5.5-P25"
     assert order_failure_resp.json()["status"] == "order_failure_fixtures_ready"
     assert order_failure_resp.json()["decision"]["can_submit_order_now"] is False
     assert order_failure_resp.json()["summary"]["places_order"] is False
-    assert runbook_mapping_resp.json()["stage"] == "V5.5-P24"
+    assert runbook_mapping_resp.json()["stage"] == "V5.5-P25"
     assert runbook_mapping_resp.json()["status"] == "order_failure_runbook_mapping_ready"
     assert runbook_mapping_resp.json()["decision"]["can_execute_runbook_now"] is False
     assert runbook_mapping_resp.json()["summary"]["writes_database_now"] is False
-    assert storage_plan_resp.json()["stage"] == "V5.5-P24"
+    assert storage_plan_resp.json()["stage"] == "V5.5-P25"
     assert storage_plan_resp.json()["status"] == "disabled_audit_ledger_storage_plan_ready"
     assert storage_plan_resp.json()["decision"]["can_create_table_now"] is False
     assert storage_plan_resp.json()["summary"]["runs_migration_now"] is False
-    assert migration_spec_resp.json()["stage"] == "V5.5-P24"
+    assert migration_spec_resp.json()["stage"] == "V5.5-P25"
     assert migration_spec_resp.json()["status"] == "spec_verification_passed"
     assert migration_spec_resp.json()["decision"]["can_execute_sql_now"] is False
     assert migration_spec_resp.json()["decision"]["can_write_audit_row_now"] is False
     assert migration_spec_resp.json()["summary"]["executes_sql"] is False
     assert migration_spec_resp.json()["summary"]["writes_migration_file_now"] is False
-    assert migration_approval_resp.json()["stage"] == "V5.5-P24"
+    assert migration_approval_resp.json()["stage"] == "V5.5-P25"
     assert migration_approval_resp.json()["status"] == "approval_metadata_recorded"
     assert migration_approval_resp.json()["safety_summary"]["writes_existing_event_now"] is True
     assert migration_approval_resp.json()["safety_summary"]["writes_audit_ledger_row_now"] is False
     assert migration_approval_resp.json()["safety_summary"]["executes_sql"] is False
     assert migration_approval_resp.json()["migration_allowed_now"] is False
     assert migration_approvals_resp.json()[0]["event_id"] == migration_approval_resp.json()["event_id"]
-    assert migration_release_readiness_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_readiness_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_readiness_resp.json()["status"] == "release_evidence_ready"
     assert migration_release_readiness_resp.json()["decision"]["go_no_go"] == "go_for_manual_release_review"
     assert migration_release_readiness_resp.json()["decision"]["migration_allowed_now"] is False
@@ -263,14 +268,14 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_readiness_resp.json()["evidence"]["latest_approval_event_id"] == migration_approval_resp.json()["event_id"]
     assert migration_release_readiness_resp.json()["safety_summary"]["writes_audit_ledger_row_now"] is False
     assert migration_release_readiness_resp.json()["safety_summary"]["executes_sql"] is False
-    assert migration_approval_review_resp.json()["stage"] == "V5.5-P24"
+    assert migration_approval_review_resp.json()["stage"] == "V5.5-P25"
     assert migration_approval_review_resp.json()["status"] == "approval_current"
     assert migration_approval_review_resp.json()["latest_approval"]["event_id"] == migration_approval_resp.json()["event_id"]
     assert migration_approval_review_resp.json()["decision"]["approval_can_be_reused_for_manual_release_review"] is True
     assert migration_approval_review_resp.json()["decision"]["migration_allowed_now"] is False
     assert migration_approval_review_resp.json()["safety_summary"]["writes_audit_ledger_row_now"] is False
     assert migration_approval_review_resp.json()["safety_summary"]["executes_sql"] is False
-    assert migration_release_package_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_package_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_package_resp.json()["status"] == "release_package_ready_for_manual_review"
     assert migration_release_package_resp.json()["decision"]["go_no_go"] == "ready_for_manual_release_review"
     assert migration_release_package_resp.json()["decision"]["execution_allowed_now"] is False
@@ -279,7 +284,7 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_package_resp.json()["manifest"]["download_created"] is False
     assert migration_release_package_resp.json()["safety_summary"]["writes_audit_ledger_row_now"] is False
     assert migration_release_package_resp.json()["safety_summary"]["writes_file"] is False
-    assert migration_package_integrity_resp.json()["stage"] == "V5.5-P24"
+    assert migration_package_integrity_resp.json()["stage"] == "V5.5-P25"
     assert migration_package_integrity_resp.json()["status"] == "integrity_review_passed"
     assert migration_package_integrity_resp.json()["source_package_id"] == migration_package_integrity_resp.json()["recomputed_package_id"]
     assert migration_package_integrity_resp.json()["decision"]["package_id_stable"] is True
@@ -288,7 +293,7 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_package_integrity_resp.json()["decision"]["release_approved_now"] is False
     assert migration_package_integrity_resp.json()["safety_summary"]["writes_file"] is False
     assert migration_package_integrity_resp.json()["safety_summary"]["mutates_source_package"] is False
-    assert migration_release_rehearsal_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_rehearsal_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_rehearsal_resp.json()["status"] == "manual_release_rehearsal_ready"
     assert migration_release_rehearsal_resp.json()["decision"]["go_no_go"] == "ready_for_offline_manual_review"
     assert migration_release_rehearsal_resp.json()["decision"]["manual_review_recorded_now"] is False
@@ -296,7 +301,7 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_rehearsal_resp.json()["decision"]["execution_allowed_now"] is False
     assert migration_release_rehearsal_resp.json()["operator_rehearsal_policy"]["api_can_record_operator_review"] is False
     assert migration_release_rehearsal_resp.json()["safety_summary"]["records_manual_review_now"] is False
-    assert migration_release_evidence_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_evidence_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_evidence_resp.json()["status"] == "manual_release_evidence_verification_passed"
     assert migration_release_evidence_resp.json()["decision"]["evidence_complete"] is True
     assert migration_release_evidence_resp.json()["decision"]["manual_review_recorded_now"] is False
@@ -304,39 +309,39 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_evidence_resp.json()["decision"]["execution_allowed_now"] is False
     assert migration_release_evidence_resp.json()["safety_summary"]["persists_manual_release_evidence"] is False
     assert migration_release_evidence_resp.json()["safety_summary"]["writes_database_now"] is False
-    assert migration_release_evidence_comparison_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_evidence_comparison_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_evidence_comparison_resp.json()["status"] == "manual_release_evidence_comparison_stable"
     assert migration_release_evidence_comparison_resp.json()["decision"]["evidence_pair_stable"] is True
     assert migration_release_evidence_comparison_resp.json()["decision"]["release_approved_now"] is False
     assert migration_release_evidence_comparison_resp.json()["decision"]["execution_allowed_now"] is False
     assert migration_release_evidence_comparison_resp.json()["safety_summary"]["persists_manual_release_evidence_comparison"] is False
     assert migration_release_evidence_comparison_resp.json()["safety_summary"]["writes_database_now"] is False
-    assert migration_release_health_digest_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_resp.json()["status"] == "manual_release_health_digest_healthy"
     assert migration_release_health_digest_resp.json()["decision"]["digest_healthy"] is True
     assert migration_release_health_digest_resp.json()["decision"]["release_approved_now"] is False
     assert migration_release_health_digest_resp.json()["decision"]["execution_allowed_now"] is False
     assert migration_release_health_digest_resp.json()["safety_summary"]["persists_manual_release_health_digest"] is False
     assert migration_release_health_digest_resp.json()["safety_summary"]["writes_database_now"] is False
-    assert migration_release_health_digest_history_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_history_resp.json()["status"] == "history_retention_proposal_ready"
     assert migration_release_health_digest_history_resp.json()["decision"]["history_persistence_enabled_now"] is False
     assert migration_release_health_digest_history_resp.json()["safety_summary"]["persists_manual_release_health_digest_history"] is False
     assert migration_release_health_digest_history_resp.json()["safety_summary"]["writes_database_now"] is False
-    assert migration_release_health_digest_history_checklist_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_checklist_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_history_checklist_resp.json()["status"] == "history_migration_readiness_review_ready"
     assert migration_release_health_digest_history_checklist_resp.json()["decision"]["migration_allowed_now"] is False
     assert migration_release_health_digest_history_checklist_resp.json()["safety_summary"]["persists_manual_release_health_digest_history"] is False
     assert migration_release_health_digest_history_checklist_resp.json()["safety_summary"]["writes_database_now"] is False
     assert migration_release_health_digest_history_checklist_resp.json()["safety_summary"]["writes_file"] is False
-    assert migration_release_health_digest_history_spec_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_spec_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_history_spec_resp.json()["status"] == "spec_verification_passed"
     assert migration_release_health_digest_history_spec_resp.json()["decision"]["can_execute_sql_now"] is False
     assert migration_release_health_digest_history_spec_resp.json()["decision"]["can_write_history_row_now"] is False
     assert migration_release_health_digest_history_spec_resp.json()["safety_summary"]["persists_manual_release_health_digest_history"] is False
     assert migration_release_health_digest_history_spec_resp.json()["safety_summary"]["writes_database_now"] is False
     assert migration_release_health_digest_history_spec_resp.json()["safety_summary"]["writes_file"] is False
-    assert migration_release_health_digest_history_spec_approval_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_spec_approval_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_history_spec_approval_resp.json()["status"] == "approval_metadata_recorded"
     assert migration_release_health_digest_history_spec_approval_resp.json()["safety_summary"]["writes_existing_event_now"] is True
     assert migration_release_health_digest_history_spec_approval_resp.json()["safety_summary"]["writes_history_row_now"] is False
@@ -345,7 +350,7 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
         migration_release_health_digest_history_spec_approvals_resp.json()[0]["event_id"]
         == migration_release_health_digest_history_spec_approval_resp.json()["event_id"]
     )
-    assert migration_release_health_digest_history_readiness_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_readiness_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_history_readiness_resp.json()["status"] == "release_evidence_ready"
     assert migration_release_health_digest_history_readiness_resp.json()["decision"]["go_no_go"] == "go_for_manual_release_review"
     assert migration_release_health_digest_history_readiness_resp.json()["decision"]["migration_allowed_now"] is False
@@ -353,7 +358,7 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_health_digest_history_readiness_resp.json()["evidence"]["latest_approval_event_id"] == migration_release_health_digest_history_spec_approval_resp.json()["event_id"]
     assert migration_release_health_digest_history_readiness_resp.json()["safety_summary"]["writes_history_row_now"] is False
     assert migration_release_health_digest_history_readiness_resp.json()["safety_summary"]["executes_sql"] is False
-    assert migration_release_health_digest_history_approval_review_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_approval_review_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_history_approval_review_resp.json()["status"] == "approval_current"
     assert migration_release_health_digest_history_approval_review_resp.json()["latest_approval"]["event_id"] == migration_release_health_digest_history_spec_approval_resp.json()["event_id"]
     assert migration_release_health_digest_history_approval_review_resp.json()["decision"]["approval_can_be_reused_for_manual_release_review"] is True
@@ -361,7 +366,7 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_health_digest_history_approval_review_resp.json()["decision"]["release_approved_now"] is False
     assert migration_release_health_digest_history_approval_review_resp.json()["safety_summary"]["writes_history_row_now"] is False
     assert migration_release_health_digest_history_approval_review_resp.json()["safety_summary"]["executes_sql"] is False
-    assert migration_release_health_digest_history_release_package_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_release_package_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_history_release_package_resp.json()["status"] == "release_package_ready_for_manual_review"
     assert migration_release_health_digest_history_release_package_resp.json()["decision"]["go_no_go"] == "ready_for_manual_release_review"
     assert migration_release_health_digest_history_release_package_resp.json()["decision"]["migration_allowed_now"] is False
@@ -371,7 +376,7 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_health_digest_history_release_package_resp.json()["manifest"]["download_created"] is False
     assert migration_release_health_digest_history_release_package_resp.json()["safety_summary"]["writes_history_row_now"] is False
     assert migration_release_health_digest_history_release_package_resp.json()["safety_summary"]["executes_sql"] is False
-    assert migration_release_health_digest_history_package_integrity_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_package_integrity_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_history_package_integrity_resp.json()["status"] == "integrity_review_passed"
     assert migration_release_health_digest_history_package_integrity_resp.json()["source_package_id"] == migration_release_health_digest_history_package_integrity_resp.json()["recomputed_package_id"]
     assert migration_release_health_digest_history_package_integrity_resp.json()["decision"]["package_id_stable"] is True
@@ -380,7 +385,7 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_health_digest_history_package_integrity_resp.json()["decision"]["release_approved_now"] is False
     assert migration_release_health_digest_history_package_integrity_resp.json()["safety_summary"]["writes_file"] is False
     assert migration_release_health_digest_history_package_integrity_resp.json()["safety_summary"]["mutates_source_package"] is False
-    assert migration_release_health_digest_history_release_rehearsal_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_release_rehearsal_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_history_release_rehearsal_resp.json()["status"] == "manual_release_rehearsal_ready"
     assert migration_release_health_digest_history_release_rehearsal_resp.json()["source_package_status"] == "release_package_ready_for_manual_review"
     assert migration_release_health_digest_history_release_rehearsal_resp.json()["integrity_status"] == "integrity_review_passed"
@@ -391,7 +396,7 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_health_digest_history_release_rehearsal_resp.json()["operator_rehearsal_policy"]["api_can_record_operator_review"] is False
     assert migration_release_health_digest_history_release_rehearsal_resp.json()["safety_summary"]["records_manual_review_now"] is False
     assert migration_release_health_digest_history_release_rehearsal_resp.json()["safety_summary"]["writes_history_row_now"] is False
-    assert migration_release_health_digest_history_evidence_resp.json()["stage"] == "V5.5-P24"
+    assert migration_release_health_digest_history_evidence_resp.json()["stage"] == "V5.5-P25"
     assert migration_release_health_digest_history_evidence_resp.json()["status"] == "manual_release_health_digest_history_evidence_verification_passed"
     assert migration_release_health_digest_history_evidence_resp.json()["rehearsal_status"] == "manual_release_rehearsal_ready"
     assert migration_release_health_digest_history_evidence_resp.json()["decision"]["evidence_complete"] is True
@@ -401,6 +406,21 @@ def test_trade_execution_gateway_p1_v55_contracts(client):
     assert migration_release_health_digest_history_evidence_resp.json()["safety_summary"]["persists_manual_release_health_digest_history_evidence"] is False
     assert migration_release_health_digest_history_evidence_resp.json()["safety_summary"]["writes_history_row_now"] is False
     assert migration_release_health_digest_history_evidence_resp.json()["safety_summary"]["executes_sql"] is False
+    assert migration_release_health_digest_history_evidence_comparison_resp.json()["stage"] == "V5.5-P25"
+    assert (
+        migration_release_health_digest_history_evidence_comparison_resp.json()["status"]
+        == "manual_release_health_digest_history_evidence_comparison_stable"
+    )
+    assert migration_release_health_digest_history_evidence_comparison_resp.json()["decision"]["evidence_pair_stable"] is True
+    assert migration_release_health_digest_history_evidence_comparison_resp.json()["decision"]["release_approved_now"] is False
+    assert migration_release_health_digest_history_evidence_comparison_resp.json()["decision"]["execution_allowed_now"] is False
+    assert (
+        migration_release_health_digest_history_evidence_comparison_resp.json()["safety_summary"][
+            "persists_manual_release_health_digest_history_evidence_comparison"
+        ]
+        is False
+    )
+    assert migration_release_health_digest_history_evidence_comparison_resp.json()["safety_summary"]["writes_database_now"] is False
 
 def test_learning_summary(client):
     resp = client.get("/api/learning/summary")
