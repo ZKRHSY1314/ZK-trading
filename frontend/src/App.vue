@@ -777,7 +777,7 @@
           <button class="disabled-live" disabled>实盘执行未启用</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.5-P21" }}</span>
+          <span>阶段 {{ tradeGatewayCapabilities?.stage ?? "V5.5-P22" }}</span>
           <span>状态 {{ tradeGatewayCapabilities?.status ?? "未加载" }}</span>
           <span>执行 {{ tradeGatewayCapabilities?.execution_enabled ? "允许" : "禁止" }}</span>
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
@@ -813,6 +813,7 @@
           <span>History release readiness {{ tradeGatewayAuditMigrationHealthDigestHistoryReleaseReadiness?.status ?? "not loaded" }}</span>
           <span>History approval review {{ tradeGatewayAuditMigrationHealthDigestHistoryApprovalReview?.status ?? "not loaded" }}</span>
           <span>History release package {{ tradeGatewayAuditMigrationHealthDigestHistoryReleasePackage?.status ?? "not loaded" }}</span>
+          <span>History package integrity {{ tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity?.status ?? "not loaded" }}</span>
           <span>门禁阻断 {{ tradeGatewayReviewGates?.blocked_gate_count ?? 0 }}</span>
           <span>待设计 {{ tradeGatewayReviewGates?.review_required_count ?? 0 }}</span>
           <span>实盘 {{ tradeGatewayCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
@@ -1068,6 +1069,11 @@
             <span>{{ tradeGatewayAuditMigrationHealthDigestHistoryReleasePackage.decision.go_no_go }} / {{ tradeGatewayAuditMigrationHealthDigestHistoryReleasePackage.decision.next_required_action }}</span>
             <small>{{ tradeGatewayAuditMigrationHealthDigestHistoryReleasePackage.package_id.slice(0, 16) }} / items {{ tradeGatewayAuditMigrationHealthDigestHistoryReleasePackage.manifest.items.length }} / file {{ tradeGatewayAuditMigrationHealthDigestHistoryReleasePackage.manifest.writes_file ? "yes" : "no" }}</small>
           </div>
+          <div v-if="tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity" class="score-item">
+            <strong>Health Digest History Package Integrity / {{ tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity.status }}</strong>
+            <span>{{ tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity.decision.next_required_action }} / stable {{ tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity.decision.package_id_stable ? "yes" : "no" }}</span>
+            <small>failed {{ tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity.failed_check_count }} / items {{ tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity.manifest_summary.item_count }} / mutate {{ tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity.safety_summary.mutates_source_package ? "yes" : "no" }}</small>
+          </div>
           <div
             v-for="component in tradeGatewayCapabilities.required_future_components"
             :key="component.name"
@@ -1094,7 +1100,7 @@
           <div class="score-item">
             <strong>Forbidden Modes</strong>
             <span>{{ tradeGatewayCapabilities.forbidden_modes.join(" / ") }}</span>
-            <small>这些能力在 V5.5-P21 只能作为阻断项展示。</small>
+            <small>这些能力在 V5.5-P22 只能作为阻断项展示。</small>
           </div>
         </div>
         <p v-else>暂无 V5.0 网关审查数据。刷新后只会加载安全门禁，不会创建任何真实交易接口。</p>
@@ -1854,6 +1860,7 @@ type TradeGatewayReviewGates = {
     audit_ledger_migration_manual_release_health_digest_history_release_readiness_ready: boolean;
     audit_ledger_migration_manual_release_health_digest_history_approval_freshness_ready: boolean;
     audit_ledger_migration_manual_release_health_digest_history_release_package_ready: boolean;
+    audit_ledger_migration_manual_release_health_digest_history_release_package_integrity_review_ready: boolean;
     ready_for_live_enablement: boolean;
     live_trading_enabled: boolean;
     next_required_action: string;
@@ -3538,6 +3545,45 @@ type TradeGatewayAuditMigrationManualReleaseHealthDigestHistoryReleasePackage = 
   live_trading_enabled: boolean;
 };
 
+type TradeGatewayAuditMigrationManualReleaseHealthDigestHistoryPackageIntegrityReview = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  source_package_id: string;
+  source_package_status: string;
+  recomputed_package_id: string;
+  repeat_checks: number;
+  repeated_package_ids: string[];
+  checks: TradeGatewayAuditMigrationReleasePackageIntegrityReview["checks"];
+  failed_checks: TradeGatewayAuditMigrationReleasePackageIntegrityReview["failed_checks"];
+  failed_check_count: number;
+  manifest_summary: TradeGatewayAuditMigrationReleasePackageIntegrityReview["manifest_summary"] & {
+    required_item_names: string[];
+    missing_items: string[];
+    duplicate_items: string[];
+    missing_manual_artifacts: string[];
+  };
+  decision: TradeGatewayAuditMigrationReleasePackageIntegrityReview["decision"];
+  safety_summary: Record<string, boolean> & {
+    persists_manual_release_health_digest_history: boolean;
+    writes_history_row_now: boolean;
+    creates_table_now: boolean;
+    runs_migration_now: boolean;
+    executes_sql: boolean;
+    writes_database_now: boolean;
+    writes_migration_file_now: boolean;
+    writes_file: boolean;
+    download_created: boolean;
+    mutates_source_package: boolean;
+  };
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type AgentTask = {
   id: number;
   task_type: string;
@@ -5144,6 +5190,7 @@ const tradeGatewayAuditMigrationHealthDigestHistorySpecApprovals = ref<TradeGate
 const tradeGatewayAuditMigrationHealthDigestHistoryReleaseReadiness = ref<TradeGatewayAuditMigrationManualReleaseHealthDigestHistoryReleaseReadiness | null>(null);
 const tradeGatewayAuditMigrationHealthDigestHistoryApprovalReview = ref<TradeGatewayAuditMigrationManualReleaseHealthDigestHistoryApprovalReview | null>(null);
 const tradeGatewayAuditMigrationHealthDigestHistoryReleasePackage = ref<TradeGatewayAuditMigrationManualReleaseHealthDigestHistoryReleasePackage | null>(null);
+const tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity = ref<TradeGatewayAuditMigrationManualReleaseHealthDigestHistoryPackageIntegrityReview | null>(null);
 const discoveryLoading = ref(false);
 const loading = ref(false);
 const planLoading = ref(false);
@@ -5613,7 +5660,8 @@ async function loadTradeExecutionGateway() {
       auditMigrationHealthDigestHistorySpecApprovalsData,
       auditMigrationHealthDigestHistoryReleaseReadinessData,
       auditMigrationHealthDigestHistoryApprovalReviewData,
-      auditMigrationHealthDigestHistoryReleasePackageData
+      auditMigrationHealthDigestHistoryReleasePackageData,
+      auditMigrationHealthDigestHistoryPackageIntegrityData
     ] = await Promise.all([
       fetchJson<TradeGatewayCapabilities>("/api/trade-execution-gateway/capabilities"),
       fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates"),
@@ -5717,6 +5765,9 @@ async function loadTradeExecutionGateway() {
       ),
       fetchJson<TradeGatewayAuditMigrationManualReleaseHealthDigestHistoryReleasePackage>(
         "/api/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-release-package?limit=10&max_age_days=7&repeat_checks=2"
+      ),
+      fetchJson<TradeGatewayAuditMigrationManualReleaseHealthDigestHistoryPackageIntegrityReview>(
+        "/api/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-release-package/integrity-review?limit=10&max_age_days=7&repeat_checks=2"
       )
     ]);
     tradeGatewayCapabilities.value = capabilitiesData;
@@ -5753,6 +5804,7 @@ async function loadTradeExecutionGateway() {
     tradeGatewayAuditMigrationHealthDigestHistoryReleaseReadiness.value = auditMigrationHealthDigestHistoryReleaseReadinessData;
     tradeGatewayAuditMigrationHealthDigestHistoryApprovalReview.value = auditMigrationHealthDigestHistoryApprovalReviewData;
     tradeGatewayAuditMigrationHealthDigestHistoryReleasePackage.value = auditMigrationHealthDigestHistoryReleasePackageData;
+    tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity.value = auditMigrationHealthDigestHistoryPackageIntegrityData;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
   } finally {
@@ -5878,6 +5930,9 @@ async function approveTradeGatewayHealthDigestHistoryMigrationSpec() {
     );
     tradeGatewayAuditMigrationHealthDigestHistoryReleasePackage.value = await fetchJson<TradeGatewayAuditMigrationManualReleaseHealthDigestHistoryReleasePackage>(
       "/api/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-release-package?limit=10&max_age_days=7&repeat_checks=2"
+    );
+    tradeGatewayAuditMigrationHealthDigestHistoryPackageIntegrity.value = await fetchJson<TradeGatewayAuditMigrationManualReleaseHealthDigestHistoryPackageIntegrityReview>(
+      "/api/trade-execution-gateway/audit-ledger-migration-release-evidence/health-digest/history-migration-release-package/integrity-review?limit=10&max_age_days=7&repeat_checks=2"
     );
     tradeGatewayReviewGates.value = await fetchJson<TradeGatewayReviewGates>("/api/trade-execution-gateway/review-gates");
   } catch (err) {
