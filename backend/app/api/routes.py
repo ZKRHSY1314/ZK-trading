@@ -204,6 +204,11 @@ def trade_execution_gateway_order_failure_runbook_mapping() -> dict:
     return TradeExecutionGatewayService().order_failure_runbook_mapping()
 
 
+@router.get("/trade-execution-gateway/audit-ledger-storage-plan")
+def trade_execution_gateway_audit_ledger_storage_plan() -> dict:
+    return TradeExecutionGatewayService().audit_ledger_storage_plan()
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()

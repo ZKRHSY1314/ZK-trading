@@ -220,6 +220,10 @@
 - [ ] V5.5-P3 maps all six V5.5-P2 fixtures to manual decisions, operator actions, required evidence fields, required hashes, and runbook references.
 - [ ] V5.5-P3 dashboard shows mapping status, source fixture suite, per-fixture manual decisions, audit evidence field count, and no-runbook/no-audit-write evidence.
 - [ ] V5.5-P3 must keep `can_execute_runbook_now=false`, `can_record_audit_now=false`, `can_submit_order_now=false`, `writes_database_now=false`, `executes_runbook_now=false`, `requires_broker_connection=false`, `requires_credentials=false`, and `live_trading_enabled=false`.
+- [ ] V5.5-P4 exposes `GET /api/trade-execution-gateway/audit-ledger-storage-plan` as a disabled, review-only future audit ledger storage plan.
+- [ ] V5.5-P4 defines planned columns, proposed indexes, hash-chain policy, retention policy, redaction policy, migration preconditions, rollback requirements, and blocked storage actions.
+- [ ] V5.5-P4 dashboard shows target future table, disabled storage state, column/index counts, excluded sensitive fields, and no-create/no-migration/no-audit-row evidence.
+- [ ] V5.5-P4 must keep `can_create_table_now=false`, `can_write_audit_row_now=false`, `can_run_migration_now=false`, `can_write_migration_file_now=false`, `writes_database_now=false`, `records_audit_rows_now=false`, and `live_trading_enabled=false`.
 
 ## 15. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:

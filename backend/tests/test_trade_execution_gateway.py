@@ -5,7 +5,7 @@ from app.trade_execution.gateway import TradeExecutionGatewayService
 def test_trade_execution_gateway_capabilities_are_review_only():
     data = TradeExecutionGatewayService().capabilities()
 
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "review_only_ready"
     assert data["gateway_enabled"] is False
     assert data["execution_enabled"] is False
@@ -28,11 +28,14 @@ def test_trade_execution_gateway_capabilities_are_review_only():
     assert "broker_adapter_interface_draft_review" in data["allowed_modes"]
     assert "broker_adapter_contract_verification_review" in data["allowed_modes"]
     assert "order_failure_runbook_mapping_review" in data["allowed_modes"]
+    assert "disabled_audit_ledger_storage_plan_review" in data["allowed_modes"]
     assert "place_real_trade" in data["forbidden_modes"]
     assert "enable_gateway_by_api" in data["forbidden_modes"]
     assert "instantiate_broker_adapter" in data["forbidden_modes"]
     assert "broker_network_call" in data["forbidden_modes"]
     assert "execute_failure_runbook" in data["forbidden_modes"]
+    assert "create_audit_ledger_table" in data["forbidden_modes"]
+    assert "write_audit_ledger_row" in data["forbidden_modes"]
     components = {item["name"]: item for item in data["required_future_components"]}
     assert components["ManualConfirmationContract"]["status"] == "review_contract_defined"
     assert components["PortfolioRiskGateContract"]["status"] == "review_contract_defined"
@@ -47,6 +50,7 @@ def test_trade_execution_gateway_capabilities_are_review_only():
     assert components["BrokerAdapterContractVerifier"]["status"] == "review_fixture_contract_verified"
     assert components["OrderLifecycleFailureFixtures"]["status"] == "review_failure_fixtures_defined"
     assert components["OrderFailureRunbookMapping"]["status"] == "review_runbook_mapping_defined"
+    assert components["DisabledAuditLedgerStoragePlan"]["status"] == "review_storage_plan_defined_not_persisted"
     assert data["safety_summary"]["places_real_trade"] is False
     assert data["safety_summary"]["connects_broker"] is False
 
@@ -55,8 +59,8 @@ def test_trade_execution_gateway_review_gates_are_pre_live_metadata_only():
     data = TradeExecutionGatewayService().review_gates()
     gates = {gate["name"]: gate for gate in data["gates"]}
 
-    assert data["stage"] == "V5.5-P3"
-    assert data["status"] == "order_failure_runbook_mapping_ready"
+    assert data["stage"] == "V5.5-P4"
+    assert data["status"] == "disabled_audit_ledger_storage_plan_ready"
     assert gates["live_trading_disabled"]["status"] == "passed"
     assert gates["broker_adapter_absent"]["status"] == "passed"
     assert gates["credential_storage_absent"]["status"] == "passed"
@@ -73,6 +77,7 @@ def test_trade_execution_gateway_review_gates_are_pre_live_metadata_only():
     assert gates["broker_adapter_contract_verification_required"]["status"] == "passed"
     assert gates["order_lifecycle_failure_fixtures_required"]["status"] == "passed"
     assert gates["order_failure_runbook_mapping_required"]["status"] == "passed"
+    assert gates["disabled_audit_ledger_storage_plan_required"]["status"] == "passed"
     assert data["decision"]["gateway_can_execute"] is False
     assert data["decision"]["manual_confirmation_contract_ready"] is True
     assert data["decision"]["risk_contract_ready"] is True
@@ -87,6 +92,7 @@ def test_trade_execution_gateway_review_gates_are_pre_live_metadata_only():
     assert data["decision"]["broker_adapter_contract_verification_ready"] is True
     assert data["decision"]["order_lifecycle_failure_fixtures_ready"] is True
     assert data["decision"]["order_failure_runbook_mapping_ready"] is True
+    assert data["decision"]["disabled_audit_ledger_storage_plan_ready"] is True
     assert data["decision"]["ready_for_live_enablement"] is False
     assert data["decision"]["live_trading_enabled"] is False
     assert data["safety_summary"]["real_money_execution_enabled"] is False
@@ -97,7 +103,7 @@ def test_manual_confirmation_contract_is_review_only():
     input_names = {item["name"] for item in data["required_operator_inputs"]}
 
     assert data["schema_version"] == "trade_execution_manual_confirmation_contract.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "confirmation_contract_review_ready"
     assert data["contract_state"] == "defined_for_review_only"
     assert "operator_id" in input_names
@@ -117,7 +123,7 @@ def test_audit_evidence_schema_is_not_persisted_or_migrated():
     fields = {item["name"]: item for item in data["fields"]}
 
     assert data["schema_version"] == "trade_execution_audit_evidence_schema.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "audit_schema_review_ready"
     assert data["storage_state"] == "not_persisted"
     assert data["target_future_table"] == "trade_execution_audit_ledger"
@@ -141,7 +147,7 @@ def test_risk_gate_contract_is_review_only_and_blocks_overrides():
     symbol_gates = {item["name"]: item for item in data["symbol_gates"]}
 
     assert data["schema_version"] == "trade_execution_risk_gate_contract.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "risk_gate_contract_review_ready"
     assert data["contract_state"] == "defined_for_review_only"
     assert portfolio_gates["total_exposure"]["limit"] == 0.60
@@ -164,7 +170,7 @@ def test_rollback_runbook_is_review_only_and_non_executable():
     step_names = {item["step"] for item in data["rollback_steps"]}
 
     assert data["schema_version"] == "trade_execution_rollback_runbook.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "rollback_runbook_review_ready"
     assert data["runbook_state"] == "defined_for_review_only"
     assert "risk_gate_blocked" in data["trigger_events"]
@@ -187,7 +193,7 @@ def test_pre_live_review_package_assembles_contracts_without_enablement():
     manifest = {item["name"]: item for item in data["manifest"]}
 
     assert data["schema_version"] == "trade_execution_pre_live_review_package.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "pre_live_review_package_ready"
     assert len(data["package_id"]) == 64
     assert set(manifest) == {
@@ -201,7 +207,7 @@ def test_pre_live_review_package_assembles_contracts_without_enablement():
         "disabled_release_gate",
     }
     assert manifest["rollback_runbook"]["status"] == "rollback_runbook_review_ready"
-    assert manifest["review_gates"]["status"] == "order_failure_runbook_mapping_ready"
+    assert manifest["review_gates"]["status"] == "disabled_audit_ledger_storage_plan_ready"
     assert manifest["operator_acceptance_checklist"]["status"] == "operator_acceptance_checklist_review_ready"
     assert manifest["disabled_release_gate"]["status"] == "disabled_release_gate_review_ready"
     assert "rollback_drill_evidence" in data["required_manual_artifacts"]
@@ -221,7 +227,7 @@ def test_final_readiness_report_closes_v5_review_baseline_without_enablement():
     manifest = {item["name"]: item for item in data["manifest"]}
 
     assert data["schema_version"] == "trade_execution_final_readiness_report.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "v5_review_only_gateway_baseline_ready"
     assert len(data["report_id"]) == 64
     assert data["report_state"] == "final_v5_review_only_baseline"
@@ -261,7 +267,7 @@ def test_broker_adapter_threat_model_is_review_only_and_blocks_live_surfaces():
     categories = {item["name"]: item for item in data["threat_categories"]}
 
     assert data["schema_version"] == "trade_execution_broker_adapter_threat_model.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "broker_adapter_threat_model_review_ready"
     assert data["model_state"] == "review_only_no_adapter"
     assert "broker_credentials" in data["protected_assets"]
@@ -285,7 +291,7 @@ def test_broker_adapter_interface_draft_is_not_implemented_or_executable():
     method_names = {item["name"] for item in data["draft_methods"]}
 
     assert data["schema_version"] == "trade_execution_broker_adapter_interface_draft.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "broker_adapter_interface_draft_review_ready"
     assert data["interface_state"] == "draft_only_not_implemented"
     assert "describe_capabilities" in method_names
@@ -313,7 +319,7 @@ def test_broker_adapter_contract_verification_is_fixture_only_and_non_executable
     checks = {item["name"]: item for item in data["checks"]}
 
     assert data["schema_version"] == "trade_execution_broker_adapter_contract_verification.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "fixture_contract_verification_passed"
     assert data["verification_state"] == "fixture_only_no_adapter"
     assert data["fixture_name"] == "broker_adapter_boundary_contract_v1"
@@ -347,7 +353,7 @@ def test_order_lifecycle_failure_fixtures_are_review_only_and_non_executable():
     fixtures = {item["name"]: item for item in data["fixtures"]}
 
     assert data["schema_version"] == "trade_execution_order_lifecycle_failure_fixtures.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "order_failure_fixtures_ready"
     assert data["fixture_state"] == "review_only_no_order_lifecycle_engine"
     assert data["fixture_suite"] == "broker_order_lifecycle_failure_modes_v1"
@@ -396,7 +402,7 @@ def test_order_failure_runbook_mapping_is_review_only_and_non_executable():
     mappings = {item["fixture_name"]: item for item in data["mappings"]}
 
     assert data["schema_version"] == "trade_execution_order_failure_runbook_mapping.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "order_failure_runbook_mapping_ready"
     assert data["mapping_state"] == "review_only_no_runbook_execution"
     assert data["source_fixture_suite"] == "broker_order_lifecycle_failure_modes_v1"
@@ -435,12 +441,64 @@ def test_order_failure_runbook_mapping_is_review_only_and_non_executable():
     assert data["safety_summary"]["places_real_trade"] is False
 
 
+def test_audit_ledger_storage_plan_is_disabled_and_review_only():
+    data = TradeExecutionGatewayService().audit_ledger_storage_plan()
+    columns = {item["name"]: item for item in data["planned_columns"]}
+    indexes = {item["name"]: item for item in data["proposed_indexes"]}
+
+    assert data["schema_version"] == "trade_execution_audit_ledger_storage_plan.v1"
+    assert data["stage"] == "V5.5-P4"
+    assert data["status"] == "disabled_audit_ledger_storage_plan_ready"
+    assert data["storage_state"] == "disabled_not_persisted"
+    assert data["target_future_table"] == "trade_execution_audit_ledger"
+    assert data["source_schema"] == "trade_execution_audit_evidence_schema.v1"
+    assert data["source_runbook_mapping"] == "trade_execution_order_failure_runbook_mapping.v1"
+    assert "audit_id" in columns
+    assert "event_hash" in columns
+    assert "previous_event_hash" in columns
+    assert "runbook_reference" in columns
+    assert columns["event_hash"]["create_now"] is False
+    assert all(item["stores_sensitive_plaintext"] is False for item in data["planned_columns"])
+    assert "idx_trade_execution_audit_ledger_event_hash" in indexes
+    assert all(item["create_now"] is False for item in data["proposed_indexes"])
+    assert data["hash_chain_policy"]["algorithm"] == "sha256"
+    assert data["hash_chain_policy"]["previous_event_hash_required_after_first_row"] is True
+    assert data["retention_policy"]["prune_api_enabled_now"] is False
+    assert data["redaction_policy"]["raw_payload_storage_allowed"] is False
+    assert "broker_password" in data["redaction_policy"]["excluded_sensitive_fields"]
+    assert "dry_run_migration_spec_verifier_passed" in data["migration_preconditions"]
+    assert "hash_chain_verifier_must_pass_after_restore" in data["rollback_requirements"]
+    assert "create_table" in data["blocked_actions"]
+    assert "write_audit_row" in data["blocked_actions"]
+    assert data["summary"]["planned_column_count"] >= 12
+    assert data["summary"]["proposed_index_count"] == 4
+    assert data["summary"]["create_table_now"] is False
+    assert data["summary"]["writes_database_now"] is False
+    assert data["summary"]["runs_migration_now"] is False
+    assert data["summary"]["writes_migration_file_now"] is False
+    assert data["summary"]["records_audit_rows_now"] is False
+    assert data["decision"]["storage_plan_ready_for_review"] is True
+    assert data["decision"]["can_create_table_now"] is False
+    assert data["decision"]["can_write_audit_row_now"] is False
+    assert data["decision"]["can_run_migration_now"] is False
+    assert data["decision"]["can_write_migration_file_now"] is False
+    assert data["decision"]["requires_operator_approval_before_migration"] is True
+    assert data["decision"]["requires_dry_run_verifier_before_migration"] is True
+    assert data["decision"]["ready_for_live_enablement"] is False
+    assert data["safety_summary"]["storage_plan_only"] is True
+    assert data["safety_summary"]["writes_database_now"] is False
+    assert data["safety_summary"]["runs_migration_now"] is False
+    assert data["safety_summary"]["records_audit_rows_now"] is False
+    assert data["safety_summary"]["connects_broker"] is False
+    assert data["safety_summary"]["places_real_trade"] is False
+
+
 def test_operator_acceptance_checklist_is_review_only_and_cannot_record_acceptance():
     data = TradeExecutionGatewayService().operator_acceptance_checklist()
     item_ids = {item["id"] for item in data["checklist_items"]}
 
     assert data["schema_version"] == "trade_execution_operator_acceptance_checklist.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "operator_acceptance_checklist_review_ready"
     assert data["checklist_state"] == "defined_for_manual_review_only"
     assert "health_live_trading_disabled" in item_ids
@@ -463,7 +521,7 @@ def test_disabled_release_gate_is_review_only_and_default_disabled():
     data = TradeExecutionGatewayService().disabled_release_gate()
 
     assert data["schema_version"] == "trade_execution_disabled_release_gate.v1"
-    assert data["stage"] == "V5.5-P3"
+    assert data["stage"] == "V5.5-P4"
     assert data["status"] == "disabled_release_gate_review_ready"
     assert data["default_state"] == "disabled"
     assert data["release_gate_state"] == "review_only_metadata"
@@ -513,6 +571,7 @@ def test_trade_execution_gateway_api_smoke(client):
     contract_verification_resp = client.get("/api/trade-execution-gateway/broker-adapter-contract-verification")
     order_failure_resp = client.get("/api/trade-execution-gateway/order-lifecycle-failure-fixtures")
     runbook_mapping_resp = client.get("/api/trade-execution-gateway/order-failure-runbook-mapping")
+    storage_plan_resp = client.get("/api/trade-execution-gateway/audit-ledger-storage-plan")
     health_resp = client.get("/health")
 
     assert caps_resp.status_code == 200
@@ -530,6 +589,7 @@ def test_trade_execution_gateway_api_smoke(client):
     assert contract_verification_resp.status_code == 200
     assert order_failure_resp.status_code == 200
     assert runbook_mapping_resp.status_code == 200
+    assert storage_plan_resp.status_code == 200
     assert health_resp.status_code == 200
     assert caps_resp.json()["status"] == "review_only_ready"
     assert caps_resp.json()["execution_enabled"] is False
@@ -545,6 +605,7 @@ def test_trade_execution_gateway_api_smoke(client):
     assert gates_resp.json()["decision"]["broker_adapter_contract_verification_ready"] is True
     assert gates_resp.json()["decision"]["order_lifecycle_failure_fixtures_ready"] is True
     assert gates_resp.json()["decision"]["order_failure_runbook_mapping_ready"] is True
+    assert gates_resp.json()["decision"]["disabled_audit_ledger_storage_plan_ready"] is True
     assert gates_resp.json()["decision"]["ready_for_live_enablement"] is False
     assert contract_resp.json()["decision"]["contract_allows_execution_now"] is False
     assert audit_schema_resp.json()["writes_database_now"] is False
@@ -573,5 +634,9 @@ def test_trade_execution_gateway_api_smoke(client):
     assert runbook_mapping_resp.json()["status"] == "order_failure_runbook_mapping_ready"
     assert runbook_mapping_resp.json()["summary"]["writes_database_now"] is False
     assert runbook_mapping_resp.json()["decision"]["can_execute_runbook_now"] is False
+    assert storage_plan_resp.json()["status"] == "disabled_audit_ledger_storage_plan_ready"
+    assert storage_plan_resp.json()["summary"]["writes_database_now"] is False
+    assert storage_plan_resp.json()["summary"]["runs_migration_now"] is False
+    assert storage_plan_resp.json()["decision"]["can_create_table_now"] is False
     assert gates_resp.json()["blocked_gate_count"] == 0
     assert health_resp.json()["live_trading_enabled"] is False

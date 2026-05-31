@@ -12,7 +12,7 @@ from app.risk.portfolio import DEFAULT_LIMITS
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P3"
+    stage = "V5.5-P4"
 
     def capabilities(self) -> dict[str, Any]:
         gates = self.review_gates()["gates"]
@@ -52,6 +52,7 @@ class TradeExecutionGatewayService:
                 "broker_adapter_contract_verification_review",
                 "order_lifecycle_failure_fixture_review",
                 "order_failure_runbook_mapping_review",
+                "disabled_audit_ledger_storage_plan_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -71,6 +72,9 @@ class TradeExecutionGatewayService:
                 "replay_failure_fixture_as_order",
                 "execute_failure_runbook",
                 "persist_failure_mapping_as_approval",
+                "create_audit_ledger_table",
+                "write_audit_ledger_row",
+                "run_audit_ledger_migration",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -742,7 +746,7 @@ class TradeExecutionGatewayService:
                 "gateway_can_execute": False,
                 "api_can_enable_gateway": False,
                 "api_can_record_release_approval": False,
-                "next_required_action": "design_disabled_audit_ledger_storage_plan",
+                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -764,7 +768,7 @@ class TradeExecutionGatewayService:
             {
                 "name": "credential_exposure",
                 "risk": "Broker passwords, tokens, SMS codes, cookies, account numbers, and trading PINs must never enter this API.",
-                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P3.",
+                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P4.",
                 "status": "blocked_by_design",
             },
             {
@@ -831,7 +835,7 @@ class TradeExecutionGatewayService:
                 "account_read_allowed_now": False,
                 "order_execution_allowed_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "design_disabled_audit_ledger_storage_plan",
+                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -895,7 +899,7 @@ class TradeExecutionGatewayService:
                 "adapter_can_execute_now": False,
                 "adapter_can_read_account_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "design_disabled_audit_ledger_storage_plan",
+                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1013,7 +1017,7 @@ class TradeExecutionGatewayService:
                 "adapter_can_read_account_now": False,
                 "credentials_allowed_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "design_disabled_audit_ledger_storage_plan",
+                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1116,7 +1120,7 @@ class TradeExecutionGatewayService:
                 "requires_broker_connection": False,
                 "requires_credentials": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "design_disabled_audit_ledger_storage_plan",
+                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1262,7 +1266,7 @@ class TradeExecutionGatewayService:
                 "requires_broker_connection": False,
                 "requires_credentials": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "design_disabled_audit_ledger_storage_plan",
+                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1274,6 +1278,124 @@ class TradeExecutionGatewayService:
                 "reads_live_account_funds": False,
             },
             "allowed_output": "review_only_order_failure_runbook_mapping_metadata",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def audit_ledger_storage_plan(self) -> dict[str, Any]:
+        audit_schema = self.audit_evidence_schema()
+        runbook_mapping = self.order_failure_runbook_mapping()
+        planned_columns = [
+            self._storage_column("audit_id", "TEXT", False, "primary key generated by future audit ledger writer", "audit_evidence_schema"),
+            self._storage_column("created_at", "TEXT", False, "ISO timestamp from future append-only event writer", "audit_evidence_schema"),
+            self._storage_column("event_type", "TEXT", False, "allowed audit event type", "audit_evidence_schema"),
+            self._storage_column("proposal_hash", "TEXT", False, "hash of reviewed proposal, never raw proposal body", "audit_evidence_schema"),
+            self._storage_column("failure_fixture_name", "TEXT", True, "optional source failure fixture for blocked order lifecycle reviews", "order_failure_runbook_mapping"),
+            self._storage_column("manual_decision", "TEXT", True, "manual decision label from runbook mapping", "order_failure_runbook_mapping"),
+            self._storage_column("runbook_reference", "TEXT", True, "manual runbook reference, not an executable command", "order_failure_runbook_mapping"),
+            self._storage_column("operator_id_hash", "TEXT", True, "hashed reviewer id only", "manual_confirmation_contract"),
+            self._storage_column("risk_snapshot_hash", "TEXT", True, "hash of portfolio/symbol risk evidence", "risk_gate_contract"),
+            self._storage_column("market_data_quality_hash", "TEXT", True, "hash of quote quality and latency evidence", "risk_gate_contract"),
+            self._storage_column("safety_flags_json", "TEXT", False, "canonical JSON containing review_only/simulation_only/live_trading_enabled=false", "gateway_safety_summary"),
+            self._storage_column("evidence_payload_hash", "TEXT", False, "hash of canonical redacted evidence payload", "audit_evidence_schema"),
+            self._storage_column("previous_event_hash", "TEXT", True, "previous row event hash for future append-only chain verification", "audit_evidence_schema"),
+            self._storage_column("event_hash", "TEXT", False, "current row hash over canonical payload and previous_event_hash", "audit_evidence_schema"),
+            self._storage_column("review_note_excerpt", "TEXT", True, "short non-secret operator note excerpt", "operator_review"),
+        ]
+        proposed_indexes = [
+            {"name": "idx_trade_execution_audit_ledger_created_at", "columns": ["created_at"], "unique": False, "create_now": False},
+            {"name": "idx_trade_execution_audit_ledger_event_type", "columns": ["event_type"], "unique": False, "create_now": False},
+            {"name": "idx_trade_execution_audit_ledger_proposal_hash", "columns": ["proposal_hash"], "unique": False, "create_now": False},
+            {"name": "idx_trade_execution_audit_ledger_event_hash", "columns": ["event_hash"], "unique": True, "create_now": False},
+        ]
+        return {
+            "schema_version": "trade_execution_audit_ledger_storage_plan.v1",
+            "status": "disabled_audit_ledger_storage_plan_ready",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "storage_state": "disabled_not_persisted",
+            "target_future_table": audit_schema["target_future_table"],
+            "source_schema": audit_schema["schema_version"],
+            "source_runbook_mapping": runbook_mapping["schema_version"],
+            "planned_columns": planned_columns,
+            "proposed_indexes": proposed_indexes,
+            "hash_chain_policy": {
+                "algorithm": "sha256",
+                "canonicalization": "canonical_json_sort_keys_utf8",
+                "previous_event_hash_required_after_first_row": True,
+                "manual_correction_policy": "append_correction_event_never_update_or_delete",
+                "verify_before_any_future_live_review": True,
+            },
+            "retention_policy": {
+                "default_retention_days": 365,
+                "manual_archive_required_before_prune": True,
+                "prune_requires_operator_approval": True,
+                "prune_api_enabled_now": False,
+            },
+            "redaction_policy": {
+                "store_only_hashes_for_sensitive_identity": True,
+                "store_short_review_note_excerpt_only": True,
+                "excluded_sensitive_fields": audit_schema["excluded_sensitive_fields"],
+                "raw_payload_storage_allowed": False,
+            },
+            "migration_preconditions": [
+                "dry_run_migration_spec_verifier_passed",
+                "operator_approval_for_schema_change_recorded",
+                "backup_and_restore_drill_reviewed",
+                "rollback_plan_reviewed",
+                "forbidden_sensitive_fields_scan_passed",
+                "health_live_trading_enabled_false",
+            ],
+            "rollback_requirements": [
+                "migration_must_be_reversible_before_execution",
+                "restore_from_backup_drill_required",
+                "hash_chain_verifier_must_pass_after_restore",
+                "operator_postmortem_required_for_failed_migration",
+            ],
+            "blocked_actions": [
+                "create_table",
+                "alter_table",
+                "write_audit_row",
+                "run_migration",
+                "write_migration_file",
+                "connect_broker",
+                "submit_order",
+                "store_credentials",
+            ],
+            "summary": {
+                "planned_column_count": len(planned_columns),
+                "proposed_index_count": len(proposed_indexes),
+                "excluded_sensitive_field_count": len(audit_schema["excluded_sensitive_fields"]),
+                "create_table_now": False,
+                "writes_database_now": False,
+                "runs_migration_now": False,
+                "writes_migration_file_now": False,
+                "records_audit_rows_now": False,
+            },
+            "decision": {
+                "storage_plan_ready_for_review": True,
+                "can_create_table_now": False,
+                "can_write_audit_row_now": False,
+                "can_run_migration_now": False,
+                "can_write_migration_file_now": False,
+                "requires_operator_approval_before_migration": True,
+                "requires_dry_run_verifier_before_migration": True,
+                "ready_for_live_enablement": False,
+                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "storage_plan_only": True,
+                "create_table_now": False,
+                "writes_database_now": False,
+                "runs_migration_now": False,
+                "writes_migration_file_now": False,
+                "records_audit_rows_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+            },
+            "allowed_output": "review_only_disabled_audit_ledger_storage_plan",
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -1370,21 +1492,21 @@ class TradeExecutionGatewayService:
                 "passed",
                 "broker_adapter_threat_model_review_ready",
                 "future_broker_adapter_threat_model",
-                "V5.5-P3 preserves threat categories and mitigations without implementing broker connectivity.",
+                "V5.5-P4 preserves threat categories and mitigations without implementing broker connectivity.",
             ),
             self._gate(
                 "broker_adapter_interface_draft_required",
                 "passed",
                 "broker_adapter_interface_draft_review_ready",
                 "future_broker_adapter_interface_draft",
-                "V5.5-P3 preserves provider-neutral interface metadata without executable adapter methods.",
+                "V5.5-P4 preserves provider-neutral interface metadata without executable adapter methods.",
             ),
             self._gate(
                 "broker_adapter_contract_verification_required",
                 "passed",
                 "fixture_contract_verification_passed",
                 "fixture_only_broker_adapter_contract_verifier",
-                "V5.5-P3 preserves fixture contract verification with no broker connectivity.",
+                "V5.5-P4 preserves fixture contract verification with no broker connectivity.",
             ),
             self._gate(
                 "order_lifecycle_failure_fixtures_required",
@@ -1400,12 +1522,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_runbook_mapping",
                 "V5.5-P3 maps failure fixtures to manual runbook decisions and audit evidence without executing or persisting them.",
             ),
+            self._gate(
+                "disabled_audit_ledger_storage_plan_required",
+                "passed",
+                "disabled_audit_ledger_storage_plan_ready",
+                "review_only_audit_ledger_storage_plan",
+                "V5.5-P4 defines future audit ledger storage without creating tables, writing rows, or running migrations.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "order_failure_runbook_mapping_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "disabled_audit_ledger_storage_plan_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -1427,9 +1556,10 @@ class TradeExecutionGatewayService:
                 "broker_adapter_contract_verification_ready": True,
                 "order_lifecycle_failure_fixtures_ready": True,
                 "order_failure_runbook_mapping_ready": True,
+                "disabled_audit_ledger_storage_plan_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "design_disabled_audit_ledger_storage_plan",
+                "next_required_action": "verify_disabled_audit_ledger_migration_spec_dry_run",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -1515,6 +1645,12 @@ class TradeExecutionGatewayService:
                 "name": "OrderFailureRunbookMapping",
                 "status": "review_runbook_mapping_defined",
                 "required_before": "any_audit_ledger_storage",
+                "review_only": True,
+            },
+            {
+                "name": "DisabledAuditLedgerStoragePlan",
+                "status": "review_storage_plan_defined_not_persisted",
+                "required_before": "any_audit_ledger_migration",
                 "review_only": True,
             },
         ]
@@ -1645,6 +1781,27 @@ class TradeExecutionGatewayService:
             "can_submit_order": False,
             "writes_database_now": False,
             "connects_broker": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _storage_column(
+        self,
+        name: str,
+        column_type: str,
+        nullable: bool,
+        purpose: str,
+        source: str,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "type": column_type,
+            "nullable": nullable,
+            "purpose": purpose,
+            "source": source,
+            "create_now": False,
+            "stores_sensitive_plaintext": False,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
