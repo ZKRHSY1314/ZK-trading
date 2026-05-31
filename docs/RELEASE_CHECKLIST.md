@@ -240,6 +240,10 @@
 - [ ] V5.5-P8 approval review reports missing approval, expired approval, spec-hash mismatch, release-readiness status, approval age, expiry time, and whether approval can be reused for manual release review.
 - [ ] V5.5-P8 dashboard shows approval review status, next required action, approval age, max age policy, spec-hash match, and reuse yes/no evidence.
 - [ ] V5.5-P8 must keep `approval_can_be_reused_for_manual_release_review` evidence-only, `migration_allowed_now=false`, `executes_sql=false`, `runs_migration_now=false`, `writes_audit_ledger_row_now=false`, `writes_migration_file_now=false`, `approves_release_now=false`, `enables_gateway_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
+- [ ] V5.5-P9 exposes `GET /api/trade-execution-gateway/audit-ledger-migration-release-package` as an API-only manual release package manifest over P4-P8 evidence.
+- [ ] V5.5-P9 release package reports package id, manifest items, required manual artifacts, release-readiness status, approval-review status, spec hashes, and go/no-go evidence.
+- [ ] V5.5-P9 dashboard shows release package status, package id prefix, manifest item count, next required action, blocked execution, no file write, no download, and disabled live-trading evidence.
+- [ ] V5.5-P9 must keep `execution_allowed_now=false`, `release_approved_now=false`, `migration_allowed_now=false`, `writes_file=false`, `download_created=false`, `executes_sql=false`, `runs_migration_now=false`, `writes_audit_ledger_row_now=false`, `writes_migration_file_now=false`, `enables_gateway_now=false`, `connects_broker=false`, `places_real_trade=false`, and `live_trading_enabled=false`.
 
 ## 15. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:

@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P8"
+    stage = "V5.5-P9"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -61,6 +61,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_spec_approval_metadata_review",
                 "audit_ledger_migration_release_readiness_review",
                 "audit_ledger_migration_approval_freshness_review",
+                "audit_ledger_migration_manual_release_package_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -88,6 +89,7 @@ class TradeExecutionGatewayService:
                 "approve_migration_as_execution",
                 "approve_release_from_summary",
                 "reuse_expired_approval_as_current",
+                "write_release_package_file",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -759,7 +761,7 @@ class TradeExecutionGatewayService:
                 "gateway_can_execute": False,
                 "api_can_enable_gateway": False,
                 "api_can_record_release_approval": False,
-                "next_required_action": "review_audit_ledger_migration_approval_freshness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_package",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -781,7 +783,7 @@ class TradeExecutionGatewayService:
             {
                 "name": "credential_exposure",
                 "risk": "Broker passwords, tokens, SMS codes, cookies, account numbers, and trading PINs must never enter this API.",
-                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P8.",
+                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P9.",
                 "status": "blocked_by_design",
             },
             {
@@ -848,7 +850,7 @@ class TradeExecutionGatewayService:
                 "account_read_allowed_now": False,
                 "order_execution_allowed_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "review_audit_ledger_migration_approval_freshness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_package",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -912,7 +914,7 @@ class TradeExecutionGatewayService:
                 "adapter_can_execute_now": False,
                 "adapter_can_read_account_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "review_audit_ledger_migration_approval_freshness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_package",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1030,7 +1032,7 @@ class TradeExecutionGatewayService:
                 "adapter_can_read_account_now": False,
                 "credentials_allowed_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "review_audit_ledger_migration_approval_freshness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_package",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1133,7 +1135,7 @@ class TradeExecutionGatewayService:
                 "requires_broker_connection": False,
                 "requires_credentials": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "review_audit_ledger_migration_approval_freshness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_package",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1279,7 +1281,7 @@ class TradeExecutionGatewayService:
                 "requires_broker_connection": False,
                 "requires_credentials": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "review_audit_ledger_migration_approval_freshness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_package",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1395,7 +1397,7 @@ class TradeExecutionGatewayService:
                 "requires_operator_approval_before_migration": True,
                 "requires_dry_run_verifier_before_migration": True,
                 "ready_for_live_enablement": False,
-                "next_required_action": "review_audit_ledger_migration_approval_freshness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_package",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1570,7 +1572,7 @@ class TradeExecutionGatewayService:
                 "can_write_audit_row_now": False,
                 "requires_operator_approval_before_migration": True,
                 "ready_for_live_enablement": False,
-                "next_required_action": "review_audit_ledger_migration_approval_freshness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_package",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -2040,6 +2042,221 @@ class TradeExecutionGatewayService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def audit_ledger_migration_release_package(
+        self,
+        limit: int = 50,
+        max_age_days: int = 7,
+    ) -> dict[str, Any]:
+        storage_plan = self.audit_ledger_storage_plan()
+        verification = self.verify_audit_ledger_migration_spec()
+        approvals = self.list_audit_ledger_migration_spec_approvals(limit=limit)
+        latest_approval = approvals[0] if approvals else None
+        release = self.audit_ledger_migration_release_readiness(limit=limit)
+        approval_review = self.audit_ledger_migration_approval_review(
+            limit=limit,
+            max_age_days=max_age_days,
+        )
+        manifest_items = [
+            self._release_package_item(
+                "P4_disabled_audit_ledger_storage_plan",
+                storage_plan.get("status"),
+                storage_plan.get("allowed_output"),
+                storage_plan.get("generated_at"),
+                storage_plan.get("summary", {}).get("writes_database_now") is False
+                and storage_plan.get("summary", {}).get("runs_migration_now") is False,
+            ),
+            self._release_package_item(
+                "P5_migration_spec_verifier",
+                verification.get("status"),
+                verification.get("allowed_output"),
+                verification.get("generated_at"),
+                verification.get("status") == "spec_verification_passed"
+                and verification.get("failed_count") == 0
+                and verification.get("summary", {}).get("executes_sql") is False,
+            ),
+            self._release_package_item(
+                "P6_approval_metadata",
+                latest_approval.get("status") if latest_approval else "missing",
+                latest_approval.get("allowed_output") if latest_approval else "missing",
+                latest_approval.get("approved_at") if latest_approval else None,
+                bool(latest_approval)
+                and latest_approval.get("verification_status") == "spec_verification_passed"
+                and latest_approval.get("migration_allowed_now") is False,
+            ),
+            self._release_package_item(
+                "P7_release_readiness",
+                release.get("status"),
+                release.get("allowed_output"),
+                release.get("generated_at"),
+                release.get("status") == "release_evidence_ready"
+                and release.get("decision", {}).get("migration_allowed_now") is False,
+            ),
+            self._release_package_item(
+                "P8_approval_freshness",
+                approval_review.get("status"),
+                approval_review.get("allowed_output"),
+                approval_review.get("generated_at"),
+                approval_review.get("status") == "approval_current"
+                and approval_review.get("decision", {}).get("migration_allowed_now") is False,
+            ),
+        ]
+        safe_max_age_days = max(1, min(max_age_days, 365))
+        package_id_inputs = {
+            "storage_plan_status": storage_plan.get("status"),
+            "verification_status": verification.get("status"),
+            "spec_hash": verification.get("spec_hash"),
+            "latest_approval_event_id": latest_approval.get("event_id") if latest_approval else None,
+            "latest_approval_spec_hash": latest_approval.get("spec_hash") if latest_approval else None,
+            "release_status": release.get("status"),
+            "approval_review_status": approval_review.get("status"),
+            "max_age_days": safe_max_age_days,
+        }
+        package_id = self._stable_hash(package_id_inputs)
+        gates = [
+            self._release_readiness_gate(
+                "storage_plan_ready",
+                storage_plan.get("status") == "disabled_audit_ledger_storage_plan_ready",
+                "V5.5-P4 disabled audit ledger storage plan must be ready.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "spec_verifier_passed",
+                verification.get("status") == "spec_verification_passed" and verification.get("failed_count") == 0,
+                "V5.5-P5 dry-run verifier must pass without failed checks.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "approval_current",
+                approval_review.get("status") == "approval_current",
+                "V5.5-P8 approval freshness review must be current.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "release_readiness_ready",
+                release.get("status") == "release_evidence_ready",
+                "V5.5-P7 release readiness must be evidence-ready.",
+                status_if_false="review_required",
+            ),
+            self._release_readiness_gate(
+                "no_execution_or_persistence_enabled",
+                storage_plan.get("summary", {}).get("writes_database_now") is False
+                and verification.get("summary", {}).get("executes_sql") is False
+                and release.get("safety_summary", {}).get("runs_migration_now") is False
+                and approval_review.get("safety_summary", {}).get("writes_database_now") is False,
+                "release package must not enable SQL, migrations, table creation, audit-ledger writes, or release-file writes.",
+            ),
+            self._release_readiness_gate(
+                "live_trading_disabled",
+                not settings.enable_live_trading
+                and storage_plan.get("live_trading_enabled") is False
+                and release.get("live_trading_enabled") is False
+                and approval_review.get("live_trading_enabled") is False,
+                "live trading must remain disabled.",
+            ),
+        ]
+        blocked = [gate for gate in gates if gate["status"] == "blocked"]
+        review_required = [gate for gate in gates if gate["status"] == "review_required"]
+        if blocked:
+            status = "release_package_blocked"
+        elif review_required:
+            status = "release_package_review_required"
+        else:
+            status = "release_package_ready_for_manual_review"
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_release_package.v1",
+            "status": status,
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "package_id": package_id,
+            "package_id_inputs": package_id_inputs,
+            "manifest": {
+                "name": "trade_execution_audit_ledger_migration_manual_release_package",
+                "purpose": "manual review evidence for a future SQLite trade execution audit ledger migration",
+                "items": manifest_items,
+                "required_manual_artifacts_before_execution": [
+                    "reviewed_sqlite_migration_file",
+                    "explicit_operator_release_approval",
+                    "database_backup_and_restore_drill",
+                    "rollback_plan_review",
+                    "migration_unit_tests",
+                    "api_smoke_tests",
+                    "hash_chain_verifier_after_restore",
+                    "forbidden_tracked_file_scan",
+                    "separate_live_integration_review",
+                ],
+                "delivery": "api_response_only",
+                "writes_file": False,
+                "download_created": False,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "evidence": {
+                "storage_plan_status": storage_plan.get("status"),
+                "verification_status": verification.get("status"),
+                "verification_failed_count": verification.get("failed_count"),
+                "latest_approval_event_id": latest_approval.get("event_id") if latest_approval else None,
+                "latest_approval_status": latest_approval.get("status") if latest_approval else None,
+                "release_readiness_status": release.get("status"),
+                "approval_review_status": approval_review.get("status"),
+                "spec_hash": verification.get("spec_hash"),
+                "approved_spec_hash": latest_approval.get("spec_hash") if latest_approval else None,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "gates": gates,
+            "blocked_gates": blocked,
+            "review_required_gates": review_required,
+            "decision": {
+                "go_no_go": "ready_for_manual_release_review" if status == "release_package_ready_for_manual_review" else "no_go",
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "release_approved_now": False,
+                "requires_human_release_approval": True,
+                "next_required_action": "manual_release_review" if status == "release_package_ready_for_manual_review" else "complete_missing_release_evidence",
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "executes_sql": False,
+                "runs_migration_now": False,
+                "creates_table_now": False,
+                "writes_database_now": False,
+                "writes_audit_ledger_row_now": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "approves_release_now": False,
+                "enables_gateway_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+            },
+            "allowed_output": "review_only_audit_ledger_migration_release_package",
+            "forbidden_actions": [
+                "execute_sql",
+                "run_migration_now",
+                "create_table_now",
+                "write_migration_file_now",
+                "write_audit_ledger_row_now",
+                "write_release_package_file",
+                "create_download",
+                "approve_release_now",
+                "enable_gateway_now",
+                "connect_broker",
+                "submit_order",
+                "store_credentials",
+                "screen_click",
+                "keyboard_type",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -2131,21 +2348,21 @@ class TradeExecutionGatewayService:
                 "passed",
                 "broker_adapter_threat_model_review_ready",
                 "future_broker_adapter_threat_model",
-                "V5.5-P8 preserves threat categories and mitigations without implementing broker connectivity.",
+                "V5.5-P9 preserves threat categories and mitigations without implementing broker connectivity.",
             ),
             self._gate(
                 "broker_adapter_interface_draft_required",
                 "passed",
                 "broker_adapter_interface_draft_review_ready",
                 "future_broker_adapter_interface_draft",
-                "V5.5-P8 preserves provider-neutral interface metadata without executable adapter methods.",
+                "V5.5-P9 preserves provider-neutral interface metadata without executable adapter methods.",
             ),
             self._gate(
                 "broker_adapter_contract_verification_required",
                 "passed",
                 "fixture_contract_verification_passed",
                 "fixture_only_broker_adapter_contract_verifier",
-                "V5.5-P8 preserves fixture contract verification with no broker connectivity.",
+                "V5.5-P9 preserves fixture contract verification with no broker connectivity.",
             ),
             self._gate(
                 "order_lifecycle_failure_fixtures_required",
@@ -2196,12 +2413,19 @@ class TradeExecutionGatewayService:
                 "review_only_approval_freshness_review",
                 "V5.5-P8 reviews approval freshness, expiry, and spec-hash rotation without approving releases or executing migrations.",
             ),
+            self._gate(
+                "audit_ledger_migration_manual_release_package_required",
+                "passed",
+                "audit_ledger_migration_manual_release_package_ready",
+                "review_only_manual_release_package_manifest",
+                "V5.5-P9 aggregates audit ledger migration evidence into an API-only manual release package manifest without writing files or enabling execution.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_approval_freshness_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_package_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -2228,9 +2452,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_spec_approval_metadata_ready": True,
                 "audit_ledger_migration_release_readiness_ready": True,
                 "audit_ledger_migration_approval_freshness_ready": True,
+                "audit_ledger_migration_manual_release_package_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "review_audit_ledger_migration_approval_freshness",
+                "next_required_action": "review_audit_ledger_migration_manual_release_package",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -2346,6 +2571,12 @@ class TradeExecutionGatewayService:
                 "name": "AuditLedgerMigrationApprovalFreshnessReview",
                 "status": "review_approval_freshness_defined",
                 "required_before": "any_reuse_of_audit_ledger_migration_approval",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationManualReleasePackageManifest",
+                "status": "review_manual_release_package_defined",
+                "required_before": "any_manual_audit_ledger_migration_release",
                 "review_only": True,
             },
         ]
@@ -2531,6 +2762,26 @@ class TradeExecutionGatewayService:
             "name": name,
             "status": "passed" if passed else status_if_false,
             "reason": reason,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _release_package_item(
+        self,
+        name: str,
+        status: Any,
+        allowed_output: Any,
+        generated_at: Any,
+        safety_passed: bool,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": status,
+            "allowed_output": allowed_output,
+            "generated_at": generated_at,
+            "safety_passed": safety_passed,
+            "included": True,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,

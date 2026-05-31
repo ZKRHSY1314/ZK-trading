@@ -8,7 +8,7 @@ from app.trade_execution.gateway import TradeExecutionGatewayService
 def test_trade_execution_gateway_capabilities_are_review_only():
     data = TradeExecutionGatewayService().capabilities()
 
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "review_only_ready"
     assert data["gateway_enabled"] is False
     assert data["execution_enabled"] is False
@@ -36,6 +36,7 @@ def test_trade_execution_gateway_capabilities_are_review_only():
     assert "audit_ledger_migration_spec_approval_metadata_review" in data["allowed_modes"]
     assert "audit_ledger_migration_release_readiness_review" in data["allowed_modes"]
     assert "audit_ledger_migration_approval_freshness_review" in data["allowed_modes"]
+    assert "audit_ledger_migration_manual_release_package_review" in data["allowed_modes"]
     assert "place_real_trade" in data["forbidden_modes"]
     assert "enable_gateway_by_api" in data["forbidden_modes"]
     assert "instantiate_broker_adapter" in data["forbidden_modes"]
@@ -48,6 +49,7 @@ def test_trade_execution_gateway_capabilities_are_review_only():
     assert "approve_migration_as_execution" in data["forbidden_modes"]
     assert "approve_release_from_summary" in data["forbidden_modes"]
     assert "reuse_expired_approval_as_current" in data["forbidden_modes"]
+    assert "write_release_package_file" in data["forbidden_modes"]
     components = {item["name"]: item for item in data["required_future_components"]}
     assert components["ManualConfirmationContract"]["status"] == "review_contract_defined"
     assert components["PortfolioRiskGateContract"]["status"] == "review_contract_defined"
@@ -67,6 +69,7 @@ def test_trade_execution_gateway_capabilities_are_review_only():
     assert components["AuditLedgerMigrationSpecApprovalMetadata"]["status"] == "review_approval_metadata_defined_existing_events_only"
     assert components["AuditLedgerMigrationReleaseReadinessSummary"]["status"] == "review_release_readiness_summary_defined"
     assert components["AuditLedgerMigrationApprovalFreshnessReview"]["status"] == "review_approval_freshness_defined"
+    assert components["AuditLedgerMigrationManualReleasePackageManifest"]["status"] == "review_manual_release_package_defined"
     assert data["safety_summary"]["places_real_trade"] is False
     assert data["safety_summary"]["connects_broker"] is False
 
@@ -75,8 +78,8 @@ def test_trade_execution_gateway_review_gates_are_pre_live_metadata_only():
     data = TradeExecutionGatewayService().review_gates()
     gates = {gate["name"]: gate for gate in data["gates"]}
 
-    assert data["stage"] == "V5.5-P8"
-    assert data["status"] == "audit_ledger_migration_approval_freshness_ready"
+    assert data["stage"] == "V5.5-P9"
+    assert data["status"] == "audit_ledger_migration_manual_release_package_ready"
     assert gates["live_trading_disabled"]["status"] == "passed"
     assert gates["broker_adapter_absent"]["status"] == "passed"
     assert gates["credential_storage_absent"]["status"] == "passed"
@@ -98,6 +101,7 @@ def test_trade_execution_gateway_review_gates_are_pre_live_metadata_only():
     assert gates["audit_ledger_migration_spec_approval_metadata_required"]["status"] == "passed"
     assert gates["audit_ledger_migration_release_readiness_required"]["status"] == "passed"
     assert gates["audit_ledger_migration_approval_freshness_required"]["status"] == "passed"
+    assert gates["audit_ledger_migration_manual_release_package_required"]["status"] == "passed"
     assert data["decision"]["gateway_can_execute"] is False
     assert data["decision"]["manual_confirmation_contract_ready"] is True
     assert data["decision"]["risk_contract_ready"] is True
@@ -117,6 +121,7 @@ def test_trade_execution_gateway_review_gates_are_pre_live_metadata_only():
     assert data["decision"]["audit_ledger_migration_spec_approval_metadata_ready"] is True
     assert data["decision"]["audit_ledger_migration_release_readiness_ready"] is True
     assert data["decision"]["audit_ledger_migration_approval_freshness_ready"] is True
+    assert data["decision"]["audit_ledger_migration_manual_release_package_ready"] is True
     assert data["decision"]["ready_for_live_enablement"] is False
     assert data["decision"]["live_trading_enabled"] is False
     assert data["safety_summary"]["real_money_execution_enabled"] is False
@@ -127,7 +132,7 @@ def test_manual_confirmation_contract_is_review_only():
     input_names = {item["name"] for item in data["required_operator_inputs"]}
 
     assert data["schema_version"] == "trade_execution_manual_confirmation_contract.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "confirmation_contract_review_ready"
     assert data["contract_state"] == "defined_for_review_only"
     assert "operator_id" in input_names
@@ -147,7 +152,7 @@ def test_audit_evidence_schema_is_not_persisted_or_migrated():
     fields = {item["name"]: item for item in data["fields"]}
 
     assert data["schema_version"] == "trade_execution_audit_evidence_schema.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "audit_schema_review_ready"
     assert data["storage_state"] == "not_persisted"
     assert data["target_future_table"] == "trade_execution_audit_ledger"
@@ -171,7 +176,7 @@ def test_risk_gate_contract_is_review_only_and_blocks_overrides():
     symbol_gates = {item["name"]: item for item in data["symbol_gates"]}
 
     assert data["schema_version"] == "trade_execution_risk_gate_contract.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "risk_gate_contract_review_ready"
     assert data["contract_state"] == "defined_for_review_only"
     assert portfolio_gates["total_exposure"]["limit"] == 0.60
@@ -194,7 +199,7 @@ def test_rollback_runbook_is_review_only_and_non_executable():
     step_names = {item["step"] for item in data["rollback_steps"]}
 
     assert data["schema_version"] == "trade_execution_rollback_runbook.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "rollback_runbook_review_ready"
     assert data["runbook_state"] == "defined_for_review_only"
     assert "risk_gate_blocked" in data["trigger_events"]
@@ -217,7 +222,7 @@ def test_pre_live_review_package_assembles_contracts_without_enablement():
     manifest = {item["name"]: item for item in data["manifest"]}
 
     assert data["schema_version"] == "trade_execution_pre_live_review_package.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "pre_live_review_package_ready"
     assert len(data["package_id"]) == 64
     assert set(manifest) == {
@@ -231,7 +236,7 @@ def test_pre_live_review_package_assembles_contracts_without_enablement():
         "disabled_release_gate",
     }
     assert manifest["rollback_runbook"]["status"] == "rollback_runbook_review_ready"
-    assert manifest["review_gates"]["status"] == "audit_ledger_migration_approval_freshness_ready"
+    assert manifest["review_gates"]["status"] == "audit_ledger_migration_manual_release_package_ready"
     assert manifest["operator_acceptance_checklist"]["status"] == "operator_acceptance_checklist_review_ready"
     assert manifest["disabled_release_gate"]["status"] == "disabled_release_gate_review_ready"
     assert "rollback_drill_evidence" in data["required_manual_artifacts"]
@@ -251,7 +256,7 @@ def test_final_readiness_report_closes_v5_review_baseline_without_enablement():
     manifest = {item["name"]: item for item in data["manifest"]}
 
     assert data["schema_version"] == "trade_execution_final_readiness_report.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "v5_review_only_gateway_baseline_ready"
     assert len(data["report_id"]) == 64
     assert data["report_state"] == "final_v5_review_only_baseline"
@@ -291,7 +296,7 @@ def test_broker_adapter_threat_model_is_review_only_and_blocks_live_surfaces():
     categories = {item["name"]: item for item in data["threat_categories"]}
 
     assert data["schema_version"] == "trade_execution_broker_adapter_threat_model.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "broker_adapter_threat_model_review_ready"
     assert data["model_state"] == "review_only_no_adapter"
     assert "broker_credentials" in data["protected_assets"]
@@ -315,7 +320,7 @@ def test_broker_adapter_interface_draft_is_not_implemented_or_executable():
     method_names = {item["name"] for item in data["draft_methods"]}
 
     assert data["schema_version"] == "trade_execution_broker_adapter_interface_draft.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "broker_adapter_interface_draft_review_ready"
     assert data["interface_state"] == "draft_only_not_implemented"
     assert "describe_capabilities" in method_names
@@ -343,7 +348,7 @@ def test_broker_adapter_contract_verification_is_fixture_only_and_non_executable
     checks = {item["name"]: item for item in data["checks"]}
 
     assert data["schema_version"] == "trade_execution_broker_adapter_contract_verification.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "fixture_contract_verification_passed"
     assert data["verification_state"] == "fixture_only_no_adapter"
     assert data["fixture_name"] == "broker_adapter_boundary_contract_v1"
@@ -377,7 +382,7 @@ def test_order_lifecycle_failure_fixtures_are_review_only_and_non_executable():
     fixtures = {item["name"]: item for item in data["fixtures"]}
 
     assert data["schema_version"] == "trade_execution_order_lifecycle_failure_fixtures.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "order_failure_fixtures_ready"
     assert data["fixture_state"] == "review_only_no_order_lifecycle_engine"
     assert data["fixture_suite"] == "broker_order_lifecycle_failure_modes_v1"
@@ -426,7 +431,7 @@ def test_order_failure_runbook_mapping_is_review_only_and_non_executable():
     mappings = {item["fixture_name"]: item for item in data["mappings"]}
 
     assert data["schema_version"] == "trade_execution_order_failure_runbook_mapping.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "order_failure_runbook_mapping_ready"
     assert data["mapping_state"] == "review_only_no_runbook_execution"
     assert data["source_fixture_suite"] == "broker_order_lifecycle_failure_modes_v1"
@@ -471,7 +476,7 @@ def test_audit_ledger_storage_plan_is_disabled_and_review_only():
     indexes = {item["name"]: item for item in data["proposed_indexes"]}
 
     assert data["schema_version"] == "trade_execution_audit_ledger_storage_plan.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "disabled_audit_ledger_storage_plan_ready"
     assert data["storage_state"] == "disabled_not_persisted"
     assert data["target_future_table"] == "trade_execution_audit_ledger"
@@ -522,7 +527,7 @@ def test_audit_ledger_migration_spec_verifier_is_dry_run_and_blocks_dangerous_sp
     checks = {item["name"]: item for item in data["checks"]}
 
     assert data["schema_version"] == "trade_execution_audit_ledger_migration_spec_verifier.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "spec_verification_passed"
     assert data["verification_state"] == "dry_run_in_memory_only"
     assert data["target_table"] == "trade_execution_audit_ledger"
@@ -586,7 +591,7 @@ def test_audit_ledger_migration_spec_approval_is_existing_event_metadata_only(te
 
     assert approval["schema_version"] == "trade_execution_audit_ledger_migration_spec_approval.v1"
     assert approval["status"] == "approval_metadata_recorded"
-    assert approval["stage"] == "V5.5-P8"
+    assert approval["stage"] == "V5.5-P9"
     assert approval["event_id"] is not None
     assert approval["approved_by"] == "tester"
     assert approval["approval_effect"] == "existing_event_metadata_only"
@@ -648,7 +653,7 @@ def test_audit_ledger_migration_release_readiness_requires_approval(test_db):
 
     assert data["schema_version"] == "trade_execution_audit_ledger_migration_release_readiness.v1"
     assert data["status"] == "release_review_required"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["decision"]["go_no_go"] == "no_go"
     assert data["decision"]["migration_allowed_now"] is False
     assert data["decision"]["release_approved_now"] is False
@@ -715,7 +720,7 @@ def test_audit_ledger_migration_approval_review_requires_approval(test_db):
 
     assert data["schema_version"] == "trade_execution_audit_ledger_migration_approval_review.v1"
     assert data["status"] == "approval_review_required"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["review_policy"]["max_age_days"] == 7
     assert data["latest_approval"]["event_id"] is None
     assert data["latest_approval"]["is_expired"] is False
@@ -800,12 +805,77 @@ def test_audit_ledger_migration_approval_review_requires_rotation_for_expired_me
     assert data["live_trading_enabled"] is False
 
 
+def test_audit_ledger_migration_release_package_requires_complete_evidence(test_db):
+    service = TradeExecutionGatewayService()
+    with service.store.connect() as conn:
+        conn.execute("DELETE FROM events WHERE event_type = 'trade_audit_ledger_migration_spec_approval'")
+
+    data = service.audit_ledger_migration_release_package(limit=5, max_age_days=7)
+    gates = {gate["name"]: gate for gate in data["gates"]}
+    items = {item["name"]: item for item in data["manifest"]["items"]}
+
+    assert data["schema_version"] == "trade_execution_audit_ledger_migration_release_package.v1"
+    assert data["status"] == "release_package_review_required"
+    assert data["stage"] == "V5.5-P9"
+    assert len(data["package_id"]) == 64
+    assert data["manifest"]["delivery"] == "api_response_only"
+    assert data["manifest"]["writes_file"] is False
+    assert data["manifest"]["download_created"] is False
+    assert items["P4_disabled_audit_ledger_storage_plan"]["safety_passed"] is True
+    assert items["P5_migration_spec_verifier"]["safety_passed"] is True
+    assert items["P6_approval_metadata"]["status"] == "missing"
+    assert gates["approval_current"]["status"] == "review_required"
+    assert data["decision"]["go_no_go"] == "no_go"
+    assert data["decision"]["migration_allowed_now"] is False
+    assert data["decision"]["execution_allowed_now"] is False
+    assert data["decision"]["release_approved_now"] is False
+    assert data["decision"]["next_required_action"] == "complete_missing_release_evidence"
+    assert data["safety_summary"]["writes_file"] is False
+    assert data["safety_summary"]["download_created"] is False
+    assert data["safety_summary"]["writes_audit_ledger_row_now"] is False
+    assert "write_release_package_file" in data["forbidden_actions"]
+    assert data["live_trading_enabled"] is False
+
+
+def test_audit_ledger_migration_release_package_ready_after_current_approval(test_db):
+    service = TradeExecutionGatewayService()
+    with service.store.connect() as conn:
+        conn.execute("DELETE FROM events WHERE event_type = 'trade_audit_ledger_migration_spec_approval'")
+    approval = service.approve_audit_ledger_migration_spec(
+        approved_by="package-reviewer",
+        note="package-ready approval metadata",
+    )
+
+    data = service.audit_ledger_migration_release_package(limit=5, max_age_days=7)
+    items = {item["name"]: item for item in data["manifest"]["items"]}
+
+    assert data["status"] == "release_package_ready_for_manual_review"
+    assert data["decision"]["go_no_go"] == "ready_for_manual_release_review"
+    assert data["decision"]["next_required_action"] == "manual_release_review"
+    assert data["decision"]["execution_allowed_now"] is False
+    assert data["decision"]["release_approved_now"] is False
+    assert data["evidence"]["latest_approval_event_id"] == approval["event_id"]
+    assert data["evidence"]["spec_hash"] == approval["spec_hash"]
+    assert data["evidence"]["approved_spec_hash"] == approval["spec_hash"]
+    assert all(item["safety_passed"] is True for item in items.values())
+    assert all(gate["status"] == "passed" for gate in data["gates"])
+    assert data["blocked_gates"] == []
+    assert data["review_required_gates"] == []
+    assert "explicit_operator_release_approval" in data["manifest"]["required_manual_artifacts_before_execution"]
+    assert data["safety_summary"]["executes_sql"] is False
+    assert data["safety_summary"]["runs_migration_now"] is False
+    assert data["safety_summary"]["writes_migration_file_now"] is False
+    assert data["safety_summary"]["writes_audit_ledger_row_now"] is False
+    assert data["safety_summary"]["enables_gateway_now"] is False
+    assert data["safety_summary"]["places_real_trade"] is False
+
+
 def test_operator_acceptance_checklist_is_review_only_and_cannot_record_acceptance():
     data = TradeExecutionGatewayService().operator_acceptance_checklist()
     item_ids = {item["id"] for item in data["checklist_items"]}
 
     assert data["schema_version"] == "trade_execution_operator_acceptance_checklist.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "operator_acceptance_checklist_review_ready"
     assert data["checklist_state"] == "defined_for_manual_review_only"
     assert "health_live_trading_disabled" in item_ids
@@ -828,7 +898,7 @@ def test_disabled_release_gate_is_review_only_and_default_disabled():
     data = TradeExecutionGatewayService().disabled_release_gate()
 
     assert data["schema_version"] == "trade_execution_disabled_release_gate.v1"
-    assert data["stage"] == "V5.5-P8"
+    assert data["stage"] == "V5.5-P9"
     assert data["status"] == "disabled_release_gate_review_ready"
     assert data["default_state"] == "disabled"
     assert data["release_gate_state"] == "review_only_metadata"
@@ -894,6 +964,9 @@ def test_trade_execution_gateway_api_smoke(client):
     migration_approval_review_resp = client.get(
         "/api/trade-execution-gateway/audit-ledger-migration-approval-review?limit=5&max_age_days=7"
     )
+    migration_release_package_resp = client.get(
+        "/api/trade-execution-gateway/audit-ledger-migration-release-package?limit=5&max_age_days=7"
+    )
     health_resp = client.get("/health")
 
     assert caps_resp.status_code == 200
@@ -917,6 +990,7 @@ def test_trade_execution_gateway_api_smoke(client):
     assert migration_approvals_resp.status_code == 200
     assert migration_release_readiness_resp.status_code == 200
     assert migration_approval_review_resp.status_code == 200
+    assert migration_release_package_resp.status_code == 200
     assert health_resp.status_code == 200
     assert caps_resp.json()["status"] == "review_only_ready"
     assert caps_resp.json()["execution_enabled"] is False
@@ -992,5 +1066,14 @@ def test_trade_execution_gateway_api_smoke(client):
     assert migration_approval_review_resp.json()["decision"]["migration_allowed_now"] is False
     assert migration_approval_review_resp.json()["safety_summary"]["writes_audit_ledger_row_now"] is False
     assert migration_approval_review_resp.json()["safety_summary"]["executes_sql"] is False
+    assert migration_release_package_resp.json()["status"] == "release_package_ready_for_manual_review"
+    assert migration_release_package_resp.json()["decision"]["go_no_go"] == "ready_for_manual_release_review"
+    assert migration_release_package_resp.json()["decision"]["execution_allowed_now"] is False
+    assert migration_release_package_resp.json()["decision"]["release_approved_now"] is False
+    assert migration_release_package_resp.json()["evidence"]["latest_approval_event_id"] == migration_approval_resp.json()["event_id"]
+    assert migration_release_package_resp.json()["manifest"]["writes_file"] is False
+    assert migration_release_package_resp.json()["manifest"]["download_created"] is False
+    assert migration_release_package_resp.json()["safety_summary"]["writes_audit_ledger_row_now"] is False
+    assert migration_release_package_resp.json()["safety_summary"]["writes_file"] is False
     assert gates_resp.json()["blocked_gate_count"] == 0
     assert health_resp.json()["live_trading_enabled"] is False
