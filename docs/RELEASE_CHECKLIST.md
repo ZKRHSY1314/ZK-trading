@@ -84,6 +84,11 @@
 - [ ] Replay returns ordered simulation-only signals from stored events.
 - [ ] API smoke covers `/api/realtime/capabilities`, `/api/realtime/provider-health`, `/api/realtime/snapshot/{symbol}`, `/api/realtime/events`, and `/api/realtime/replay`.
 - [ ] Dashboard V4.0 area shows provider state, latency, recent events, quality, fallback/degraded state, and replay results.
+- [ ] V4.0-P1 refresh returns `disabled/needs_config/fallback_required` when external providers are unconfigured and does not write fake realtime prices.
+- [ ] V4.0-P1 monitoring bridge syncs persisted realtime events into review-only `monitoring_events` / `monitoring_alerts`.
+- [ ] V4.0-P1 alerts include `source_event_id`, `quality_status`, `latency_ms`, `review_only=true`, `simulation_only=true`, and `live_trading_enabled=false`.
+- [ ] V4.0-P1 dedupes repeated sync by source realtime event and symbol/event_ts/alert type.
+- [ ] V4.0-P1 CLI modes `realtime-refresh` and `realtime-monitoring-sync` call local API only.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 12. Desired Workday Schedule Cadence

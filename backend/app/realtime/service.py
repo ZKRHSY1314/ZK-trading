@@ -214,6 +214,39 @@ class RealtimeMarketService:
                 "live_trading_enabled": False,
             }
 
+    def refresh_symbols(self, symbols: list[str] | None = None, limit: int = 20) -> dict[str, Any]:
+        requested_symbols = self._normalize_symbols(symbols, limit)
+        items: list[dict[str, Any]] = []
+        refreshed_count = 0
+        failed_count = 0
+        for symbol in requested_symbols:
+            result = self.refresh_quote(symbol)
+            items.append(result)
+            if result.get("inserted"):
+                refreshed_count += 1
+            elif result.get("status") == "degraded" or result.get("quality_status") == "fallback_required":
+                failed_count += 1
+
+        health = self.provider.health()
+        fallback_required = failed_count > 0 and refreshed_count == 0
+        status = "fallback_required" if fallback_required else "completed"
+        if failed_count and refreshed_count:
+            status = "partial"
+        return {
+            "status": status,
+            "provider": health.get("provider"),
+            "provider_status": health.get("status"),
+            "configured": bool(self.provider.configured()),
+            "requested_count": len(requested_symbols),
+            "refreshed_count": refreshed_count,
+            "failed_count": failed_count,
+            "items": items,
+            "fallback_required": fallback_required,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
     def replay(self, symbol: str | None = None, limit: int = 100) -> dict[str, Any]:
         events = list(reversed(self.list_events(symbol=symbol, limit=limit)))
         signals: list[dict[str, Any]] = []
@@ -274,6 +307,17 @@ class RealtimeMarketService:
 
     def _dedupe_key(self, source: str, symbol: str, event_ts: datetime) -> str:
         return f"{source}:{symbol}:{event_ts.isoformat(timespec='seconds')}"
+
+    def _normalize_symbols(self, symbols: list[str] | None, limit: int) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for symbol in symbols or []:
+            normalized = str(symbol or "").strip().upper()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            cleaned.append(normalized)
+        return cleaned[: max(1, min(limit, 200))]
 
     def _record_provider_health(
         self,

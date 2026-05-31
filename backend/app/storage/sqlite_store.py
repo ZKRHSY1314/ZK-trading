@@ -400,6 +400,9 @@ CREATE TABLE IF NOT EXISTS monitoring_events (
     summary TEXT,
     snapshot_json TEXT NOT NULL DEFAULT '{}',
     plan_json TEXT NOT NULL DEFAULT '{}',
+    source_table TEXT,
+    source_id TEXT,
+    dedupe_key TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -412,6 +415,7 @@ CREATE TABLE IF NOT EXISTS monitoring_alerts (
     alert_type TEXT NOT NULL,
     message TEXT NOT NULL,
     payload_json TEXT NOT NULL DEFAULT '{}',
+    dedupe_key TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -454,8 +458,11 @@ CREATE INDEX IF NOT EXISTS idx_learning_reports_run ON learning_reports(automati
 CREATE INDEX IF NOT EXISTS idx_monitoring_sessions_status ON monitoring_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_monitoring_events_session ON monitoring_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_monitoring_events_symbol ON monitoring_events(symbol);
+CREATE INDEX IF NOT EXISTS idx_monitoring_events_source ON monitoring_events(source_table, source_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_events_dedupe ON monitoring_events(dedupe_key) WHERE dedupe_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_session ON monitoring_alerts(session_id);
 CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_symbol ON monitoring_alerts(symbol);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_alerts_dedupe ON monitoring_alerts(dedupe_key) WHERE dedupe_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_monitoring_reviews_symbol ON monitoring_reviews(symbol);
 
 CREATE TABLE IF NOT EXISTS potential_search_runs (
@@ -1050,6 +1057,20 @@ class SQLiteStore:
                 "ALTER TABLE historical_backtest_trades ADD COLUMN requested_quantity INTEGER",
                 "ALTER TABLE historical_backtest_trades ADD COLUMN filled_quantity INTEGER",
                 "ALTER TABLE historical_backtest_trades ADD COLUMN liquidity_cap_amount REAL",
+            ]:
+                try:
+                    conn.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass
+
+            for stmt in [
+                "ALTER TABLE monitoring_events ADD COLUMN source_table TEXT",
+                "ALTER TABLE monitoring_events ADD COLUMN source_id TEXT",
+                "ALTER TABLE monitoring_events ADD COLUMN dedupe_key TEXT",
+                "ALTER TABLE monitoring_alerts ADD COLUMN dedupe_key TEXT",
+                "CREATE INDEX IF NOT EXISTS idx_monitoring_events_source ON monitoring_events(source_table, source_id)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_events_dedupe ON monitoring_events(dedupe_key) WHERE dedupe_key IS NOT NULL",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_alerts_dedupe ON monitoring_alerts(dedupe_key) WHERE dedupe_key IS NOT NULL",
             ]:
                 try:
                     conn.execute(stmt)

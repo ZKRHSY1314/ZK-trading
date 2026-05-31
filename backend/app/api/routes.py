@@ -567,6 +567,21 @@ def realtime_events(symbol: str | None = None, limit: int = 50) -> list[dict]:
     return RealtimeMarketService().list_events(symbol=symbol, limit=limit)
 
 
+@router.post("/realtime/refresh")
+def realtime_refresh(symbols: str = "SZ002081,SZ002115", limit: int = 20) -> dict:
+    from app.realtime.service import RealtimeMarketService
+
+    symbol_list = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
+    return RealtimeMarketService().refresh_symbols(symbols=symbol_list, limit=limit)
+
+
+@router.post("/realtime/monitoring-sync")
+def realtime_monitoring_sync(limit: int = 100) -> dict:
+    from app.realtime.monitoring_bridge import RealtimeMonitoringBridge
+
+    return RealtimeMonitoringBridge().sync(limit=limit)
+
+
 @router.post("/realtime/replay")
 def realtime_replay(symbol: str | None = None, limit: int = 100) -> dict:
     from app.realtime.service import RealtimeMarketService

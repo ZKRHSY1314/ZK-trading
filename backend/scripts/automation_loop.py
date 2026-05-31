@@ -160,6 +160,18 @@ def run_code_evolution_review(api_base: str, limit: int) -> dict:
     return request_json("POST", f"{api_base}/api/experience/code-evolution/generate?{query}")
 
 
+def run_realtime_refresh(api_base: str, symbols: str, limit: int) -> dict:
+    """Refresh configured realtime provider events without creating live orders."""
+    query = urllib.parse.urlencode({"symbols": symbols, "limit": limit})
+    return request_json("POST", f"{api_base}/api/realtime/refresh?{query}")
+
+
+def run_realtime_monitoring_sync(api_base: str, limit: int) -> dict:
+    """Sync persisted realtime events into review-only monitoring alerts."""
+    query = urllib.parse.urlencode({"limit": limit})
+    return request_json("POST", f"{api_base}/api/realtime/monitoring-sync?{query}")
+
+
 def run_browser_cycle() -> dict:
     completed = subprocess.run(
         ["npm.cmd", "run", "automation:browser"],
@@ -186,13 +198,14 @@ def append_log(payload: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe simulation automation loop.")
     parser.add_argument("--api-base", default=DEFAULT_API_BASE)
-    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest", "experience-review", "code-evolution-review"], default="cycle")
+    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest", "experience-review", "code-evolution-review", "realtime-refresh", "realtime-monitoring-sync"], default="cycle")
     parser.add_argument("--task-type", default="offhour_potential_search", help="Task type for agent-task mode")
     parser.add_argument("--interval-seconds", type=int, default=60)
     parser.add_argument("--max-cycles", type=int, default=1, help="Use 0 to run forever.")
     parser.add_argument("--limit", type=int, default=5)
     parser.add_argument("--monitor-limit", type=int, default=5)
     parser.add_argument("--review-symbol", default="SZ002081")
+    parser.add_argument("--symbols", default="SZ002081,SZ002115")
     parser.add_argument("--continue-on-error", action="store_true")
     args = parser.parse_args()
 
@@ -244,6 +257,10 @@ def main() -> int:
                 entry["result"] = run_experience_review(args.api_base)
             elif args.mode == "code-evolution-review":
                 entry["result"] = run_code_evolution_review(args.api_base, args.limit)
+            elif args.mode == "realtime-refresh":
+                entry["result"] = run_realtime_refresh(args.api_base, args.symbols, args.limit)
+            elif args.mode == "realtime-monitoring-sync":
+                entry["result"] = run_realtime_monitoring_sync(args.api_base, args.limit)
             else:
                 entry["result"] = run_api_cycle(args.api_base, args.limit)
             entry["status"] = "completed"

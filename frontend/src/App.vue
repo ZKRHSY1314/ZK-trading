@@ -75,8 +75,11 @@
         <h2>V4.0 高时效数据与事件驱动</h2>
         <p class="review-only-banner">只做秒级监控、提醒、模拟和 replay；不连接券商，不点击交易软件，不产生实盘订单。</p>
         <div class="actions">
-          <button data-testid="refresh-realtime-button" @click="loadRealtimeData" :disabled="realtimeLoading">
-            {{ realtimeLoading ? "刷新中" : "刷新实时状态" }}
+          <button data-testid="refresh-realtime-button" @click="refreshRealtimeEvents" :disabled="realtimeLoading">
+            {{ realtimeLoading ? "刷新中" : "刷新实时事件" }}
+          </button>
+          <button data-testid="sync-realtime-monitoring-button" @click="syncRealtimeMonitoring" :disabled="realtimeLoading">
+            同步监控提醒
           </button>
           <button data-testid="run-realtime-replay-button" @click="runRealtimeReplay" :disabled="realtimeLoading">
             运行信号 Replay
@@ -86,7 +89,20 @@
           <span>Provider {{ realtimeCapabilities?.active_provider ?? "disabled" }}</span>
           <span>状态 {{ realtimeCapabilities?.provider_status ?? "未加载" }}</span>
           <span>事件 {{ realtimeEvents.length }}</span>
+          <span>提醒 {{ realtimeMonitoringSync?.created_alert_count ?? 0 }}</span>
           <span>实盘 {{ realtimeCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
+        </div>
+        <div v-if="realtimeRefreshResult || realtimeMonitoringSync" class="score-list">
+          <div v-if="realtimeRefreshResult" class="score-item">
+            <strong>Refresh / {{ realtimeRefreshResult.status }}</strong>
+            <span>写入 {{ realtimeRefreshResult.refreshed_count }} / 失败 {{ realtimeRefreshResult.failed_count }} / 请求 {{ realtimeRefreshResult.requested_count }}</span>
+            <small>fallback {{ realtimeRefreshResult.fallback_required ? "required" : "not required" }} / simulation-only</small>
+          </div>
+          <div v-if="realtimeMonitoringSync" class="score-item">
+            <strong>Monitoring Sync / {{ realtimeMonitoringSync.status }}</strong>
+            <span>事件 {{ realtimeMonitoringSync.created_event_count }} / 提醒 {{ realtimeMonitoringSync.created_alert_count }} / 去重 {{ realtimeMonitoringSync.skipped_duplicate_count }}</span>
+            <small>review-only / live trading disabled</small>
+          </div>
         </div>
         <div v-if="realtimeHealth.length" class="score-list">
           <div v-for="item in realtimeHealth.slice(0, 4)" :key="item.provider" class="score-item">
@@ -1353,6 +1369,33 @@ type RealtimeReplay = {
   live_trading_enabled: boolean;
 };
 
+type RealtimeRefreshResult = {
+  status: string;
+  provider?: string;
+  provider_status?: string;
+  configured: boolean;
+  requested_count: number;
+  refreshed_count: number;
+  failed_count: number;
+  fallback_required: boolean;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type RealtimeMonitoringSyncResult = {
+  status: string;
+  session_id: number;
+  scanned_event_count: number;
+  created_event_count: number;
+  created_alert_count: number;
+  skipped_duplicate_count: number;
+  alerts_by_type: Record<string, number>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -1566,6 +1609,8 @@ const realtimeHealth = ref<RealtimeProviderHealth[]>([]);
 const realtimeSnapshot = ref<RealtimeSnapshot | null>(null);
 const realtimeEvents = ref<RealtimeEvent[]>([]);
 const realtimeReplay = ref<RealtimeReplay | null>(null);
+const realtimeRefreshResult = ref<RealtimeRefreshResult | null>(null);
+const realtimeMonitoringSync = ref<RealtimeMonitoringSyncResult | null>(null);
 const realtimeLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -2415,6 +2460,38 @@ async function loadRealtimeData() {
     realtimeSnapshot.value = null;
     realtimeEvents.value = [];
     error.value = err instanceof Error ? err.message : "实时行情状态加载失败";
+  } finally {
+    realtimeLoading.value = false;
+  }
+}
+
+async function refreshRealtimeEvents() {
+  realtimeLoading.value = true;
+  error.value = "";
+  try {
+    realtimeRefreshResult.value = await fetchJson<RealtimeRefreshResult>(
+      "/api/realtime/refresh?symbols=SZ002081,SZ002115&limit=20",
+      { method: "POST" }
+    );
+    await loadRealtimeData();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "实时事件刷新失败";
+  } finally {
+    realtimeLoading.value = false;
+  }
+}
+
+async function syncRealtimeMonitoring() {
+  realtimeLoading.value = true;
+  error.value = "";
+  try {
+    realtimeMonitoringSync.value = await fetchJson<RealtimeMonitoringSyncResult>(
+      "/api/realtime/monitoring-sync?limit=100",
+      { method: "POST" }
+    );
+    await loadRealtimeData();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "实时监控提醒同步失败";
   } finally {
     realtimeLoading.value = false;
   }

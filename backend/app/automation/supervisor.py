@@ -28,6 +28,8 @@ class AutomationSupervisor:
                 "simulation_plan",
                 "learning_report",
                 "intraday_monitoring",
+                "realtime_refresh_simulation_only",
+                "realtime_monitoring_sync_review_only",
                 "single_symbol_review",
                 "offhour_potential_search",
                 "event_logging",
@@ -37,6 +39,11 @@ class AutomationSupervisor:
                 "codex_skill_control",
                 "broker_client_control_disabled",
             ],
+            "realtime_capabilities": {
+                "refresh": "simulation-only cached market events",
+                "monitoring_sync": "review-only monitoring alerts from persisted realtime events",
+                "forbidden": ["broker_order", "credential_access", "screen_click_trading", "live_auto_trading"],
+            },
             "guardrails": [
                 "实盘交易默认禁用",
                 "自动化进程只生成模拟计划和事件日志",
