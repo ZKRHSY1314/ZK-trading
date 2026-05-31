@@ -231,6 +231,9 @@
           <button data-testid="screen-readiness-health-button" @click="refreshScreenReadinessHealth" :disabled="screenMonitoringLoading">
             生成健康摘要
           </button>
+          <button data-testid="screen-digest-history-proposal-button" @click="refreshScreenDigestHistoryProposal" :disabled="screenMonitoringLoading">
+            历史保留方案
+          </button>
           <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
@@ -250,6 +253,7 @@
           <span>Verify {{ screenReadinessVerification?.status ?? "未校验" }}</span>
           <span>Compare {{ screenReadinessComparison?.status ?? "未对比" }}</span>
           <span>Health {{ screenReadinessHealth?.status ?? "未生成" }}</span>
+          <span>History {{ screenDigestHistoryProposal?.status ?? "未生成" }}</span>
           <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
@@ -347,6 +351,11 @@
             <strong>Evidence Health / {{ screenReadinessHealth.status }}</strong>
             <span>{{ screenReadinessHealth.summary.verification_status }} / {{ screenReadinessHealth.summary.comparison_status }} / {{ screenReadinessHealth.allowed_output }}</span>
             <small>{{ screenReadinessHealth.summary.export_bundle_hash.slice(0, 16) }} / flags {{ screenReadinessHealth.failed_flags.length }} / 实盘 {{ screenReadinessHealth.live_trading_enabled ? "开启" : "关闭" }}</small>
+          </div>
+          <div v-if="screenDigestHistoryProposal" class="score-item">
+            <strong>Digest History / {{ screenDigestHistoryProposal.status }}</strong>
+            <span>{{ screenDigestHistoryProposal.proposal.default_state }} / {{ screenDigestHistoryProposal.allowed_output }}</span>
+            <small>DB {{ screenDigestHistoryProposal.safety_summary.writes_database_now ? "写入" : "不写" }} / 保留 {{ screenDigestHistoryProposal.proposal.recommended_retention_days }} 天 / gates {{ screenDigestHistoryProposal.review_gates.length }}</small>
           </div>
           <div
             v-for="item in screenReadinessAudit?.safety_matrix.slice(0, 6) ?? []"
@@ -2359,6 +2368,63 @@ type ScreenReadinessHealth = {
   live_trading_enabled: boolean;
 };
 
+type ScreenDigestHistoryProposal = {
+  schema_version: string;
+  status: string;
+  stage: string;
+  generated_at: string;
+  proposal: {
+    name: string;
+    purpose: string;
+    default_state: string;
+    recommended_retention_days: number;
+    max_records_per_day: number;
+    dedupe_key: string;
+    storage_mode: string;
+    required_fields: string[];
+    excluded_fields: string[];
+    operator_review_required: boolean;
+    apply_automatically: boolean;
+    writes_database_now: boolean;
+    writes_file: boolean;
+    download_created: boolean;
+    executes_commands: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  current_digest_summary: {
+    digest_status: string;
+    digest_stage: string;
+    export_bundle_hash: string;
+    readiness_status: string;
+    audit_status: string;
+    verification_status: string;
+    comparison_status: string;
+    failed_health_flag_names: string[];
+    allowed_output: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+  review_gates: Array<{
+    name: string;
+    status: string;
+    reason: string;
+    review_only: boolean;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  }>;
+  safety_summary: ScreenReadinessHealth["safety_summary"] & {
+    writes_database_now: boolean;
+  };
+  allowed_output: string;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type BacktestRunItem = {
   id: number;
   status: string;
@@ -2603,6 +2669,7 @@ const screenReadinessExport = ref<ScreenReadinessEvidenceExport | null>(null);
 const screenReadinessVerification = ref<ScreenReadinessVerification | null>(null);
 const screenReadinessComparison = ref<ScreenReadinessComparison | null>(null);
 const screenReadinessHealth = ref<ScreenReadinessHealth | null>(null);
+const screenDigestHistoryProposal = ref<ScreenDigestHistoryProposal | null>(null);
 const screenMonitoringLoading = ref(false);
 const backtestRuns = ref<BacktestRunItem[]>([]);
 const backtestDetail = ref<BacktestDetail | null>(null);
@@ -3557,7 +3624,8 @@ async function loadScreenMonitoring() {
       readinessExportData,
       readinessVerificationData,
       readinessComparisonData,
-      readinessHealthData
+      readinessHealthData,
+      digestHistoryProposalData
     ] = await Promise.all([
       fetchJson<ScreenMonitoringCapabilities>("/api/screen-monitoring/capabilities"),
       fetchJson<ScreenProviderCapabilities[]>("/api/screen-monitoring/providers"),
@@ -3574,7 +3642,8 @@ async function loadScreenMonitoring() {
       fetchJson<ScreenReadinessEvidenceExport>("/api/screen-monitoring/readiness-export?limit=40"),
       fetchJson<ScreenReadinessVerification>("/api/screen-monitoring/readiness-export/verify?limit=40"),
       fetchJson<ScreenReadinessComparison>("/api/screen-monitoring/readiness-export/compare?limit=40"),
-      fetchJson<ScreenReadinessHealth>("/api/screen-monitoring/readiness-health?limit=40")
+      fetchJson<ScreenReadinessHealth>("/api/screen-monitoring/readiness-health?limit=40"),
+      fetchJson<ScreenDigestHistoryProposal>("/api/screen-monitoring/readiness-health/history-proposal?limit=40")
     ]);
     screenMonitoringCapabilities.value = capabilitiesData;
     screenMonitoringProviders.value = providersData;
@@ -3592,6 +3661,7 @@ async function loadScreenMonitoring() {
     screenReadinessVerification.value = readinessVerificationData;
     screenReadinessComparison.value = readinessComparisonData;
     screenReadinessHealth.value = readinessHealthData;
+    screenDigestHistoryProposal.value = digestHistoryProposalData;
   } catch (err) {
     screenMonitoringCapabilities.value = null;
     screenMonitoringProviders.value = [];
@@ -3609,6 +3679,7 @@ async function loadScreenMonitoring() {
     screenReadinessVerification.value = null;
     screenReadinessComparison.value = null;
     screenReadinessHealth.value = null;
+    screenDigestHistoryProposal.value = null;
     error.value = err instanceof Error ? err.message : "屏幕只读监控状态加载失败";
   } finally {
     screenMonitoringLoading.value = false;
@@ -3717,6 +3788,20 @@ async function refreshScreenReadinessHealth() {
     );
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Readiness health digest 生成失败";
+  } finally {
+    screenMonitoringLoading.value = false;
+  }
+}
+
+async function refreshScreenDigestHistoryProposal() {
+  screenMonitoringLoading.value = true;
+  error.value = "";
+  try {
+    screenDigestHistoryProposal.value = await fetchJson<ScreenDigestHistoryProposal>(
+      "/api/screen-monitoring/readiness-health/history-proposal?limit=40"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Digest history proposal 生成失败";
   } finally {
     screenMonitoringLoading.value = false;
   }

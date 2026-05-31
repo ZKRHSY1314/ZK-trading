@@ -151,6 +151,9 @@
 - [ ] V4.5-P14 exposes `/api/screen-monitoring/readiness-health` as a read-only operator digest over readiness, audit, timeline, export, verifier, comparison, and acknowledgements.
 - [ ] V4.5-P14 digest reports module statuses, health flags, blocker/pending counts, evidence hash, and safety summary without persisting snapshots.
 - [ ] V4.5-P14 dashboard shows digest status and failed health flag count without writing files, creating downloads, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
+- [ ] V4.5-P15 exposes `/api/screen-monitoring/readiness-health/history-proposal` as review-only metadata for a future digest history retention design.
+- [ ] V4.5-P15 proposal lists required fields, excluded sensitive fields, retention/dedupe policy, manual review gates, and safety evidence without writing database records now.
+- [ ] V4.5-P15 dashboard shows history proposal status/default state without persisting snapshots, writing files, creating downloads, executing commands, capturing pixels, running OCR, clicking screens, or changing live-trading state.
 - [ ] `/health.live_trading_enabled=false` remains unchanged; no broker/order/credential/screen-click/live-trading endpoint is added.
 
 ## 13. Desired Workday Schedule Cadence

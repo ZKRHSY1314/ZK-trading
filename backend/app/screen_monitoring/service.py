@@ -36,7 +36,7 @@ class ScreenMonitoringService:
         provider_capabilities = self.provider.capabilities()
         return {
             "status": "read_only_ready",
-            "stage": "V4.5-P14",
+            "stage": "V4.5-P15",
             "capture_provider": provider_capabilities["provider"],
             "provider_status": provider_capabilities["status"],
             "provider_configured": provider_capabilities["configured"],
@@ -60,6 +60,7 @@ class ScreenMonitoringService:
                 "screen_readiness_evidence_verifier",
                 "screen_readiness_evidence_comparison",
                 "screen_readiness_health_digest",
+                "screen_readiness_digest_history_proposal",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -144,7 +145,7 @@ class ScreenMonitoringService:
         ]
         return {
             "status": self._readiness_status(provider, configured),
-            "stage": "V4.5-P14",
+            "stage": "V4.5-P15",
             "active_provider": provider,
             "provider_status": provider_capabilities.get("status"),
             "provider_configured": configured,
@@ -247,7 +248,7 @@ class ScreenMonitoringService:
         }
         return {
             "status": status,
-            "stage": "V4.5-P14",
+            "stage": "V4.5-P15",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": summary,
             "blockers": blockers[:20],
@@ -304,7 +305,7 @@ class ScreenMonitoringService:
         evidence_bundle = {
             "schema_version": "screen_readiness_evidence_export.v1",
             "status": "export_ready",
-            "stage": "V4.5-P14",
+            "stage": "V4.5-P15",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "bundle_scope": [
                 "capabilities",
@@ -512,7 +513,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_verifier.v1",
             "status": "verification_passed" if not failed else "verification_failed",
-            "stage": "V4.5-P14",
+            "stage": "V4.5-P15",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "export_bundle_hash": bundle.get("bundle_hash"),
             "verified_export_stage": bundle.get("stage"),
@@ -550,7 +551,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_evidence_comparison.v1",
             "status": "comparison_stable" if not differences else "comparison_changed",
-            "stage": "V4.5-P14",
+            "stage": "V4.5-P15",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "baseline": baseline_summary,
             "candidate": candidate_summary,
@@ -631,7 +632,7 @@ class ScreenMonitoringService:
         return {
             "schema_version": "screen_readiness_health_digest.v1",
             "status": "health_digest_clean" if not failed_flags else "health_digest_review_required",
-            "stage": "V4.5-P14",
+            "stage": "V4.5-P15",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "summary": {
                 "capture_provider": capabilities.get("capture_provider"),
@@ -686,6 +687,121 @@ class ScreenMonitoringService:
             },
             "allowed_output": "review_only_screen_readiness_health_digest",
             "forbidden_actions": export.get("forbidden_actions", []),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def screen_readiness_digest_history_proposal(self, limit: int = 50) -> dict[str, Any]:
+        digest = self.screen_readiness_health_digest(limit=limit)
+        summary = digest.get("summary", {})
+        retention_fields = [
+            "digest_status",
+            "generated_at",
+            "stage",
+            "export_bundle_hash",
+            "readiness_status",
+            "audit_status",
+            "verification_status",
+            "comparison_status",
+            "acknowledgement_count",
+            "timeline_item_count",
+            "readiness_blocked_count",
+            "artifact_pending_count",
+            "config_pending_count",
+            "verification_failed_count",
+            "comparison_difference_count",
+            "failed_health_flag_names",
+            "safety_summary",
+        ]
+        return {
+            "schema_version": "screen_readiness_digest_history_proposal.v1",
+            "status": "proposal_ready",
+            "stage": "V4.5-P15",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "proposal": {
+                "name": "screen_readiness_digest_history",
+                "purpose": "operator_review_only_digest_trend",
+                "default_state": "not_persisted",
+                "recommended_retention_days": 30,
+                "max_records_per_day": 24,
+                "dedupe_key": "export_bundle_hash + digest_status + failed_health_flag_names",
+                "storage_mode": "future_reviewed_metadata_only_table",
+                "required_fields": retention_fields,
+                "excluded_fields": [
+                    "raw_pixels",
+                    "ocr_text",
+                    "window_handles",
+                    "broker_account",
+                    "broker_credentials",
+                    "orders",
+                    "positions",
+                    "full_screenshot",
+                    "plaintext_secrets",
+                ],
+                "operator_review_required": True,
+                "apply_automatically": False,
+                "writes_database_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "executes_commands": False,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            },
+            "current_digest_summary": {
+                "digest_status": digest.get("status"),
+                "digest_stage": digest.get("stage"),
+                "export_bundle_hash": summary.get("export_bundle_hash"),
+                "readiness_status": summary.get("readiness_status"),
+                "audit_status": summary.get("audit_status"),
+                "verification_status": summary.get("verification_status"),
+                "comparison_status": summary.get("comparison_status"),
+                "failed_health_flag_names": [item.get("name") for item in digest.get("failed_flags", [])],
+                "allowed_output": summary.get("allowed_output"),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            },
+            "review_gates": [
+                self._screen_digest_history_gate("schema_review", True, "retention schema must be reviewed before persistence"),
+                self._screen_digest_history_gate("retention_policy_review", True, "retention duration and dedupe policy require operator approval"),
+                self._screen_digest_history_gate("safety_field_review", True, "stored metadata must exclude pixels, OCR text, broker data, orders, credentials, and secrets"),
+                self._screen_digest_history_gate("migration_required", True, "future persistence requires an explicit SQLite migration and tests"),
+                self._screen_digest_history_gate("manual_enable_required", True, "proposal does not enable any retention job automatically"),
+            ],
+            "safety_summary": {
+                "writes_database_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "executes_commands": False,
+                "writes_env": False,
+                "real_screen_capture": False,
+                "pixel_data_stored": False,
+                "ocr_executed": False,
+                "broker_action": False,
+                "order_action": False,
+                "credential_access": False,
+                "live_trading_enabled": False,
+            },
+            "allowed_output": "review_only_screen_readiness_digest_history_proposal",
+            "forbidden_actions": [
+                "write_env",
+                "execute_command",
+                "write_file",
+                "create_download",
+                "persist_snapshot_without_review",
+                "screen_click",
+                "keyboard_type",
+                "inspect_window",
+                "real_pixel_capture",
+                "pixel_storage",
+                "ocr_execution",
+                "broker_action",
+                "order_action",
+                "credential_access",
+                "live_auto_trading",
+            ],
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
@@ -794,7 +910,7 @@ class ScreenMonitoringService:
             counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
         return {
             "status": "timeline_ready",
-            "stage": "V4.5-P14",
+            "stage": "V4.5-P15",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "item_count": len(ordered),
             "counts_by_type": counts_by_type,
@@ -856,7 +972,7 @@ class ScreenMonitoringService:
                     "acknowledged",
                     report_hash,
                     str(report.get("status") or "unknown"),
-                    str(report.get("stage") or "V4.5-P14"),
+                    str(report.get("stage") or "V4.5-P15"),
                     json.dumps(summary, ensure_ascii=False, default=str),
                     json.dumps(safety_matrix, ensure_ascii=False, default=str),
                     json.dumps(report, ensure_ascii=False, default=str),
@@ -1931,6 +2047,16 @@ class ScreenMonitoringService:
             "live_trading_enabled": bool(live_trading_enabled),
             "review_only": True,
             "simulation_only": True,
+        }
+
+    def _screen_digest_history_gate(self, name: str, required: bool, reason: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": "required" if required else "optional",
+            "reason": reason,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
         }
 
     def _screen_evidence_export_safety(

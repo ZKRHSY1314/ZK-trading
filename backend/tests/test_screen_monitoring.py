@@ -16,7 +16,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     _reset_screen_monitoring(test_db)
     capabilities = ScreenMonitoringService().capabilities()
 
-    assert capabilities["stage"] == "V4.5-P14"
+    assert capabilities["stage"] == "V4.5-P15"
     assert capabilities["capture_provider"] == "disabled"
     assert capabilities["provider_status"] == "disabled"
     assert capabilities["provider_configured"] is False
@@ -41,6 +41,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     assert "screen_readiness_evidence_verifier" in capabilities["allowed_modes"]
     assert "screen_readiness_evidence_comparison" in capabilities["allowed_modes"]
     assert "screen_readiness_health_digest" in capabilities["allowed_modes"]
+    assert "screen_readiness_digest_history_proposal" in capabilities["allowed_modes"]
 
 
 def test_screen_observation_creates_session_and_summary(test_db):
@@ -151,7 +152,7 @@ def test_screen_provider_readiness_runbook_is_read_only_and_blocks_real_adapters
     readiness = ScreenMonitoringService().provider_readiness_runbook()
     checks = {item["name"]: item for item in readiness["checks"]}
 
-    assert readiness["stage"] == "V4.5-P14"
+    assert readiness["stage"] == "V4.5-P15"
     assert readiness["status"] == "disabled_needs_provider_selection"
     assert readiness["active_provider"] == "disabled"
     assert checks["provider_selected"]["status"] == "blocked"
@@ -267,7 +268,7 @@ def test_screen_readiness_audit_report_consolidates_safe_evidence(test_db):
     report = service.screen_readiness_audit_report()
     safety = {item["name"]: item for item in report["safety_matrix"]}
 
-    assert report["stage"] == "V4.5-P14"
+    assert report["stage"] == "V4.5-P15"
     assert report["status"] == "review_required"
     assert report["summary"]["allowed_output"] == "review_only_screen_readiness_report"
     assert report["summary"]["config_proposal_count"] == 1
@@ -301,7 +302,7 @@ def test_screen_readiness_audit_acknowledgement_is_audit_only(test_db):
     listed = service.list_screen_readiness_audit_acknowledgements()
 
     assert ack["status"] == "acknowledged"
-    assert ack["report_stage"] == "V4.5-P14"
+    assert ack["report_stage"] == "V4.5-P15"
     assert len(ack["report_hash"]) == 64
     assert ack["acknowledged_by"] == "tester"
     assert ack["acknowledgement_note"] == "reviewed readiness evidence"
@@ -350,7 +351,7 @@ def test_screen_readiness_timeline_is_read_only_and_chronological(test_db):
     event_ts = [item["event_ts"] for item in timeline["items"]]
 
     assert timeline["status"] == "timeline_ready"
-    assert timeline["stage"] == "V4.5-P14"
+    assert timeline["stage"] == "V4.5-P15"
     assert timeline["allowed_output"] == "review_only_screen_readiness_timeline"
     assert "readiness_audit_report" in item_types
     assert "screen_observation" in item_types
@@ -383,7 +384,7 @@ def test_screen_readiness_evidence_export_is_json_only_bundle(test_db):
 
     assert bundle["schema_version"] == "screen_readiness_evidence_export.v1"
     assert bundle["status"] == "export_ready"
-    assert bundle["stage"] == "V4.5-P14"
+    assert bundle["stage"] == "V4.5-P15"
     assert len(bundle["bundle_hash"]) == 64
     assert bundle["export_metadata"]["format"] == "json"
     assert bundle["export_metadata"]["delivery"] == "api_response_only"
@@ -421,7 +422,7 @@ def test_screen_readiness_evidence_verifier_checks_bundle_safety(test_db):
 
     assert verification["schema_version"] == "screen_readiness_evidence_verifier.v1"
     assert verification["status"] == "verification_passed"
-    assert verification["stage"] == "V4.5-P14"
+    assert verification["stage"] == "V4.5-P15"
     assert len(verification["export_bundle_hash"]) == 64
     assert verification["check_count"] == verification["passed_count"]
     assert verification["failed_count"] == 0
@@ -451,7 +452,7 @@ def test_screen_readiness_evidence_comparison_is_read_only_and_stable(test_db):
 
     assert comparison["schema_version"] == "screen_readiness_evidence_comparison.v1"
     assert comparison["status"] == "comparison_stable"
-    assert comparison["stage"] == "V4.5-P14"
+    assert comparison["stage"] == "V4.5-P15"
     assert comparison["baseline"]["export_bundle_hash"] == comparison["candidate"]["export_bundle_hash"]
     assert comparison["baseline"]["failed_count"] == 0
     assert comparison["candidate"]["failed_count"] == 0
@@ -484,13 +485,13 @@ def test_screen_readiness_health_digest_summarizes_read_only_evidence(test_db):
 
     assert digest["schema_version"] == "screen_readiness_health_digest.v1"
     assert digest["status"] == "health_digest_clean"
-    assert digest["stage"] == "V4.5-P14"
+    assert digest["stage"] == "V4.5-P15"
     assert digest["summary"]["verification_status"] == "verification_passed"
     assert digest["summary"]["comparison_status"] == "comparison_stable"
     assert digest["summary"]["acknowledgement_count"] == 1
     assert len(digest["summary"]["export_bundle_hash"]) == 64
     assert modules["evidence_verifier"]["live_trading_enabled"] is False
-    assert modules["evidence_comparison"]["stage"] == "V4.5-P14"
+    assert modules["evidence_comparison"]["stage"] == "V4.5-P15"
     assert flags["live_trading_disabled"]["status"] == "passed"
     assert flags["verification_passed"]["status"] == "passed"
     assert flags["comparison_stable"]["status"] == "passed"
@@ -508,6 +509,40 @@ def test_screen_readiness_health_digest_summarizes_read_only_evidence(test_db):
     assert digest["review_only"] is True
     assert digest["simulation_only"] is True
     assert digest["live_trading_enabled"] is False
+
+
+def test_screen_readiness_digest_history_proposal_is_review_only(test_db):
+    _reset_screen_monitoring(test_db)
+    service = ScreenMonitoringService()
+    proposal = service.generate_provider_config_proposal("Untitled - Notepad")
+    service.replay_provider_readiness_scenario(proposal_id=proposal["id"])
+    service.acknowledge_screen_readiness_audit(acknowledged_by="tester")
+
+    proposal_doc = service.screen_readiness_digest_history_proposal(limit=20)
+    gates = {item["name"]: item for item in proposal_doc["review_gates"]}
+
+    assert proposal_doc["schema_version"] == "screen_readiness_digest_history_proposal.v1"
+    assert proposal_doc["status"] == "proposal_ready"
+    assert proposal_doc["stage"] == "V4.5-P15"
+    assert proposal_doc["proposal"]["default_state"] == "not_persisted"
+    assert proposal_doc["proposal"]["apply_automatically"] is False
+    assert proposal_doc["proposal"]["writes_database_now"] is False
+    assert proposal_doc["proposal"]["writes_file"] is False
+    assert proposal_doc["proposal"]["download_created"] is False
+    assert "ocr_text" in proposal_doc["proposal"]["excluded_fields"]
+    assert "broker_credentials" in proposal_doc["proposal"]["excluded_fields"]
+    assert len(proposal_doc["current_digest_summary"]["export_bundle_hash"]) == 64
+    assert proposal_doc["current_digest_summary"]["live_trading_enabled"] is False
+    assert gates["schema_review"]["status"] == "required"
+    assert gates["manual_enable_required"]["status"] == "required"
+    assert proposal_doc["safety_summary"]["writes_database_now"] is False
+    assert proposal_doc["safety_summary"]["real_screen_capture"] is False
+    assert proposal_doc["safety_summary"]["ocr_executed"] is False
+    assert proposal_doc["safety_summary"]["broker_action"] is False
+    assert proposal_doc["allowed_output"] == "review_only_screen_readiness_digest_history_proposal"
+    assert proposal_doc["review_only"] is True
+    assert proposal_doc["simulation_only"] is True
+    assert proposal_doc["live_trading_enabled"] is False
 
 
 def test_local_safe_preflight_requires_explicit_config(test_db):
@@ -687,6 +722,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
     readiness_verify_empty_resp = client.get("/api/screen-monitoring/readiness-export/verify?limit=5")
     readiness_compare_empty_resp = client.get("/api/screen-monitoring/readiness-export/compare?limit=5")
     readiness_health_empty_resp = client.get("/api/screen-monitoring/readiness-health?limit=5")
+    readiness_history_proposal_empty_resp = client.get("/api/screen-monitoring/readiness-health/history-proposal?limit=5")
     empty_latest_resp = client.get("/api/screen-monitoring/sessions/latest")
     session_resp = client.post(
         "/api/screen-monitoring/sessions",
@@ -721,6 +757,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert readiness_verify_empty_resp.status_code == 200
     assert readiness_compare_empty_resp.status_code == 200
     assert readiness_health_empty_resp.status_code == 200
+    assert readiness_history_proposal_empty_resp.status_code == 200
     assert empty_latest_resp.status_code == 200
     assert session_resp.status_code == 200
     assert observation_resp.status_code == 200
@@ -734,23 +771,25 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert latest_resp.status_code == 200
     assert capabilities_resp.json()["live_trading_enabled"] is False
     assert capabilities_resp.json()["provider_configured"] is False
-    assert provider_readiness_resp.json()["stage"] == "V4.5-P14"
+    assert provider_readiness_resp.json()["stage"] == "V4.5-P15"
     assert provider_readiness_resp.json()["live_trading_enabled"] is False
     assert "ocr_execution" in provider_readiness_resp.json()["runbook"]["blocked_actions"]
-    assert readiness_audit_empty_resp.json()["stage"] == "V4.5-P14"
+    assert readiness_audit_empty_resp.json()["stage"] == "V4.5-P15"
     assert readiness_audit_empty_resp.json()["summary"]["allowed_output"] == "review_only_screen_readiness_report"
     assert readiness_ack_empty_resp.json() == []
-    assert readiness_timeline_empty_resp.json()["stage"] == "V4.5-P14"
+    assert readiness_timeline_empty_resp.json()["stage"] == "V4.5-P15"
     assert readiness_timeline_empty_resp.json()["allowed_output"] == "review_only_screen_readiness_timeline"
-    assert readiness_export_empty_resp.json()["stage"] == "V4.5-P14"
+    assert readiness_export_empty_resp.json()["stage"] == "V4.5-P15"
     assert readiness_export_empty_resp.json()["export_metadata"]["writes_file"] is False
     assert readiness_export_empty_resp.json()["safety"]["ocr_executed"] is False
-    assert readiness_verify_empty_resp.json()["stage"] == "V4.5-P14"
+    assert readiness_verify_empty_resp.json()["stage"] == "V4.5-P15"
     assert readiness_verify_empty_resp.json()["status"] == "verification_passed"
-    assert readiness_compare_empty_resp.json()["stage"] == "V4.5-P14"
+    assert readiness_compare_empty_resp.json()["stage"] == "V4.5-P15"
     assert readiness_compare_empty_resp.json()["status"] == "comparison_stable"
-    assert readiness_health_empty_resp.json()["stage"] == "V4.5-P14"
+    assert readiness_health_empty_resp.json()["stage"] == "V4.5-P15"
     assert readiness_health_empty_resp.json()["allowed_output"] == "review_only_screen_readiness_health_digest"
+    assert readiness_history_proposal_empty_resp.json()["stage"] == "V4.5-P15"
+    assert readiness_history_proposal_empty_resp.json()["proposal"]["writes_database_now"] is False
     config_proposal_resp = client.post(
         "/api/screen-monitoring/provider-config-proposals",
         json={"target_window_title": "Untitled - Notepad"},
@@ -785,6 +824,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
     readiness_verify_resp = client.get("/api/screen-monitoring/readiness-export/verify?limit=20")
     readiness_compare_resp = client.get("/api/screen-monitoring/readiness-export/compare?limit=20")
     readiness_health_resp = client.get("/api/screen-monitoring/readiness-health?limit=20")
+    readiness_history_proposal_resp = client.get("/api/screen-monitoring/readiness-health/history-proposal?limit=20")
     assert config_approve_resp.status_code == 200
     assert config_reject_resp.status_code == 200
     assert provider_replay_resp.status_code == 200
@@ -797,6 +837,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert readiness_verify_resp.status_code == 200
     assert readiness_compare_resp.status_code == 200
     assert readiness_health_resp.status_code == 200
+    assert readiness_history_proposal_resp.status_code == 200
     assert config_approve_resp.json()["status"] == "accepted"
     assert config_reject_resp.json()["status"] == "rejected"
     assert config_reject_resp.json()["live_trading_enabled"] is False
@@ -837,6 +878,11 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert readiness_health_resp.json()["summary"]["comparison_status"] == "comparison_stable"
     assert readiness_health_resp.json()["safety_summary"]["ocr_executed"] is False
     assert readiness_health_resp.json()["live_trading_enabled"] is False
+    assert readiness_history_proposal_resp.json()["schema_version"] == "screen_readiness_digest_history_proposal.v1"
+    assert readiness_history_proposal_resp.json()["status"] == "proposal_ready"
+    assert readiness_history_proposal_resp.json()["proposal"]["default_state"] == "not_persisted"
+    assert readiness_history_proposal_resp.json()["safety_summary"]["writes_database_now"] is False
+    assert readiness_history_proposal_resp.json()["live_trading_enabled"] is False
     assert any(item["provider"] == "fixture" for item in providers_resp.json())
     assert empty_latest_resp.json()["status"] == "empty"
     assert session_resp.json()["status"] == "running"
