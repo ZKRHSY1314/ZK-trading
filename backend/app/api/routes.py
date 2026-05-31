@@ -194,6 +194,11 @@ def trade_execution_gateway_broker_adapter_contract_verification() -> dict:
     return TradeExecutionGatewayService().broker_adapter_contract_verification()
 
 
+@router.get("/trade-execution-gateway/order-lifecycle-failure-fixtures")
+def trade_execution_gateway_order_lifecycle_failure_fixtures() -> dict:
+    return TradeExecutionGatewayService().order_lifecycle_failure_fixtures()
+
+
 @router.get("/automation/capabilities")
 def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()

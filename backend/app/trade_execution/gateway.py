@@ -12,7 +12,7 @@ from app.risk.portfolio import DEFAULT_LIMITS
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P1"
+    stage = "V5.5-P2"
 
     def capabilities(self) -> dict[str, Any]:
         gates = self.review_gates()["gates"]
@@ -50,6 +50,7 @@ class TradeExecutionGatewayService:
                 "broker_adapter_threat_model_review",
                 "broker_adapter_interface_draft_review",
                 "broker_adapter_contract_verification_review",
+                "order_lifecycle_failure_fixture_review",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -66,6 +67,7 @@ class TradeExecutionGatewayService:
                 "instantiate_broker_adapter",
                 "read_broker_account",
                 "broker_network_call",
+                "replay_failure_fixture_as_order",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -719,12 +721,12 @@ class TradeExecutionGatewayService:
                 "review_required_count": gates["review_required_count"],
                 "pre_live_package_id": pre_live_package["package_id"],
                 "default_release_state": release_gate["default_state"],
-                "next_track": "V5.5 broker adapter threat modeling, interface draft, and fixture-only contract verification",
+                "next_track": "V5.5 broker adapter threat modeling, fixture contract verification, and order lifecycle failure fixtures",
             },
             "safety_matrix": safety_matrix,
             "remaining_blockers": [
                 "separate_live_integration_project_required",
-                "order_lifecycle_failure_mode_fixtures_required",
+                "operator_runbook_mapping_required",
                 "credential_handling_design_required",
                 "real_order_api_tests_required_before_any_adapter",
                 "operator_acceptance_cannot_be_recorded_by_current_api",
@@ -737,7 +739,7 @@ class TradeExecutionGatewayService:
                 "gateway_can_execute": False,
                 "api_can_enable_gateway": False,
                 "api_can_record_release_approval": False,
-                "next_required_action": "design_order_lifecycle_failure_mode_fixtures",
+                "next_required_action": "map_failure_fixtures_to_manual_runbook",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -759,7 +761,7 @@ class TradeExecutionGatewayService:
             {
                 "name": "credential_exposure",
                 "risk": "Broker passwords, tokens, SMS codes, cookies, account numbers, and trading PINs must never enter this API.",
-                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P1.",
+                "mitigation": "No credential fields, no persistence, no environment writes, and no adapter instantiation in V5.5-P2.",
                 "status": "blocked_by_design",
             },
             {
@@ -826,7 +828,7 @@ class TradeExecutionGatewayService:
                 "account_read_allowed_now": False,
                 "order_execution_allowed_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "review_fixture_only_adapter_contract_verification",
+                "next_required_action": "map_failure_fixtures_to_manual_runbook",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -890,7 +892,7 @@ class TradeExecutionGatewayService:
                 "adapter_can_execute_now": False,
                 "adapter_can_read_account_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "review_fixture_only_adapter_contract_verification",
+                "next_required_action": "map_failure_fixtures_to_manual_runbook",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1008,7 +1010,7 @@ class TradeExecutionGatewayService:
                 "adapter_can_read_account_now": False,
                 "credentials_allowed_now": False,
                 "ready_for_live_enablement": False,
-                "next_required_action": "design_order_lifecycle_failure_mode_fixtures",
+                "next_required_action": "map_failure_fixtures_to_manual_runbook",
             },
             "safety_summary": self._safety_summary()
             | {
@@ -1022,6 +1024,109 @@ class TradeExecutionGatewayService:
                 "reads_live_account_funds": False,
             },
             "allowed_output": "review_only_fixture_broker_adapter_contract_verification",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def order_lifecycle_failure_fixtures(self) -> dict[str, Any]:
+        fixtures = [
+            self._failure_fixture(
+                "broker_rejected_order_preview",
+                "rejected",
+                "future_broker_rejection",
+                "A future broker rejects the previewed order before execution.",
+                "block_and_request_manual_review",
+                ["map_rejection_reason", "risk_gate_contract", "manual_confirmation_contract"],
+                {"rejection_code": "PRICE_OUT_OF_RANGE", "normalized_reason": "price_or_limit_state_rejected"},
+            ),
+            self._failure_fixture(
+                "partial_fill_preview",
+                "partial",
+                "liquidity_or_participation_limit",
+                "A future simulated order preview is only partially fillable under liquidity constraints.",
+                "reduce_or_cancel_in_review_only_plan",
+                ["risk_gate_contract", "audit_evidence_schema"],
+                {"requested_quantity": 1000, "fillable_quantity": 300, "max_participation_rate": 0.005},
+            ),
+            self._failure_fixture(
+                "stale_market_data_before_confirmation",
+                "blocked",
+                "stale_quote",
+                "Market data becomes stale before manual confirmation can be trusted.",
+                "expire_confirmation_and_refresh_quote",
+                ["manual_confirmation_contract", "risk_gate_contract"],
+                {"latency_ms": 90000, "quality_status": "stale_realtime"},
+            ),
+            self._failure_fixture(
+                "manual_confirmation_expired",
+                "blocked",
+                "confirmation_ttl_expired",
+                "The operator confirmation TTL expires before a future gateway could review the action.",
+                "require_new_manual_confirmation",
+                ["manual_confirmation_contract", "audit_evidence_schema"],
+                {"confirmation_ttl_seconds": 120, "elapsed_seconds": 180},
+            ),
+            self._failure_fixture(
+                "risk_gate_changed_after_preview",
+                "blocked",
+                "risk_snapshot_changed",
+                "Portfolio or symbol risk changes after preview generation.",
+                "discard_preview_and_recompute_risk",
+                ["risk_gate_contract", "rollback_runbook"],
+                {"previous_risk_hash": "fixture_previous_hash", "current_risk_hash": "fixture_current_hash"},
+            ),
+            self._failure_fixture(
+                "limit_down_sell_blocked",
+                "blocked",
+                "limit_down_unexecutable",
+                "A future sell preview would be unexecutable because the symbol is at limit-down.",
+                "block_exit_and_escalate_manual_risk_review",
+                ["risk_gate_contract", "rollback_runbook"],
+                {"symbol_state": "limit_down", "side": "sell"},
+            ),
+        ]
+        return {
+            "schema_version": "trade_execution_order_lifecycle_failure_fixtures.v1",
+            "status": "order_failure_fixtures_ready",
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "fixture_state": "review_only_no_order_lifecycle_engine",
+            "fixture_suite": "broker_order_lifecycle_failure_modes_v1",
+            "fixtures": fixtures,
+            "summary": {
+                "fixture_count": len(fixtures),
+                "blocked_count": sum(1 for item in fixtures if item["expected_status"] == "blocked"),
+                "partial_count": sum(1 for item in fixtures if item["expected_status"] == "partial"),
+                "rejected_count": sum(1 for item in fixtures if item["expected_status"] == "rejected"),
+                "places_order": False,
+                "connects_broker": False,
+                "reads_account": False,
+                "requires_credentials": False,
+            },
+            "decision": {
+                "failure_fixtures_ready_for_review": True,
+                "can_replay_as_real_order": False,
+                "can_submit_order_now": False,
+                "can_cancel_order_now": False,
+                "can_modify_order_now": False,
+                "requires_broker_connection": False,
+                "requires_credentials": False,
+                "ready_for_live_enablement": False,
+                "next_required_action": "map_failure_fixtures_to_manual_runbook",
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "fixture_only_failure_modes": True,
+                "order_lifecycle_engine_implemented": False,
+                "instantiates_adapter": False,
+                "makes_network_calls": False,
+                "writes_database_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "reads_live_account_funds": False,
+            },
+            "allowed_output": "review_only_order_lifecycle_failure_fixture_metadata",
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -1118,28 +1223,35 @@ class TradeExecutionGatewayService:
                 "passed",
                 "broker_adapter_threat_model_review_ready",
                 "future_broker_adapter_threat_model",
-                "V5.5-P1 preserves threat categories and mitigations without implementing broker connectivity.",
+                "V5.5-P2 preserves threat categories and mitigations without implementing broker connectivity.",
             ),
             self._gate(
                 "broker_adapter_interface_draft_required",
                 "passed",
                 "broker_adapter_interface_draft_review_ready",
                 "future_broker_adapter_interface_draft",
-                "V5.5-P1 preserves provider-neutral interface metadata without executable adapter methods.",
+                "V5.5-P2 preserves provider-neutral interface metadata without executable adapter methods.",
             ),
             self._gate(
                 "broker_adapter_contract_verification_required",
                 "passed",
                 "fixture_contract_verification_passed",
                 "fixture_only_broker_adapter_contract_verifier",
-                "V5.5-P1 verifies the future adapter contract with deterministic fixtures and no broker connectivity.",
+                "V5.5-P2 preserves fixture contract verification with no broker connectivity.",
+            ),
+            self._gate(
+                "order_lifecycle_failure_fixtures_required",
+                "passed",
+                "order_failure_fixtures_ready",
+                "review_only_order_lifecycle_failure_fixture_suite",
+                "V5.5-P2 defines order lifecycle failure-mode fixtures without implementing an order lifecycle engine.",
             ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "fixture_contract_verification_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "order_failure_fixtures_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -1159,9 +1271,10 @@ class TradeExecutionGatewayService:
                 "broker_adapter_threat_model_ready": True,
                 "broker_adapter_interface_draft_ready": True,
                 "broker_adapter_contract_verification_ready": True,
+                "order_lifecycle_failure_fixtures_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "design_order_lifecycle_failure_mode_fixtures",
+                "next_required_action": "map_failure_fixtures_to_manual_runbook",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -1237,6 +1350,12 @@ class TradeExecutionGatewayService:
                 "required_before": "any_broker_adapter_implementation",
                 "review_only": True,
             },
+            {
+                "name": "OrderLifecycleFailureFixtures",
+                "status": "review_failure_fixtures_defined",
+                "required_before": "any_order_lifecycle_engine",
+                "review_only": True,
+            },
         ]
 
     def _safety_summary(self) -> dict[str, bool]:
@@ -1305,6 +1424,39 @@ class TradeExecutionGatewayService:
             "status": "passed" if passed else "blocked",
             "reason": reason,
             "fixture_evidence": fixture_evidence,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _failure_fixture(
+        self,
+        name: str,
+        expected_status: str,
+        failure_mode: str,
+        trigger: str,
+        expected_handling: str,
+        required_contracts: list[str],
+        fixture_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "expected_status": expected_status,
+            "failure_mode": failure_mode,
+            "trigger": trigger,
+            "expected_handling": expected_handling,
+            "required_contracts": required_contracts,
+            "fixture_payload": fixture_payload
+            | {
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "can_submit_order": False,
+            "can_cancel_order": False,
+            "can_modify_order": False,
+            "connects_broker": False,
+            "requires_credentials": False,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,

@@ -212,6 +212,10 @@
 - [ ] V5.5-P1 verifies draft method surface, non-executable method flags, credential input rejection, forbidden method coverage, non-executable order preview, fixture-only rejection mapping, design-only redaction, and network/state mutation blocking.
 - [ ] V5.5-P1 dashboard shows contract verification checks, fixture name, verification state, network-call status, and adapter execution flags without adding broker/order/credential/account/screen-click controls.
 - [ ] V5.5-P1 must keep `fixture_only=true`, `network_calls=false`, `adapter_instantiated=false`, `adapter_implemented_now=false`, `adapter_can_connect_now=false`, `adapter_can_execute_now=false`, `adapter_can_read_account_now=false`, `credentials_allowed_now=false`, and `live_trading_enabled=false`.
+- [ ] V5.5-P2 exposes `GET /api/trade-execution-gateway/order-lifecycle-failure-fixtures` as review-only order lifecycle failure fixture metadata.
+- [ ] V5.5-P2 covers rejected preview, partial fill preview, stale market data, expired manual confirmation, changed risk snapshot, and limit-down sell blocking.
+- [ ] V5.5-P2 dashboard shows fixture suite, fixture state, per-fixture expected status, blocked/partial/rejected counts, and no-submit/no-real-replay evidence.
+- [ ] V5.5-P2 must keep `can_replay_as_real_order=false`, `can_submit_order_now=false`, `can_cancel_order_now=false`, `can_modify_order_now=false`, `requires_broker_connection=false`, `requires_credentials=false`, `order_lifecycle_engine_implemented=false`, and `live_trading_enabled=false`.
 
 ## 15. Desired Workday Schedule Cadence
 The following automation schedule is recommended during active trading days:
