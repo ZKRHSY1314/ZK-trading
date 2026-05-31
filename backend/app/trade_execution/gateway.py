@@ -13,7 +13,7 @@ from app.storage.sqlite_store import SQLiteStore
 class TradeExecutionGatewayService:
     """V5.0 starts as a review-only safety boundary, not an executor."""
 
-    stage = "V5.5-P23"
+    stage = "V5.5-P24"
 
     def __init__(self) -> None:
         self.store = SQLiteStore(settings.database_path)
@@ -76,6 +76,7 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_health_digest_history_release_package_review",
                 "audit_ledger_migration_manual_release_health_digest_history_release_package_integrity_review",
                 "audit_ledger_migration_manual_release_health_digest_history_release_rehearsal",
+                "audit_ledger_migration_manual_release_health_digest_history_release_evidence_verification",
             ],
             "forbidden_modes": [
                 "broker_login",
@@ -120,6 +121,7 @@ class TradeExecutionGatewayService:
                 "treat_manual_release_health_digest_history_package_as_release_approval",
                 "approve_manual_release_health_digest_history_release_from_integrity_review",
                 "record_manual_release_health_digest_history_review_by_api",
+                "persist_manual_release_health_digest_history_evidence",
             ],
             "required_future_components": self._future_components(),
             "current_output": "review_only_trade_execution_gateway_metadata",
@@ -5356,6 +5358,234 @@ class TradeExecutionGatewayService:
             "live_trading_enabled": settings.enable_live_trading,
         }
 
+    def verify_audit_ledger_migration_manual_release_health_digest_history_release_evidence(
+        self,
+        evidence: dict[str, Any] | None = None,
+        limit: int = 50,
+        max_age_days: int = 7,
+        repeat_checks: int = 2,
+    ) -> dict[str, Any]:
+        rehearsal = self.audit_ledger_migration_manual_release_health_digest_history_release_rehearsal(
+            limit=limit,
+            max_age_days=max_age_days,
+            repeat_checks=repeat_checks,
+        )
+        payload = evidence or {}
+        artifacts = payload.get("artifacts") if isinstance(payload, dict) else None
+        artifact_list = artifacts if isinstance(artifacts, list) else []
+        artifacts_by_name = {
+            str(item.get("name")): item
+            for item in artifact_list
+            if isinstance(item, dict) and item.get("name")
+        }
+        artifact_names = [
+            str(item.get("name"))
+            for item in artifact_list
+            if isinstance(item, dict) and item.get("name")
+        ]
+        required_artifacts = list(rehearsal.get("required_offline_artifacts", []))
+        missing_artifacts = [name for name in required_artifacts if name not in artifacts_by_name]
+        duplicate_artifacts = sorted({name for name in artifact_names if artifact_names.count(name) > 1})
+        artifacts_missing_hash = [
+            name
+            for name, item in artifacts_by_name.items()
+            if item.get("present") is not True
+            or not isinstance(item.get("artifact_hash"), str)
+            or len(item.get("artifact_hash", "")) < 16
+        ]
+        artifacts_missing_review = [
+            name
+            for name, item in artifacts_by_name.items()
+            if not item.get("reviewed_by") or not item.get("reviewed_at")
+        ]
+        forbidden_evidence_fields = [
+            "sql_text",
+            "shell_command",
+            "broker_credentials",
+            "trading_password",
+            "account_funds",
+            "live_positions",
+            "order_action",
+            "screen_click",
+            "raw_health_digest_history",
+            "database_path",
+        ]
+        forbidden_field_hits = sorted(
+            {
+                field
+                for item in artifact_list
+                if isinstance(item, dict)
+                for field in forbidden_evidence_fields
+                if field in item
+            }
+        )
+        checks = [
+            self._manual_release_evidence_check(
+                "health_digest_history_rehearsal_ready",
+                rehearsal.get("status") == "manual_release_rehearsal_ready",
+                "Health digest history release evidence can only pass after the rehearsal is ready for offline operator review.",
+                {"rehearsal_status": rehearsal.get("status")},
+            ),
+            self._manual_release_evidence_check(
+                "source_package_id_matches",
+                payload.get("source_package_id") == rehearsal.get("source_package_id"),
+                "Evidence must reference the current health digest history release package id.",
+                {
+                    "expected_source_package_id": rehearsal.get("source_package_id"),
+                    "actual_source_package_id": payload.get("source_package_id"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "rehearsal_id_matches",
+                payload.get("rehearsal_id") == rehearsal.get("rehearsal_id"),
+                "Evidence must reference the current health digest history release rehearsal id.",
+                {
+                    "expected_rehearsal_id": rehearsal.get("rehearsal_id"),
+                    "actual_rehearsal_id": payload.get("rehearsal_id"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "required_artifacts_present_once",
+                not missing_artifacts and not duplicate_artifacts,
+                "All required offline health digest history release artifacts must be represented exactly once.",
+                {"missing_artifacts": missing_artifacts, "duplicate_artifacts": duplicate_artifacts},
+            ),
+            self._manual_release_evidence_check(
+                "artifact_hashes_present",
+                not artifacts_missing_hash and len(artifacts_by_name) >= len(required_artifacts),
+                "Every health digest history release artifact must be marked present and carry a non-empty evidence hash.",
+                {"artifacts_missing_hash": artifacts_missing_hash},
+            ),
+            self._manual_release_evidence_check(
+                "artifact_reviews_present",
+                not artifacts_missing_review and len(artifacts_by_name) >= len(required_artifacts),
+                "Every health digest history release artifact must include offline reviewer and review timestamp metadata.",
+                {"artifacts_missing_review": artifacts_missing_review},
+            ),
+            self._manual_release_evidence_check(
+                "no_forbidden_evidence_fields",
+                not forbidden_field_hits,
+                "Evidence payload must not contain SQL text, shell commands, broker credentials, account data, order actions, screen-control fields, raw history snapshots, or database paths.",
+                {"forbidden_field_hits": forbidden_field_hits},
+            ),
+            self._manual_release_evidence_check(
+                "payload_safety_flags",
+                payload.get("review_only") is True
+                and payload.get("simulation_only") is True
+                and payload.get("live_trading_enabled") is False,
+                "Evidence payload must keep review-only, simulation-only, and live-trading-disabled flags.",
+                {
+                    "review_only": payload.get("review_only"),
+                    "simulation_only": payload.get("simulation_only"),
+                    "live_trading_enabled": payload.get("live_trading_enabled"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "verifier_remains_non_executable",
+                rehearsal.get("decision", {}).get("release_approved_now") is False
+                and rehearsal.get("decision", {}).get("migration_allowed_now") is False
+                and rehearsal.get("decision", {}).get("execution_allowed_now") is False,
+                "Verifier must not convert evidence into release approval, migration permission, or execution.",
+                {
+                    "release_approved_now": rehearsal.get("decision", {}).get("release_approved_now"),
+                    "migration_allowed_now": rehearsal.get("decision", {}).get("migration_allowed_now"),
+                    "execution_allowed_now": rehearsal.get("decision", {}).get("execution_allowed_now"),
+                },
+            ),
+            self._manual_release_evidence_check(
+                "live_trading_disabled",
+                rehearsal.get("live_trading_enabled") is False and not settings.enable_live_trading,
+                "Live trading must remain disabled while verifying health digest history release evidence.",
+                {
+                    "rehearsal_live_trading_enabled": rehearsal.get("live_trading_enabled"),
+                    "settings_live_trading_enabled": settings.enable_live_trading,
+                },
+            ),
+        ]
+        failed_checks = [check for check in checks if check["status"] == "failed"]
+        if not artifact_list:
+            status = "manual_release_health_digest_history_evidence_missing"
+            next_required_action = "collect_offline_health_digest_history_release_artifacts"
+        elif failed_checks:
+            status = "manual_release_health_digest_history_evidence_verification_failed"
+            next_required_action = "repair_health_digest_history_release_evidence"
+        else:
+            status = "manual_release_health_digest_history_evidence_verification_passed"
+            next_required_action = "offline_health_digest_history_release_review_can_continue"
+        verification_id = self._stable_hash(
+            {
+                "source_package_id": rehearsal.get("source_package_id"),
+                "rehearsal_id": rehearsal.get("rehearsal_id"),
+                "artifact_names": sorted(artifacts_by_name),
+                "check_statuses": {check["name"]: check["status"] for check in checks},
+                "payload_review_only": payload.get("review_only"),
+                "payload_simulation_only": payload.get("simulation_only"),
+                "payload_live_trading_enabled": payload.get("live_trading_enabled"),
+            }
+        )
+        return {
+            "schema_version": "trade_execution_audit_ledger_migration_manual_release_health_digest_history_release_evidence_verifier.v1",
+            "status": status,
+            "stage": self.stage,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "verification_id": verification_id,
+            "source_package_id": rehearsal.get("source_package_id"),
+            "rehearsal_id": rehearsal.get("rehearsal_id"),
+            "rehearsal_status": rehearsal.get("status"),
+            "required_artifacts": required_artifacts,
+            "provided_artifact_names": sorted(artifacts_by_name),
+            "missing_artifacts": missing_artifacts,
+            "duplicate_artifacts": duplicate_artifacts,
+            "checks": checks,
+            "failed_checks": failed_checks,
+            "failed_check_count": len(failed_checks),
+            "decision": {
+                "evidence_complete": status == "manual_release_health_digest_history_evidence_verification_passed",
+                "manual_review_recorded_now": False,
+                "release_approved_now": False,
+                "migration_allowed_now": False,
+                "execution_allowed_now": False,
+                "gateway_can_execute": False,
+                "go_no_go": "evidence_complete_for_offline_review"
+                if status == "manual_release_health_digest_history_evidence_verification_passed"
+                else "no_go",
+                "next_required_action": next_required_action,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "safety_summary": self._safety_summary()
+            | {
+                "executes_sql": False,
+                "runs_migration_now": False,
+                "creates_table_now": False,
+                "writes_database_now": False,
+                "writes_history_row_now": False,
+                "writes_migration_file_now": False,
+                "writes_file": False,
+                "download_created": False,
+                "persists_manual_release_health_digest_history_evidence": False,
+                "records_manual_review_now": False,
+                "approves_release_now": False,
+                "enables_gateway_now": False,
+                "connects_broker": False,
+                "places_real_trade": False,
+                "stores_credentials": False,
+            },
+            "allowed_output": "review_only_manual_release_health_digest_history_evidence_verification",
+            "forbidden_actions": rehearsal.get("forbidden_actions", [])
+            + [
+                "persist_manual_release_health_digest_history_evidence",
+                "record_manual_release_review_by_api",
+                "approve_release_from_health_digest_history_evidence_verifier",
+                "execute_migration_from_health_digest_history_evidence_verifier",
+                "create_health_digest_history_evidence_download",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def review_gates(self) -> dict[str, Any]:
         gates = [
             self._gate(
@@ -5617,12 +5847,19 @@ class TradeExecutionGatewayService:
                 "review_only_manual_release_health_digest_history_release_rehearsal",
                 "V5.5-P23 rehearses the offline manual review checklist for health digest history migration without recording approval, marking completion, or executing migrations.",
             ),
+            self._gate(
+                "audit_ledger_migration_manual_release_health_digest_history_release_evidence_verifier_required",
+                "passed",
+                "audit_ledger_migration_manual_release_health_digest_history_release_evidence_verifier_ready",
+                "review_only_manual_release_health_digest_history_evidence_verification",
+                "V5.5-P24 verifies offline health digest history release evidence payloads in memory without persisting evidence, approving release, or executing migrations.",
+            ),
         ]
         blocked = any(gate["status"] == "blocked" for gate in gates)
         review_required = any(gate["status"] == "review_required" for gate in gates)
         return {
             "schema_version": "trade_execution_gateway_review_gates.v1",
-            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_release_rehearsal_ready" if not review_required else "review_required",
+            "status": "blocked_by_safety_gate" if blocked else "audit_ledger_migration_manual_release_health_digest_history_release_evidence_verifier_ready" if not review_required else "review_required",
             "stage": self.stage,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "gates": gates,
@@ -5664,9 +5901,10 @@ class TradeExecutionGatewayService:
                 "audit_ledger_migration_manual_release_health_digest_history_release_package_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_release_package_integrity_review_ready": True,
                 "audit_ledger_migration_manual_release_health_digest_history_release_rehearsal_ready": True,
+                "audit_ledger_migration_manual_release_health_digest_history_release_evidence_verifier_ready": True,
                 "ready_for_live_enablement": False,
                 "live_trading_enabled": settings.enable_live_trading,
-                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_release_rehearsal",
+                "next_required_action": "review_audit_ledger_migration_manual_release_health_digest_history_release_evidence_verifier",
             },
             "safety_summary": self._safety_summary(),
             "review_only": True,
@@ -5871,6 +6109,12 @@ class TradeExecutionGatewayService:
             {
                 "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryReleaseRehearsal",
                 "status": "review_manual_release_health_digest_history_release_rehearsal_defined",
+                "required_before": "any_manual_release_health_digest_history_release_evidence_verification",
+                "review_only": True,
+            },
+            {
+                "name": "AuditLedgerMigrationManualReleaseHealthDigestHistoryReleaseEvidenceVerifier",
+                "status": "review_manual_release_health_digest_history_release_evidence_verifier_defined",
                 "required_before": "any_manual_release_health_digest_history_migration",
                 "review_only": True,
             },
