@@ -60,9 +60,10 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P3"
+    stage = "V5.6-P4"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
+    staging_quality_review_event_type = "dataset2_staging_quality_review"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -493,7 +494,7 @@ class Dataset2TrainingReadinessService:
         if package_id:
             where = "WHERE package_id = ?"
             params.append(package_id)
-        params.append(max(1, min(limit, 100)))
+        params.append(max(1, min(limit, 1000)))
         rows = store.fetch_all(
             f"""
             SELECT *
@@ -558,6 +559,134 @@ class Dataset2TrainingReadinessService:
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
         }
+
+    def staging_quality_review(
+        self,
+        package_id: str | None = None,
+        reviewed_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        resolved_package_id = package_id or self._latest_staging_package_id(store)
+        rows = self.list_staging_records(package_id=resolved_package_id, limit=1000) if resolved_package_id else []
+        action_counts: Counter[str] = Counter()
+        risk_counts: Counter[str] = Counter()
+        split_counts: Counter[str] = Counter()
+        quality_flag_counts: Counter[str] = Counter()
+        cleanup_operation_counts: Counter[str] = Counter()
+        missing_historical_count = 0
+        missing_required_count = 0
+
+        for row in rows:
+            normalized = row.get("normalized") or {}
+            action_counts[str(row.get("action_label") or "unknown")] += 1
+            risk_counts[str(row.get("risk_level") or "unknown")] += 1
+            split_counts[str(row.get("split_tag") or "unknown")] += 1
+            for flag in row.get("quality_flags") or []:
+                quality_flag_counts[str(flag)] += 1
+            for operation in row.get("cleanup_operations") or []:
+                cleanup_operation_counts[str(operation.get("operation") or "unknown")] += 1
+            if any(self._is_empty(normalized.get(field)) for field in HISTORICAL_OUTCOME_FIELDS):
+                missing_historical_count += 1
+            if not row.get("pattern_id") or row.get("action_label") not in ALLOWED_ACTION_LABELS or row.get("risk_level") not in ALLOWED_RISK_LEVELS:
+                missing_required_count += 1
+
+        low_support_labels = [
+            {"action_label": label, "count": count}
+            for label, count in sorted(action_counts.items())
+            if label != "unknown" and count < LOW_SUPPORT_ACTION_THRESHOLD
+        ]
+        split_names = {name for name in split_counts if name and name != "unknown"}
+        has_out_of_sample = bool(split_names.intersection({"validation", "valid", "test", "out_of_sample"}))
+        gates = [
+            self._gate("staging_records_present", "passed" if rows else "blocked", len(rows), ">0", "staged records must exist before training freeze review"),
+            self._gate("required_fields_valid", "passed" if missing_required_count == 0 else "blocked", missing_required_count, 0, "pattern id, action label, and risk level must be valid"),
+            self._gate("quality_flags_cleared", "passed" if not quality_flag_counts else "blocked", sum(quality_flag_counts.values()), 0, "cleanup quality flags must be reviewed before training freeze"),
+            self._gate("historical_outcomes_complete", "passed" if missing_historical_count == 0 else "blocked", missing_historical_count, 0, "training needs complete dated outcome fields"),
+            self._gate("label_support", "passed" if not low_support_labels else "warning", len(low_support_labels), 0, "low-support action labels should be expanded or weighted"),
+            self._gate("split_coverage", "passed" if has_out_of_sample else "blocked", dict(split_counts), "train+validation/test", "freeze needs an out-of-sample split"),
+            self._gate("learning_samples_isolation", "passed", False, False, "P4 review does not write learning_samples"),
+            self._gate("training_start", "passed", False, False, "P4 review never starts training"),
+        ]
+        blocked = [gate for gate in gates if gate["status"] == "blocked"]
+        warnings = [gate for gate in gates if gate["status"] == "warning"]
+        payload = {
+            "schema_version": "dataset2_staging_quality_review.v1",
+            "stage": self.stage,
+            "status": "training_freeze_blocked" if blocked else "training_freeze_review_passed",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "package_id": resolved_package_id,
+            "record_count": len(rows),
+            "counts": {
+                "action_labels": dict(action_counts),
+                "risk_levels": dict(risk_counts),
+                "splits": dict(split_counts),
+                "quality_flags": dict(quality_flag_counts),
+                "cleanup_operations": dict(cleanup_operation_counts),
+            },
+            "summary": {
+                "blocked_gate_count": len(blocked),
+                "warning_gate_count": len(warnings),
+                "missing_historical_count": missing_historical_count,
+                "missing_required_count": missing_required_count,
+                "low_support_label_count": len(low_support_labels),
+            },
+            "gates": gates,
+            "review": {
+                "reviewed_by": reviewed_by or "operator",
+                "note": note,
+                "record_bodies_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": "fix_blocked_staging_gates_before_training_freeze" if blocked else "manual_approval_required_before_training_freeze",
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (self.staging_quality_review_event_type, json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_quality_reviews(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_quality_review_event_type, max(1, min(limit, 100))),
+        )
+        reviews: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            reviews.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return reviews
 
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
@@ -648,6 +777,18 @@ class Dataset2TrainingReadinessService:
                     **payload,
                 }
         return None
+
+    def _latest_staging_package_id(self, store: SQLiteStore) -> str | None:
+        row = store.fetch_one(
+            """
+            SELECT package_id
+            FROM dataset2_staging_records
+            GROUP BY package_id
+            ORDER BY MAX(created_at) DESC
+            LIMIT 1
+            """
+        )
+        return str(row["package_id"]) if row and row.get("package_id") else None
 
     def _staging_row(self, row: dict[str, Any]) -> dict[str, Any]:
         row = dict(row)

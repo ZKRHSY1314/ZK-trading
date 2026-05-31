@@ -341,3 +341,7 @@ The following automation schedule is recommended during active trading days:
 - [ ] V5.6-P3 staging import requires a matching V5.6-P2 import queue review event before any normalized record can be staged.
 - [ ] V5.6-P3 dashboard shows staged count, package id prefix, review event id, learning sample count, and training blocked evidence.
 - [ ] V5.6-P3 must keep `writes_staging_records_now=true` only for quarantine staging, while `writes_learning_samples_now=false`, `normalized_records_persisted_to_training=false`, `training_started_now=false`, `can_start_training_now=false`, `writes_source_dataset=false`, `writes_file=false`, and `live_trading_enabled=false`.
+- [ ] V5.6-P4 exposes `POST /api/learning/dataset2/staging/quality-review` and `GET /api/learning/dataset2/staging/quality-reviews` as training-freeze quality gate evidence.
+- [ ] V5.6-P4 quality review reports staging record count, action/risk/split distributions, quality flag counts, cleanup operation counts, missing historical outcome count, low-support labels, and gate statuses.
+- [ ] V5.6-P4 dashboard shows quality review event id, blocked gate count, training-freeze blocked/allowed evidence, and no training/no learning-sample write evidence.
+- [ ] V5.6-P4 must keep `training_freeze_allowed=false` unless gates pass and still keep `writes_learning_samples_now=false`, `training_started_now=false`, `can_start_training_now=false`, `writes_source_dataset=false`, `writes_file=false`, and `live_trading_enabled=false`.

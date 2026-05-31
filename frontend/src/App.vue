@@ -1398,6 +1398,27 @@
           </span>
           <small>records are staged for review, not promoted to training samples</small>
         </div>
+        <div v-if="dataset2StagingQualityReview" class="report">
+          <strong>Dataset2 Staging Quality Review / {{ dataset2StagingQualityReview.status }}</strong>
+          <span>
+            event {{ dataset2StagingQualityReview.event_id }} /
+            records {{ dataset2StagingQualityReview.record_count }} /
+            blocked gates {{ dataset2StagingQualityReview.summary.blocked_gate_count }}
+          </span>
+          <span>
+            freeze {{ dataset2StagingQualityReview.decision.training_freeze_allowed ? "allowed" : "blocked" }} /
+            training {{ dataset2StagingQualityReview.decision.training_started_now ? "started" : "not started" }} /
+            learning samples {{ dataset2StagingQualityReview.decision.writes_learning_samples_now ? "written" : "not written" }}
+          </span>
+          <small>{{ dataset2StagingQualityReview.decision.next_required_action }} / review-only gates</small>
+        </div>
+        <div v-if="dataset2StagingQualityReviews.length" class="report">
+          <strong>Dataset2 Quality Review History / {{ dataset2StagingQualityReviews.length }}</strong>
+          <span>
+            {{ dataset2StagingQualityReviews.slice(0, 3).map((item) => `#${item.id}:${item.status}:${item.summary.blocked_gate_count}`).join(" / ") }}
+          </span>
+          <small>review payloads store gate evidence, not record bodies</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -1419,6 +1440,9 @@
           </button>
           <button data-testid="dataset2-staging-summary-button" @click="loadDataset2Staging" :disabled="dataset2Loading">
             Dataset2 staging status
+          </button>
+          <button data-testid="dataset2-staging-quality-review-button" @click="reviewDataset2StagingQuality" :disabled="dataset2Loading">
+            Dataset2 quality review
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -1945,6 +1969,53 @@ type Dataset2StagingSummary = {
     writes_learning_samples_now: boolean;
     learning_sample_count: number;
     training_started_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2Gate = {
+  name: string;
+  status: string;
+  value: unknown;
+  limit: unknown;
+  reason: string;
+};
+
+type Dataset2StagingQualityReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  record_count: number;
+  counts: {
+    action_labels: Record<string, number>;
+    risk_levels: Record<string, number>;
+    splits: Record<string, number>;
+    quality_flags: Record<string, number>;
+    cleanup_operations: Record<string, number>;
+  };
+  summary: {
+    blocked_gate_count: number;
+    warning_gate_count: number;
+    missing_historical_count: number;
+    missing_required_count: number;
+    low_support_label_count: number;
+  };
+  gates: Dataset2Gate[];
+  review: {
+    reviewed_by: string;
+    note?: string | null;
+    record_bodies_included: boolean;
+  };
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now: boolean;
+    writes_learning_samples_now: boolean;
+    training_started_now: boolean;
+    training_freeze_allowed: boolean;
     can_start_training_now: boolean;
     next_required_action: string;
   };
@@ -5485,6 +5556,8 @@ const dataset2ImportQueueReviews = ref<Dataset2ImportQueueReview[]>([]);
 const dataset2StagingImport = ref<Dataset2StagingImport | null>(null);
 const dataset2StagingRecords = ref<Dataset2StagingRecord[]>([]);
 const dataset2StagingSummary = ref<Dataset2StagingSummary | null>(null);
+const dataset2StagingQualityReview = ref<Dataset2StagingQualityReview | null>(null);
+const dataset2StagingQualityReviews = ref<Dataset2StagingQualityReview[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -5832,9 +5905,31 @@ async function importDataset2ToStaging() {
       })
     });
     await loadDataset2Staging();
+    await loadDataset2StagingQualityReviews();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Dataset2 staging import failed";
     dataset2StagingImport.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function reviewDataset2StagingQuality() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2StagingQualityReview.value = await fetchJson<Dataset2StagingQualityReview>("/api/learning/dataset2/staging/quality-review", {
+      method: "POST",
+      body: JSON.stringify({
+        package_id: dataset2StagingImport.value?.package_id ?? dataset2StagingSummary.value?.latest_packages?.[0]?.package_id,
+        reviewed_by: "dashboard",
+        note: "V5.6-P4 training-freeze quality gates"
+      })
+    });
+    await loadDataset2StagingQualityReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 staging quality review failed";
+    dataset2StagingQualityReview.value = null;
   } finally {
     dataset2Loading.value = false;
   }
@@ -5847,6 +5942,15 @@ async function loadDataset2Staging() {
   } catch {
     dataset2StagingSummary.value = null;
     dataset2StagingRecords.value = [];
+  }
+}
+
+async function loadDataset2StagingQualityReviews() {
+  try {
+    dataset2StagingQualityReviews.value = await fetchJson<Dataset2StagingQualityReview[]>("/api/learning/dataset2/staging/quality-reviews?limit=5");
+    dataset2StagingQualityReview.value = dataset2StagingQualityReviews.value[0] ?? dataset2StagingQualityReview.value;
+  } catch {
+    dataset2StagingQualityReviews.value = [];
   }
 }
 
@@ -7836,6 +7940,7 @@ onMounted(async () => {
     loadDataset2Readiness(),
     loadDataset2ImportQueueReviews(),
     loadDataset2Staging(),
+    loadDataset2StagingQualityReviews(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),
