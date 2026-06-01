@@ -218,6 +218,13 @@ class Dataset2StagingCleanupManualEvidenceAcceptanceInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingCleanupApplicationReviewInput(BaseModel):
+    acceptance_review_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "ready_for_future_cleanup_application"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -987,6 +994,24 @@ def dataset2_staging_cleanup_manual_evidence_acceptance_review(
 @router.get("/learning/dataset2/staging/cleanup-manual-evidence/acceptance-reviews")
 def dataset2_staging_cleanup_manual_evidence_acceptance_reviews(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_manual_evidence_acceptance_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/cleanup-application-review")
+def dataset2_staging_cleanup_application_review(
+    payload: Dataset2StagingCleanupApplicationReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupApplicationReviewInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_application_review(
+        acceptance_review_id=payload.acceptance_review_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-application-reviews")
+def dataset2_staging_cleanup_application_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_application_reviews(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])
