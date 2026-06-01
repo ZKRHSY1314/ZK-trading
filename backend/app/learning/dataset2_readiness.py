@@ -60,7 +60,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P12"
+    stage = "V5.6-P13"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
@@ -73,6 +73,7 @@ class Dataset2TrainingReadinessService:
     staging_cleanup_manual_evidence_acceptance_event_type = "dataset2_staging_cleanup_manual_evidence_acceptance_review"
     staging_cleanup_application_review_event_type = "dataset2_staging_cleanup_application_review"
     staging_cleanup_execution_approval_plan_event_type = "dataset2_staging_cleanup_execution_approval_plan"
+    staging_cleanup_execution_manual_approval_event_type = "dataset2_staging_cleanup_execution_manual_approval"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -2082,6 +2083,227 @@ class Dataset2TrainingReadinessService:
             )
         return plans
 
+    def staging_cleanup_execution_manual_approval(
+        self,
+        approval_plan_id: int | None = None,
+        approved_by: str = "operator",
+        approval_decision: str = "approved_for_cleanup_execution_preflight",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        approval_plan = (
+            self._cleanup_execution_approval_plan_by_id(store, approval_plan_id)
+            if approval_plan_id
+            else self._latest_cleanup_execution_approval_plan(store)
+        )
+        if approval_plan is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_execution_manual_approval.v1",
+                "stage": self.stage,
+                "status": "cleanup_execution_manual_approval_blocked_missing_approval_plan",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "approval_plan_id": approval_plan_id,
+                "checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "warning_check_count": 0,
+                    "source_plan_blocked_check_count": None,
+                    "approval_step_count": 0,
+                    "record_bodies_included": False,
+                },
+                "manual_approval": {
+                    "approved_by": approved_by or "operator",
+                    "approval_decision": approval_decision,
+                    "note": note,
+                    "record_bodies_included": False,
+                    "evidence_package_body_included": False,
+                    "review_only": True,
+                    "simulation_only": True,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "cleanup_execution_manual_approval_recorded": False,
+                    "cleanup_execution_approval_metadata_accepted": False,
+                    "cleanup_execution_approved_for_future_preflight": False,
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "can_generate_cleanup_execution_preflight_now": False,
+                    "future_cleanup_execution_preflight_required": True,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "training_freeze_allowed": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "run_dataset2_cleanup_execution_approval_plan_before_manual_approval",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        checks = self._cleanup_execution_manual_approval_checks(
+            approval_plan,
+            approved_by=approved_by,
+            approval_decision=approval_decision,
+        )
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        warning_count = sum(1 for check in checks if check.get("status") == "warning")
+        approval_accepted = blocked_count == 0 and approval_decision == "approved_for_cleanup_execution_preflight"
+        plan_summary = approval_plan.get("summary") or {}
+        plan_decision = approval_plan.get("decision") or {}
+        evidence_summary = approval_plan.get("evidence_summary") or {}
+        approval_plan_body = approval_plan.get("approval_plan") or {}
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_execution_manual_approval.v1",
+            "stage": self.stage,
+            "status": (
+                "cleanup_execution_manual_approval_ready_for_preflight"
+                if approval_accepted
+                else "cleanup_execution_manual_approval_blocked"
+            ),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "approval_plan_id": approval_plan.get("id"),
+            "cleanup_application_review_id": approval_plan.get("cleanup_application_review_id"),
+            "acceptance_review_id": approval_plan.get("acceptance_review_id"),
+            "manual_evidence_verification_id": approval_plan.get("manual_evidence_verification_id"),
+            "dry_run_verification_id": approval_plan.get("dry_run_verification_id"),
+            "execution_spec_event_id": approval_plan.get("execution_spec_event_id"),
+            "preflight_event_id": approval_plan.get("preflight_event_id"),
+            "approval_event_id": approval_plan.get("approval_event_id"),
+            "fix_plan_event_id": approval_plan.get("fix_plan_event_id"),
+            "quality_review_id": approval_plan.get("quality_review_id"),
+            "package_id": approval_plan.get("package_id"),
+            "source_approval_plan_status": approval_plan.get("status"),
+            "evidence_summary": {
+                "provided_sections": sorted(evidence_summary.get("provided_sections") or []),
+                "provided_section_count": evidence_summary.get("provided_section_count", 0),
+                "evidence_package_hash": evidence_summary.get("evidence_package_hash"),
+                "record_bodies_included": bool(evidence_summary.get("record_bodies_included")),
+                "evidence_package_body_included": False,
+            },
+            "source_approval_plan_summary": {
+                "check_count": plan_summary.get("check_count", 0),
+                "blocked_check_count": plan_summary.get("blocked_check_count", 0),
+                "warning_check_count": plan_summary.get("warning_check_count", 0),
+                "approval_step_count": plan_summary.get("approval_step_count", 0),
+                "record_bodies_included": bool(plan_summary.get("record_bodies_included")),
+            },
+            "source_approval_plan": {
+                "step_count": approval_plan_body.get("step_count", 0),
+                "contains_sql": bool(approval_plan_body.get("contains_sql")),
+                "contains_executable_code": bool(approval_plan_body.get("contains_executable_code")),
+                "can_execute_now": bool(approval_plan_body.get("can_execute_now")),
+                "requires_manual_execution_approval": bool(
+                    approval_plan_body.get("requires_manual_execution_approval", True)
+                ),
+                "steps_body_included": False,
+            },
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "warning_check_count": warning_count,
+                "source_plan_check_count": plan_summary.get("check_count", 0),
+                "source_plan_blocked_check_count": plan_summary.get("blocked_check_count", 0),
+                "approval_step_count": approval_plan_body.get("step_count", 0),
+                "record_bodies_included": bool(evidence_summary.get("record_bodies_included"))
+                or bool(plan_summary.get("record_bodies_included")),
+            },
+            "manual_approval": {
+                "approved_by": approved_by or "operator",
+                "approval_decision": approval_decision,
+                "note": note,
+                "record_bodies_included": False,
+                "evidence_package_body_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "cleanup_execution_manual_approval_recorded": True,
+                "cleanup_execution_approval_metadata_accepted": approval_accepted,
+                "cleanup_execution_approved_for_future_preflight": approval_accepted,
+                "cleanup_execution_approved_now": False,
+                "cleanup_application_allowed_now": False,
+                "cleanup_executed_now": False,
+                "can_execute_cleanup_now": False,
+                "can_generate_cleanup_execution_preflight_now": approval_accepted,
+                "future_cleanup_execution_preflight_required": True,
+                "future_cleanup_execution_requires_separate_run": True,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "resolve_cleanup_execution_manual_approval_blocks_before_any_cleanup_preflight"
+                    if blocked_count
+                    else "run_cleanup_execution_preflight_before_any_staging_mutation"
+                ),
+            },
+            "source_approval_plan_decision": {
+                "cleanup_execution_plan_ready_for_manual_approval": plan_decision.get(
+                    "cleanup_execution_plan_ready_for_manual_approval"
+                ),
+                "cleanup_execution_approved_now": plan_decision.get("cleanup_execution_approved_now"),
+                "cleanup_application_allowed_now": plan_decision.get("cleanup_application_allowed_now"),
+                "cleanup_executed_now": plan_decision.get("cleanup_executed_now"),
+                "writes_learning_samples_now": plan_decision.get("writes_learning_samples_now"),
+                "training_started_now": plan_decision.get("training_started_now"),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_execution_manual_approval_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_execution_manual_approvals(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_cleanup_execution_manual_approval_event_type, max(1, min(limit, 100))),
+        )
+        approvals: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            approvals.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return approvals
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -2415,6 +2637,32 @@ class Dataset2TrainingReadinessService:
             LIMIT 1
             """,
             (self.staging_cleanup_application_review_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _cleanup_execution_approval_plan_by_id(self, store: SQLiteStore, plan_id: int | None) -> dict[str, Any] | None:
+        if plan_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_cleanup_execution_approval_plan_event_type, plan_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_cleanup_execution_approval_plan(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_cleanup_execution_approval_plan_event_type,),
         )
         return self._event_payload(row) if row else None
 
@@ -3375,6 +3623,138 @@ class Dataset2TrainingReadinessService:
                 },
                 "all false",
                 "P12 approval plan is still evidence-only and cannot approve cleanup execution or training",
+            ),
+        ]
+
+    def _cleanup_execution_manual_approval_checks(
+        self,
+        approval_plan: dict[str, Any],
+        approved_by: str,
+        approval_decision: str,
+    ) -> list[dict[str, Any]]:
+        evidence_summary = approval_plan.get("evidence_summary") or {}
+        plan_summary = approval_plan.get("summary") or {}
+        plan_decision = approval_plan.get("decision") or {}
+        plan_body = approval_plan.get("approval_plan") or {}
+        allowed_decisions = {"approved_for_cleanup_execution_preflight", "needs_revision", "rejected"}
+        blocked_check_count = int(plan_summary.get("blocked_check_count") or 0)
+        return [
+            self._manual_evidence_check(
+                "approval_plan_available",
+                "passed" if approval_plan.get("id") else "blocked",
+                approval_plan.get("id"),
+                "existing cleanup execution approval plan",
+                "manual approval metadata must reference an existing P12 approval plan",
+            ),
+            self._manual_evidence_check(
+                "approval_plan_ready_for_manual_approval",
+                "passed"
+                if approval_plan.get("status") == "cleanup_execution_approval_plan_ready"
+                and plan_decision.get("cleanup_execution_plan_ready_for_manual_approval") is True
+                else "blocked",
+                {
+                    "status": approval_plan.get("status"),
+                    "cleanup_execution_plan_ready_for_manual_approval": plan_decision.get(
+                        "cleanup_execution_plan_ready_for_manual_approval"
+                    ),
+                },
+                "cleanup_execution_approval_plan_ready",
+                "only a passed P12 approval plan can receive manual approval metadata",
+            ),
+            self._manual_evidence_check(
+                "source_plan_blocked_checks_clear",
+                "passed" if blocked_check_count == 0 else "blocked",
+                blocked_check_count,
+                0,
+                "P12 approval plan checks must have no blocked items",
+            ),
+            self._manual_evidence_check(
+                "evidence_hash_pinned",
+                "passed" if bool(evidence_summary.get("evidence_package_hash")) else "blocked",
+                bool(evidence_summary.get("evidence_package_hash")),
+                True,
+                "manual approval must pin the same evidence package hash carried through P9-P12",
+            ),
+            self._manual_evidence_check(
+                "approval_steps_complete",
+                "passed" if int(plan_body.get("step_count") or 0) >= 5 else "blocked",
+                int(plan_body.get("step_count") or 0),
+                ">=5 approval steps",
+                "manual approval must be based on the complete P12 approval plan",
+            ),
+            self._manual_evidence_check(
+                "source_plan_contains_no_executable_payload",
+                "passed"
+                if not plan_body.get("contains_sql")
+                and not plan_body.get("contains_executable_code")
+                and not plan_body.get("can_execute_now")
+                else "blocked",
+                {
+                    "contains_sql": bool(plan_body.get("contains_sql")),
+                    "contains_executable_code": bool(plan_body.get("contains_executable_code")),
+                    "can_execute_now": bool(plan_body.get("can_execute_now")),
+                },
+                "all false",
+                "manual approval metadata cannot be based on an executable P12 payload",
+            ),
+            self._manual_evidence_check(
+                "record_bodies_excluded",
+                "passed"
+                if not evidence_summary.get("record_bodies_included") and not plan_summary.get("record_bodies_included")
+                else "blocked",
+                {
+                    "evidence_summary_record_bodies": bool(evidence_summary.get("record_bodies_included")),
+                    "plan_summary_record_bodies": bool(plan_summary.get("record_bodies_included")),
+                },
+                "no record bodies",
+                "manual approval metadata must not persist source or normalized record bodies",
+            ),
+            self._manual_evidence_check(
+                "manual_approval_metadata_present",
+                "passed" if bool(approved_by) and approval_decision in allowed_decisions else "blocked",
+                {"approved_by_present": bool(approved_by), "approval_decision": approval_decision},
+                sorted(allowed_decisions),
+                "operator approval metadata must be explicit and constrained",
+            ),
+            self._manual_evidence_check(
+                "manual_approval_allows_preflight_only",
+                "passed" if approval_decision == "approved_for_cleanup_execution_preflight" else "blocked",
+                approval_decision,
+                "approved_for_cleanup_execution_preflight",
+                "needs_revision or rejected approval metadata cannot advance to cleanup execution preflight",
+            ),
+            self._manual_evidence_check(
+                "source_plan_kept_execution_blocked",
+                "passed"
+                if plan_decision.get("cleanup_execution_approved_now") is False
+                and plan_decision.get("cleanup_application_allowed_now") is False
+                and plan_decision.get("cleanup_executed_now") is False
+                and plan_decision.get("writes_learning_samples_now") is False
+                and plan_decision.get("training_started_now") is False
+                else "blocked",
+                {
+                    "cleanup_execution_approved_now": plan_decision.get("cleanup_execution_approved_now"),
+                    "cleanup_application_allowed_now": plan_decision.get("cleanup_application_allowed_now"),
+                    "cleanup_executed_now": plan_decision.get("cleanup_executed_now"),
+                    "writes_learning_samples_now": plan_decision.get("writes_learning_samples_now"),
+                    "training_started_now": plan_decision.get("training_started_now"),
+                },
+                "all false",
+                "P12 approval plan must not have granted current cleanup execution or training",
+            ),
+            self._manual_evidence_check(
+                "cleanup_and_training_remain_blocked",
+                "passed",
+                {
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "writes_learning_samples_now": False,
+                    "training_started_now": False,
+                },
+                "all false",
+                "P13 records manual approval metadata only; execution, learning-sample writes, and training stay blocked",
             ),
         ]
 

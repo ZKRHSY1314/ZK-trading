@@ -1,4 +1,4 @@
-import json
+﻿import json
 
 from app.learning.dataset2_readiness import Dataset2TrainingReadinessService
 
@@ -116,7 +116,7 @@ def test_dataset2_readiness_blocks_unclean_training_data(tmp_path):
 
     data = Dataset2TrainingReadinessService().readiness(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P12"
+    assert data["stage"] == "V5.6-P13"
     assert data["status"] == "training_blocked_cleanup_required"
     assert data["quality"]["invalid_risk_level_count"] == 1
     assert data["quality"]["stringified_list_item_count"] == 1
@@ -167,7 +167,7 @@ def test_dataset2_cleanup_package_summarizes_review_actions_without_writes(tmp_p
 
     data = Dataset2TrainingReadinessService().cleanup_package(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P12"
+    assert data["stage"] == "V5.6-P13"
     assert data["status"] == "cleanup_package_ready_for_review"
     assert len(data["package_id"]) == 64
     assert len(data["normalized_records_hash"]) == 64
@@ -210,7 +210,7 @@ def test_dataset2_import_queue_review_records_metadata_only(tmp_path, test_db):
         note="metadata only",
     )
 
-    assert data["stage"] == "V5.6-P12"
+    assert data["stage"] == "V5.6-P13"
     assert data["status"] == "import_queue_review_recorded"
     assert isinstance(data["event_id"], int)
     assert data["decision"]["writes_existing_event_now"] is True
@@ -258,7 +258,7 @@ def test_dataset2_staging_import_requires_review_and_avoids_training_tables(tmp_
         note="stage reviewed records only",
     )
 
-    assert imported["stage"] == "V5.6-P12"
+    assert imported["stage"] == "V5.6-P13"
     assert imported["status"] == "staging_import_recorded"
     assert imported["imported_count"] == 2
     assert imported["review_event_id"] == review["event_id"]
@@ -306,7 +306,7 @@ def test_dataset2_staging_quality_review_blocks_training_freeze(tmp_path, test_d
         note="freeze gate review",
     )
 
-    assert quality["stage"] == "V5.6-P12"
+    assert quality["stage"] == "V5.6-P13"
     assert quality["status"] == "training_freeze_blocked"
     assert isinstance(quality["event_id"], int)
     assert quality["record_count"] == 2
@@ -355,7 +355,7 @@ def test_dataset2_staging_fix_plan_uses_quality_review_without_mutation(tmp_path
         note="plan only",
     )
 
-    assert plan["stage"] == "V5.6-P12"
+    assert plan["stage"] == "V5.6-P13"
     assert plan["status"] == "fix_plan_ready_for_review"
     assert isinstance(plan["event_id"], int)
     assert plan["quality_review_id"] == quality["event_id"]
@@ -415,12 +415,12 @@ def test_dataset2_staging_fix_plan_approval_and_preflight_are_metadata_only(tmp_
         note="preflight only",
     )
 
-    assert approval["stage"] == "V5.6-P12"
+    assert approval["stage"] == "V5.6-P13"
     assert approval["status"] == "fix_plan_approved_for_preflight"
     assert approval["decision"]["approval_allows_fix_application_now"] is False
     assert approval["decision"]["can_generate_preflight_now"] is True
     assert approval["decision"]["writes_learning_samples_now"] is False
-    assert preflight["stage"] == "V5.6-P12"
+    assert preflight["stage"] == "V5.6-P13"
     assert preflight["status"] == "fix_preflight_ready_for_manual_execution"
     assert preflight["summary"]["check_count"] >= 1
     assert preflight["summary"]["record_mutation_count"] == 0
@@ -472,7 +472,7 @@ def test_dataset2_cleanup_execution_spec_is_review_only(tmp_path, test_db):
         note="spec only",
     )
 
-    assert spec["stage"] == "V5.6-P12"
+    assert spec["stage"] == "V5.6-P13"
     assert spec["status"] == "cleanup_execution_spec_ready_for_review"
     assert isinstance(spec["event_id"], int)
     assert spec["preflight_event_id"] == preflight["event_id"]
@@ -532,7 +532,7 @@ def test_dataset2_cleanup_dry_run_verification_blocks_application_without_mutati
         note="verify only",
     )
 
-    assert dry_run["stage"] == "V5.6-P12"
+    assert dry_run["stage"] == "V5.6-P13"
     assert dry_run["status"] == "dry_run_blocked_manual_evidence_required"
     assert isinstance(dry_run["event_id"], int)
     assert dry_run["execution_spec_event_id"] == spec["event_id"]
@@ -604,7 +604,7 @@ def test_dataset2_manual_evidence_verification_summarizes_package_without_record
         note="evidence summary only",
     )
 
-    assert verified["stage"] == "V5.6-P12"
+    assert verified["stage"] == "V5.6-P13"
     assert verified["status"] == "manual_evidence_package_verified_for_cleanup_review"
     assert isinstance(verified["event_id"], int)
     assert verified["dry_run_verification_id"] == dry_run["event_id"]
@@ -692,7 +692,7 @@ def test_dataset2_manual_evidence_acceptance_review_records_metadata_only(tmp_pa
         note="metadata-only acceptance for next review gate",
     )
 
-    assert accepted["stage"] == "V5.6-P12"
+    assert accepted["stage"] == "V5.6-P13"
     assert accepted["status"] == "manual_evidence_accepted_for_cleanup_review"
     assert isinstance(accepted["event_id"], int)
     assert accepted["manual_evidence_verification_id"] == verified["event_id"]
@@ -786,7 +786,7 @@ def test_dataset2_cleanup_application_review_keeps_execution_blocked(tmp_path, t
         note="metadata-only application gate",
     )
 
-    assert application["stage"] == "V5.6-P12"
+    assert application["stage"] == "V5.6-P13"
     assert application["status"] == "cleanup_application_review_ready"
     assert isinstance(application["event_id"], int)
     assert application["acceptance_review_id"] == accepted["event_id"]
@@ -896,7 +896,7 @@ def test_dataset2_cleanup_execution_approval_plan_is_metadata_only(tmp_path, tes
         note="approval plan only",
     )
 
-    assert approval_plan["stage"] == "V5.6-P12"
+    assert approval_plan["stage"] == "V5.6-P13"
     assert approval_plan["status"] == "cleanup_execution_approval_plan_ready"
     assert isinstance(approval_plan["event_id"], int)
     assert approval_plan["cleanup_application_review_id"] == application["event_id"]
@@ -929,6 +929,132 @@ def test_dataset2_cleanup_execution_approval_plan_is_metadata_only(tmp_path, tes
     assert plans[0]["id"] == approval_plan["event_id"]
     assert plans[0]["planning"]["planned_by"] == "tester"
     assert "evidence_package" not in plans[0]
+
+
+def test_dataset2_cleanup_execution_manual_approval_is_metadata_only(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(pattern_id="MANUAL_APPROVAL_001", risk_level="medium_high", split_tag="train"),
+            _record(pattern_id="MANUAL_APPROVAL_002", action_label="RISK_ALERT", risk_level="high", split_tag="train"),
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+
+    missing = service.staging_cleanup_execution_manual_approval(
+        approval_plan_id=999999,
+        approved_by="tester",
+    )
+    assert missing["status"] == "cleanup_execution_manual_approval_blocked_missing_approval_plan"
+    assert missing["decision"]["writes_existing_event_now"] is False
+    assert missing["decision"]["cleanup_execution_approval_metadata_accepted"] is False
+    assert missing["decision"]["cleanup_executed_now"] is False
+
+    review = service.create_import_queue_review(source_dir=str(pack), limit=10, reviewed_by="tester")
+    imported = service.import_reviewed_to_staging(
+        source_dir=str(pack),
+        limit=10,
+        review_event_id=review["event_id"],
+        imported_by="tester",
+    )
+    quality = service.staging_quality_review(package_id=imported["package_id"], reviewed_by="tester")
+    plan = service.staging_fix_plan(quality_review_id=quality["event_id"], planned_by="tester")
+    approval = service.approve_staging_fix_plan(
+        fix_plan_event_id=plan["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_preflight",
+    )
+    preflight = service.staging_fix_preflight(approval_event_id=approval["event_id"], requested_by="tester")
+    spec = service.staging_cleanup_execution_spec(preflight_event_id=preflight["event_id"], specified_by="tester")
+    dry_run = service.staging_cleanup_dry_run_verification(execution_spec_event_id=spec["event_id"], verified_by="tester")
+
+    blocked_manual = service.staging_cleanup_manual_evidence_verification(
+        dry_run_verification_id=dry_run["event_id"],
+        evidence_package={},
+        verified_by="tester",
+    )
+    blocked_acceptance = service.staging_cleanup_manual_evidence_acceptance_review(
+        manual_evidence_verification_id=blocked_manual["event_id"],
+        accepted_by="tester",
+    )
+    blocked_application = service.staging_cleanup_application_review(
+        acceptance_review_id=blocked_acceptance["event_id"],
+        reviewed_by="tester",
+    )
+    blocked_plan = service.staging_cleanup_execution_approval_plan(
+        cleanup_application_review_id=blocked_application["event_id"],
+        planned_by="tester",
+    )
+    blocked_approval = service.staging_cleanup_execution_manual_approval(
+        approval_plan_id=blocked_plan["event_id"],
+        approved_by="tester",
+    )
+    assert blocked_approval["status"] == "cleanup_execution_manual_approval_blocked"
+    assert blocked_approval["decision"]["cleanup_execution_approval_metadata_accepted"] is False
+    assert blocked_approval["decision"]["can_generate_cleanup_execution_preflight_now"] is False
+
+    verified = service.staging_cleanup_manual_evidence_verification(
+        dry_run_verification_id=dry_run["event_id"],
+        evidence_package=_manual_evidence_package(),
+        verified_by="tester",
+    )
+    accepted = service.staging_cleanup_manual_evidence_acceptance_review(
+        manual_evidence_verification_id=verified["event_id"],
+        accepted_by="tester",
+        acceptance_decision="accepted_for_cleanup_review",
+    )
+    application = service.staging_cleanup_application_review(
+        acceptance_review_id=accepted["event_id"],
+        reviewed_by="tester",
+        review_decision="ready_for_future_cleanup_application",
+    )
+    approval_plan = service.staging_cleanup_execution_approval_plan(
+        cleanup_application_review_id=application["event_id"],
+        planned_by="tester",
+        plan_decision="prepared_for_manual_approval",
+    )
+    manual_approval = service.staging_cleanup_execution_manual_approval(
+        approval_plan_id=approval_plan["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_cleanup_execution_preflight",
+        note="metadata approval only",
+    )
+
+    assert manual_approval["stage"] == "V5.6-P13"
+    assert manual_approval["status"] == "cleanup_execution_manual_approval_ready_for_preflight"
+    assert isinstance(manual_approval["event_id"], int)
+    assert manual_approval["approval_plan_id"] == approval_plan["event_id"]
+    assert manual_approval["cleanup_application_review_id"] == application["event_id"]
+    assert manual_approval["manual_evidence_verification_id"] == verified["event_id"]
+    assert manual_approval["evidence_summary"]["evidence_package_hash"] == verified["evidence_summary"]["evidence_package_hash"]
+    assert manual_approval["source_approval_plan"]["step_count"] >= 5
+    assert manual_approval["source_approval_plan"]["contains_sql"] is False
+    assert manual_approval["source_approval_plan"]["contains_executable_code"] is False
+    assert manual_approval["source_approval_plan"]["can_execute_now"] is False
+    assert manual_approval["manual_approval"]["approved_by"] == "tester"
+    assert manual_approval["decision"]["cleanup_execution_manual_approval_recorded"] is True
+    assert manual_approval["decision"]["cleanup_execution_approval_metadata_accepted"] is True
+    assert manual_approval["decision"]["cleanup_execution_approved_for_future_preflight"] is True
+    assert manual_approval["decision"]["cleanup_execution_approved_now"] is False
+    assert manual_approval["decision"]["cleanup_application_allowed_now"] is False
+    assert manual_approval["decision"]["cleanup_executed_now"] is False
+    assert manual_approval["decision"]["can_execute_cleanup_now"] is False
+    assert manual_approval["decision"]["mutates_staging_records_now"] is False
+    assert manual_approval["decision"]["writes_staging_records_now"] is False
+    assert manual_approval["decision"]["writes_learning_samples_now"] is False
+    assert manual_approval["decision"]["training_started_now"] is False
+    assert manual_approval["decision"]["can_start_training_now"] is False
+    assert "evidence_package" not in manual_approval
+    assert "historical_outcome_source" not in manual_approval
+    check_status = {check["name"]: check["status"] for check in manual_approval["checks"]}
+    assert check_status["approval_plan_ready_for_manual_approval"] == "passed"
+    assert check_status["source_plan_contains_no_executable_payload"] == "passed"
+    assert check_status["cleanup_and_training_remain_blocked"] == "passed"
+
+    approvals = service.list_staging_cleanup_execution_manual_approvals(limit=5)
+    assert approvals[0]["id"] == manual_approval["event_id"]
+    assert approvals[0]["manual_approval"]["approved_by"] == "tester"
+    assert "evidence_package" not in approvals[0]
 
 
 def test_dataset2_readiness_api_smoke(client, tmp_path):
@@ -1017,6 +1143,14 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
         "/api/learning/dataset2/staging/cleanup-execution-approval-plans",
         params={"limit": 3},
     )
+    execution_manual_approval = client.post(
+        "/api/learning/dataset2/staging/cleanup-execution-manual-approval",
+        json={"approval_plan_id": execution_approval_plan.json().get("event_id"), "approved_by": "api-test"},
+    )
+    execution_manual_approvals = client.get(
+        "/api/learning/dataset2/staging/cleanup-execution-manual-approvals",
+        params={"limit": 3},
+    )
 
     assert readiness.status_code == 200
     assert preview.status_code == 200
@@ -1046,6 +1180,8 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert cleanup_application_history.status_code == 200
     assert execution_approval_plan.status_code == 200
     assert execution_approval_plans.status_code == 200
+    assert execution_manual_approval.status_code == 200
+    assert execution_manual_approvals.status_code == 200
     assert readiness.json()["decision"]["can_start_training_now"] is False
     assert preview.json()["preview_count"] == 1
     assert preview.json()["safety_summary"]["allow_live_order"] is False
@@ -1099,3 +1235,12 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert execution_approval_plan.json()["decision"]["writes_learning_samples_now"] is False
     assert execution_approval_plan.json()["decision"]["training_started_now"] is False
     assert execution_approval_plans.json()[0]["planning"]["planned_by"] == "api-test"
+    assert execution_manual_approval.json()["source_approval_plan"]["can_execute_now"] is False
+    assert execution_manual_approval.json()["decision"]["cleanup_execution_manual_approval_recorded"] is True
+    assert execution_manual_approval.json()["decision"]["cleanup_execution_approved_now"] is False
+    assert execution_manual_approval.json()["decision"]["cleanup_application_allowed_now"] is False
+    assert execution_manual_approval.json()["decision"]["cleanup_executed_now"] is False
+    assert execution_manual_approval.json()["decision"]["can_execute_cleanup_now"] is False
+    assert execution_manual_approval.json()["decision"]["writes_learning_samples_now"] is False
+    assert execution_manual_approval.json()["decision"]["training_started_now"] is False
+    assert execution_manual_approvals.json()[0]["manual_approval"]["approved_by"] == "api-test"

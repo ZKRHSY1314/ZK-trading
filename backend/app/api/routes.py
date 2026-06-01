@@ -232,6 +232,13 @@ class Dataset2StagingCleanupExecutionApprovalPlanInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingCleanupExecutionManualApprovalInput(BaseModel):
+    approval_plan_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_cleanup_execution_preflight"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -1037,6 +1044,24 @@ def dataset2_staging_cleanup_execution_approval_plan(
 @router.get("/learning/dataset2/staging/cleanup-execution-approval-plans")
 def dataset2_staging_cleanup_execution_approval_plans(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_execution_approval_plans(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-manual-approval")
+def dataset2_staging_cleanup_execution_manual_approval(
+    payload: Dataset2StagingCleanupExecutionManualApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupExecutionManualApprovalInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_execution_manual_approval(
+        approval_plan_id=payload.approval_plan_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-manual-approvals")
+def dataset2_staging_cleanup_execution_manual_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_execution_manual_approvals(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])
