@@ -337,6 +337,12 @@ class Dataset2StagingCleanupExecutionControlledApplyExecutionDryRunReviewInput(B
     review_decision: str = "approved_for_controlled_cleanup_apply_execution_plan"
     note: str | None = None
 
+class Dataset2StagingCleanupExecutionControlledApplyExecutionPlanInput(BaseModel):
+    apply_execution_review_id: int | None = None
+    planned_by: str = "operator"
+    plan_decision: str = "prepared_for_controlled_cleanup_apply_execution_plan_preflight"
+    note: str | None = None
+
 
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
@@ -1430,6 +1436,26 @@ def dataset2_staging_cleanup_execution_controlled_apply_execution_dry_run_review
 @router.get("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-dry-run-reviews")
 def dataset2_staging_cleanup_execution_controlled_apply_execution_dry_run_reviews(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_apply_execution_dry_run_reviews(
+        limit=limit
+    )
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan")
+def dataset2_staging_cleanup_execution_controlled_apply_execution_plan(
+    payload: Dataset2StagingCleanupExecutionControlledApplyExecutionPlanInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupExecutionControlledApplyExecutionPlanInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_execution_controlled_apply_execution_plan(
+        apply_execution_review_id=payload.apply_execution_review_id,
+        planned_by=payload.planned_by,
+        plan_decision=payload.plan_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plans")
+def dataset2_staging_cleanup_execution_controlled_apply_execution_plans(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_apply_execution_plans(
         limit=limit
     )
 
