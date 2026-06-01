@@ -260,6 +260,13 @@ class Dataset2StagingCleanupExecutionDryRunReviewInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingCleanupExecutionPlanInput(BaseModel):
+    dry_run_review_id: int | None = None
+    planned_by: str = "operator"
+    plan_decision: str = "prepared_for_controlled_cleanup_execution_preflight"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -1137,6 +1144,24 @@ def dataset2_staging_cleanup_execution_dry_run_review(
 @router.get("/learning/dataset2/staging/cleanup-execution-dry-run-reviews")
 def dataset2_staging_cleanup_execution_dry_run_reviews(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_execution_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-plan")
+def dataset2_staging_cleanup_execution_plan(
+    payload: Dataset2StagingCleanupExecutionPlanInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupExecutionPlanInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_execution_plan(
+        dry_run_review_id=payload.dry_run_review_id,
+        planned_by=payload.planned_by,
+        plan_decision=payload.plan_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-plans")
+def dataset2_staging_cleanup_execution_plans(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_execution_plans(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])
