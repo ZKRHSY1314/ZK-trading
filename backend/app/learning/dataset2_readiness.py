@@ -60,7 +60,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P13"
+    stage = "V5.6-P14"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
@@ -74,6 +74,7 @@ class Dataset2TrainingReadinessService:
     staging_cleanup_application_review_event_type = "dataset2_staging_cleanup_application_review"
     staging_cleanup_execution_approval_plan_event_type = "dataset2_staging_cleanup_execution_approval_plan"
     staging_cleanup_execution_manual_approval_event_type = "dataset2_staging_cleanup_execution_manual_approval"
+    staging_cleanup_execution_preflight_event_type = "dataset2_staging_cleanup_execution_preflight"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -2304,6 +2305,251 @@ class Dataset2TrainingReadinessService:
             )
         return approvals
 
+    def staging_cleanup_execution_preflight(
+        self,
+        manual_approval_id: int | None = None,
+        requested_by: str = "operator",
+        preflight_decision: str = "prepared_for_cleanup_execution_dry_run",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        manual_approval = (
+            self._cleanup_execution_manual_approval_by_id(store, manual_approval_id)
+            if manual_approval_id
+            else self._latest_cleanup_execution_manual_approval(store)
+        )
+        if manual_approval is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_execution_preflight.v1",
+                "stage": self.stage,
+                "status": "cleanup_execution_preflight_blocked_missing_manual_approval",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "manual_approval_id": manual_approval_id,
+                "preflight": {
+                    "lock_key": None,
+                    "rollback_plan_required": True,
+                    "contains_sql": False,
+                    "contains_executable_code": False,
+                    "can_execute_now": False,
+                    "review_only": True,
+                    "simulation_only": True,
+                },
+                "checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "warning_check_count": 0,
+                    "source_manual_approval_blocked_check_count": None,
+                    "staging_record_count": 0,
+                    "learning_sample_count": 0,
+                    "record_bodies_included": False,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "cleanup_execution_preflight_recorded": False,
+                    "cleanup_execution_preflight_ready_for_dry_run": False,
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "future_cleanup_execution_dry_run_required": True,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "training_freeze_allowed": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "record_dataset2_cleanup_execution_manual_approval_before_preflight",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        package_id = manual_approval.get("package_id")
+        staging_count = self._staging_record_count(store, package_id)
+        learning_count = self._learning_sample_count(store)
+        lock_key = self._cleanup_preflight_lock_key(manual_approval, staging_count)
+        preflight = {
+            "lock_key": lock_key,
+            "rollback_plan_required": True,
+            "rollback_plan": {
+                "required": True,
+                "mode": "future_transaction_rollback_or_restore_from_snapshot",
+                "snapshot_required_before_execution": True,
+                "verified_now": False,
+            },
+            "environment": {
+                "database_path": str(settings.database_path),
+                "database_path_recorded": bool(settings.database_path),
+                "package_id": package_id,
+                "staging_record_count": staging_count,
+                "learning_sample_count": learning_count,
+                "source_dataset_mutation_allowed": False,
+            },
+            "impact": {
+                "package_id": package_id,
+                "candidate_staging_record_count": staging_count,
+                "learning_sample_count_before": learning_count,
+                "expected_learning_sample_count_after": learning_count,
+                "affected_rows_body_included": False,
+            },
+            "contains_sql": False,
+            "contains_executable_code": False,
+            "can_execute_now": False,
+            "review_only": True,
+            "simulation_only": True,
+        }
+        checks = self._cleanup_execution_preflight_checks(
+            manual_approval,
+            preflight=preflight,
+            requested_by=requested_by,
+            preflight_decision=preflight_decision,
+        )
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        warning_count = sum(1 for check in checks if check.get("status") == "warning")
+        ready_for_dry_run = blocked_count == 0 and preflight_decision == "prepared_for_cleanup_execution_dry_run"
+        approval_summary = manual_approval.get("summary") or {}
+        approval_decision = manual_approval.get("decision") or {}
+        evidence_summary = manual_approval.get("evidence_summary") or {}
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_execution_preflight.v1",
+            "stage": self.stage,
+            "status": (
+                "cleanup_execution_preflight_ready_for_dry_run"
+                if ready_for_dry_run
+                else "cleanup_execution_preflight_blocked"
+            ),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "manual_approval_id": manual_approval.get("id"),
+            "approval_plan_id": manual_approval.get("approval_plan_id"),
+            "cleanup_application_review_id": manual_approval.get("cleanup_application_review_id"),
+            "acceptance_review_id": manual_approval.get("acceptance_review_id"),
+            "manual_evidence_verification_id": manual_approval.get("manual_evidence_verification_id"),
+            "dry_run_verification_id": manual_approval.get("dry_run_verification_id"),
+            "execution_spec_event_id": manual_approval.get("execution_spec_event_id"),
+            "preflight_event_id": manual_approval.get("preflight_event_id"),
+            "approval_event_id": manual_approval.get("approval_event_id"),
+            "fix_plan_event_id": manual_approval.get("fix_plan_event_id"),
+            "quality_review_id": manual_approval.get("quality_review_id"),
+            "package_id": package_id,
+            "source_manual_approval_status": manual_approval.get("status"),
+            "evidence_summary": {
+                "provided_sections": sorted(evidence_summary.get("provided_sections") or []),
+                "provided_section_count": evidence_summary.get("provided_section_count", 0),
+                "evidence_package_hash": evidence_summary.get("evidence_package_hash"),
+                "record_bodies_included": bool(evidence_summary.get("record_bodies_included")),
+                "evidence_package_body_included": False,
+            },
+            "source_manual_approval_summary": {
+                "check_count": approval_summary.get("check_count", 0),
+                "blocked_check_count": approval_summary.get("blocked_check_count", 0),
+                "warning_check_count": approval_summary.get("warning_check_count", 0),
+                "approval_step_count": approval_summary.get("approval_step_count", 0),
+                "record_bodies_included": bool(approval_summary.get("record_bodies_included")),
+            },
+            "preflight": preflight,
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "warning_check_count": warning_count,
+                "source_manual_approval_check_count": approval_summary.get("check_count", 0),
+                "source_manual_approval_blocked_check_count": approval_summary.get("blocked_check_count", 0),
+                "staging_record_count": staging_count,
+                "learning_sample_count": learning_count,
+                "record_bodies_included": bool(evidence_summary.get("record_bodies_included"))
+                or bool(approval_summary.get("record_bodies_included")),
+            },
+            "request": {
+                "requested_by": requested_by or "operator",
+                "preflight_decision": preflight_decision,
+                "note": note,
+                "record_bodies_included": False,
+                "evidence_package_body_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "cleanup_execution_preflight_recorded": True,
+                "cleanup_execution_preflight_ready_for_dry_run": ready_for_dry_run,
+                "cleanup_execution_approved_now": False,
+                "cleanup_application_allowed_now": False,
+                "cleanup_executed_now": False,
+                "can_execute_cleanup_now": False,
+                "future_cleanup_execution_dry_run_required": True,
+                "future_cleanup_execution_requires_separate_run": True,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "resolve_cleanup_execution_preflight_blocks_before_any_dry_run"
+                    if blocked_count
+                    else "run_cleanup_execution_dry_run_before_any_staging_mutation"
+                ),
+            },
+            "source_manual_approval_decision": {
+                "cleanup_execution_approval_metadata_accepted": approval_decision.get(
+                    "cleanup_execution_approval_metadata_accepted"
+                ),
+                "cleanup_execution_approved_now": approval_decision.get("cleanup_execution_approved_now"),
+                "cleanup_application_allowed_now": approval_decision.get("cleanup_application_allowed_now"),
+                "cleanup_executed_now": approval_decision.get("cleanup_executed_now"),
+                "writes_learning_samples_now": approval_decision.get("writes_learning_samples_now"),
+                "training_started_now": approval_decision.get("training_started_now"),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_execution_preflight_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_execution_preflights(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_cleanup_execution_preflight_event_type, max(1, min(limit, 100))),
+        )
+        preflights: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            preflights.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return preflights
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -2405,6 +2651,31 @@ class Dataset2TrainingReadinessService:
             """
         )
         return str(row["package_id"]) if row and row.get("package_id") else None
+
+    def _staging_record_count(self, store: SQLiteStore, package_id: str | None = None) -> int:
+        if package_id:
+            row = store.fetch_one(
+                "SELECT COUNT(*) AS count FROM dataset2_staging_records WHERE package_id = ?",
+                (package_id,),
+            )
+        else:
+            row = store.fetch_one("SELECT COUNT(*) AS count FROM dataset2_staging_records")
+        return int(row["count"]) if row and row.get("count") is not None else 0
+
+    def _learning_sample_count(self, store: SQLiteStore) -> int:
+        row = store.fetch_one("SELECT COUNT(*) AS count FROM learning_samples")
+        return int(row["count"]) if row and row.get("count") is not None else 0
+
+    def _cleanup_preflight_lock_key(self, manual_approval: dict[str, Any], staging_count: int) -> str:
+        seed = {
+            "manual_approval_id": manual_approval.get("id"),
+            "approval_plan_id": manual_approval.get("approval_plan_id"),
+            "package_id": manual_approval.get("package_id"),
+            "evidence_package_hash": (manual_approval.get("evidence_summary") or {}).get("evidence_package_hash"),
+            "staging_count": staging_count,
+        }
+        digest = hashlib.sha256(json.dumps(seed, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        return f"dataset2-cleanup-preflight-{digest[:16]}"
 
     def _quality_review_by_id(self, store: SQLiteStore, review_id: int | None) -> dict[str, Any] | None:
         if review_id is None:
@@ -2663,6 +2934,34 @@ class Dataset2TrainingReadinessService:
             LIMIT 1
             """,
             (self.staging_cleanup_execution_approval_plan_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _cleanup_execution_manual_approval_by_id(
+        self, store: SQLiteStore, manual_approval_id: int | None
+    ) -> dict[str, Any] | None:
+        if manual_approval_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_cleanup_execution_manual_approval_event_type, manual_approval_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_cleanup_execution_manual_approval(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_cleanup_execution_manual_approval_event_type,),
         )
         return self._event_payload(row) if row else None
 
@@ -3755,6 +4054,166 @@ class Dataset2TrainingReadinessService:
                 },
                 "all false",
                 "P13 records manual approval metadata only; execution, learning-sample writes, and training stay blocked",
+            ),
+        ]
+
+    def _cleanup_execution_preflight_checks(
+        self,
+        manual_approval: dict[str, Any],
+        preflight: dict[str, Any],
+        requested_by: str,
+        preflight_decision: str,
+    ) -> list[dict[str, Any]]:
+        evidence_summary = manual_approval.get("evidence_summary") or {}
+        approval_summary = manual_approval.get("summary") or {}
+        approval_decision = manual_approval.get("decision") or {}
+        allowed_decisions = {"prepared_for_cleanup_execution_dry_run", "needs_revision", "rejected"}
+        blocked_check_count = int(approval_summary.get("blocked_check_count") or 0)
+        environment = preflight.get("environment") or {}
+        impact = preflight.get("impact") or {}
+        rollback = preflight.get("rollback_plan") or {}
+        return [
+            self._manual_evidence_check(
+                "manual_approval_available",
+                "passed" if manual_approval.get("id") else "blocked",
+                manual_approval.get("id"),
+                "existing cleanup execution manual approval",
+                "cleanup execution preflight must reference an existing P13 manual approval event",
+            ),
+            self._manual_evidence_check(
+                "manual_approval_ready_for_preflight",
+                "passed"
+                if manual_approval.get("status") == "cleanup_execution_manual_approval_ready_for_preflight"
+                and approval_decision.get("cleanup_execution_approval_metadata_accepted") is True
+                and approval_decision.get("can_generate_cleanup_execution_preflight_now") is True
+                else "blocked",
+                {
+                    "status": manual_approval.get("status"),
+                    "cleanup_execution_approval_metadata_accepted": approval_decision.get(
+                        "cleanup_execution_approval_metadata_accepted"
+                    ),
+                    "can_generate_cleanup_execution_preflight_now": approval_decision.get(
+                        "can_generate_cleanup_execution_preflight_now"
+                    ),
+                },
+                "cleanup_execution_manual_approval_ready_for_preflight",
+                "only a passed P13 manual approval can enter cleanup execution preflight",
+            ),
+            self._manual_evidence_check(
+                "source_manual_approval_blocked_checks_clear",
+                "passed" if blocked_check_count == 0 else "blocked",
+                blocked_check_count,
+                0,
+                "P13 manual approval checks must have no blocked items",
+            ),
+            self._manual_evidence_check(
+                "evidence_hash_pinned",
+                "passed" if bool(evidence_summary.get("evidence_package_hash")) else "blocked",
+                bool(evidence_summary.get("evidence_package_hash")),
+                True,
+                "preflight must pin the evidence package hash carried through P9-P13",
+            ),
+            self._manual_evidence_check(
+                "staging_package_available",
+                "passed" if bool(environment.get("package_id")) and int(environment.get("staging_record_count") or 0) > 0 else "blocked",
+                {
+                    "package_id": environment.get("package_id"),
+                    "staging_record_count": environment.get("staging_record_count"),
+                },
+                "package id with staged rows",
+                "cleanup execution preflight needs a staged package to count before any future mutation",
+            ),
+            self._manual_evidence_check(
+                "learning_samples_unchanged",
+                "passed"
+                if impact.get("learning_sample_count_before") == impact.get("expected_learning_sample_count_after")
+                else "blocked",
+                {
+                    "before": impact.get("learning_sample_count_before"),
+                    "expected_after": impact.get("expected_learning_sample_count_after"),
+                },
+                "unchanged",
+                "P14 preflight cannot write or project writes to learning_samples",
+            ),
+            self._manual_evidence_check(
+                "rollback_plan_required",
+                "passed"
+                if rollback.get("required") is True
+                and rollback.get("snapshot_required_before_execution") is True
+                and rollback.get("verified_now") is False
+                else "blocked",
+                rollback,
+                "rollback required but not executed",
+                "future cleanup execution must have rollback metadata before any mutation",
+            ),
+            self._manual_evidence_check(
+                "lock_key_generated",
+                "passed" if bool(preflight.get("lock_key")) else "blocked",
+                preflight.get("lock_key"),
+                "deterministic lock key",
+                "preflight must identify a future execution lock key before any mutation",
+            ),
+            self._manual_evidence_check(
+                "preflight_contains_no_executable_payload",
+                "passed"
+                if not preflight.get("contains_sql")
+                and not preflight.get("contains_executable_code")
+                and not preflight.get("can_execute_now")
+                else "blocked",
+                {
+                    "contains_sql": bool(preflight.get("contains_sql")),
+                    "contains_executable_code": bool(preflight.get("contains_executable_code")),
+                    "can_execute_now": bool(preflight.get("can_execute_now")),
+                },
+                "all false",
+                "P14 preflight cannot contain executable SQL, runnable code, or execution permission",
+            ),
+            self._manual_evidence_check(
+                "request_metadata_present",
+                "passed" if bool(requested_by) and preflight_decision in allowed_decisions else "blocked",
+                {"requested_by_present": bool(requested_by), "preflight_decision": preflight_decision},
+                sorted(allowed_decisions),
+                "operator preflight metadata must be explicit and constrained",
+            ),
+            self._manual_evidence_check(
+                "preflight_decision_allows_dry_run_only",
+                "passed" if preflight_decision == "prepared_for_cleanup_execution_dry_run" else "blocked",
+                preflight_decision,
+                "prepared_for_cleanup_execution_dry_run",
+                "needs_revision or rejected preflight metadata cannot advance to cleanup execution dry-run",
+            ),
+            self._manual_evidence_check(
+                "source_manual_approval_kept_execution_blocked",
+                "passed"
+                if approval_decision.get("cleanup_execution_approved_now") is False
+                and approval_decision.get("cleanup_application_allowed_now") is False
+                and approval_decision.get("cleanup_executed_now") is False
+                and approval_decision.get("writes_learning_samples_now") is False
+                and approval_decision.get("training_started_now") is False
+                else "blocked",
+                {
+                    "cleanup_execution_approved_now": approval_decision.get("cleanup_execution_approved_now"),
+                    "cleanup_application_allowed_now": approval_decision.get("cleanup_application_allowed_now"),
+                    "cleanup_executed_now": approval_decision.get("cleanup_executed_now"),
+                    "writes_learning_samples_now": approval_decision.get("writes_learning_samples_now"),
+                    "training_started_now": approval_decision.get("training_started_now"),
+                },
+                "all false",
+                "P13 approval metadata must not have executed cleanup or training",
+            ),
+            self._manual_evidence_check(
+                "cleanup_and_training_remain_blocked",
+                "passed",
+                {
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "writes_learning_samples_now": False,
+                    "training_started_now": False,
+                },
+                "all false",
+                "P14 preflight is metadata-only; execution, learning-sample writes, and training stay blocked",
             ),
         ]
 
