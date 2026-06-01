@@ -211,6 +211,13 @@ class Dataset2StagingCleanupManualEvidenceInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingCleanupManualEvidenceAcceptanceInput(BaseModel):
+    manual_evidence_verification_id: int | None = None
+    accepted_by: str = "operator"
+    acceptance_decision: str = "accepted_for_cleanup_review"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -962,6 +969,24 @@ def dataset2_staging_cleanup_manual_evidence_verification(payload: Dataset2Stagi
 @router.get("/learning/dataset2/staging/cleanup-manual-evidence/verifications")
 def dataset2_staging_cleanup_manual_evidence_verifications(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_manual_evidence_verifications(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/cleanup-manual-evidence/acceptance-review")
+def dataset2_staging_cleanup_manual_evidence_acceptance_review(
+    payload: Dataset2StagingCleanupManualEvidenceAcceptanceInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupManualEvidenceAcceptanceInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_manual_evidence_acceptance_review(
+        manual_evidence_verification_id=payload.manual_evidence_verification_id,
+        accepted_by=payload.accepted_by,
+        acceptance_decision=payload.acceptance_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-manual-evidence/acceptance-reviews")
+def dataset2_staging_cleanup_manual_evidence_acceptance_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_manual_evidence_acceptance_reviews(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])

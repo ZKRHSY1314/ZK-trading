@@ -1508,6 +1508,20 @@
           </span>
           <small>{{ dataset2ManualEvidence.decision.next_required_action }}</small>
         </div>
+        <div v-if="dataset2ManualEvidenceAcceptance" class="report">
+          <strong>Dataset2 Manual Evidence Acceptance / {{ dataset2ManualEvidenceAcceptance.status }}</strong>
+          <span>
+            event {{ dataset2ManualEvidenceAcceptance.event_id }} /
+            source {{ dataset2ManualEvidenceAcceptance.manual_evidence_verification_id }} /
+            blocked {{ dataset2ManualEvidenceAcceptance.summary.blocked_check_count }}
+          </span>
+          <span>
+            ready for review {{ dataset2ManualEvidenceAcceptance.decision.manual_evidence_ready_for_cleanup_application_review ? "yes" : "no" }} /
+            cleanup {{ dataset2ManualEvidenceAcceptance.decision.cleanup_executed_now ? "executed" : "not executed" }} /
+            training {{ dataset2ManualEvidenceAcceptance.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ManualEvidenceAcceptance.decision.next_required_action }}</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -1550,6 +1564,9 @@
           </button>
           <button data-testid="dataset2-manual-evidence-button" @click="verifyDataset2ManualEvidence" :disabled="dataset2Loading">
             Dataset2 manual evidence
+          </button>
+          <button data-testid="dataset2-manual-evidence-acceptance-button" @click="reviewDataset2ManualEvidenceAcceptance" :disabled="dataset2Loading">
+            Dataset2 evidence acceptance
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -2382,6 +2399,56 @@ type Dataset2ManualEvidence = {
     verified_by: string;
     note?: string | null;
     evidence_package_body_included: boolean;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2ManualEvidenceAcceptance = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  manual_evidence_verification_id?: number | null;
+  dry_run_verification_id?: number | null;
+  evidence_summary: Dataset2ManualEvidence["evidence_summary"];
+  source_manual_evidence_summary: {
+    check_count: number;
+    blocked_check_count: number;
+    warning_check_count: number;
+    provided_section_count: number;
+    record_bodies_included: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    check_count: number;
+    blocked_check_count: number;
+    warning_check_count: number;
+    manual_evidence_check_count: number;
+    manual_evidence_blocked_check_count: number | null;
+    provided_section_count: number;
+    record_bodies_included: boolean;
+  };
+  acceptance: {
+    accepted_by: string;
+    acceptance_decision: string;
+    note?: string | null;
+    record_bodies_included: boolean;
+    evidence_package_body_included: boolean;
+  };
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now: boolean;
+    writes_staging_records_now: boolean;
+    writes_learning_samples_now: boolean;
+    mutates_staging_records_now: boolean;
+    manual_evidence_acceptance_recorded: boolean;
+    manual_evidence_ready_for_cleanup_application_review: boolean;
+    cleanup_application_allowed_now: boolean;
+    cleanup_executed_now: boolean;
+    can_promote_to_learning_samples_now: boolean;
+    training_started_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
   };
   safety_summary: Record<string, boolean>;
 };
@@ -5934,6 +6001,8 @@ const dataset2CleanupDryRun = ref<Dataset2CleanupDryRun | null>(null);
 const dataset2CleanupDryRuns = ref<Dataset2CleanupDryRun[]>([]);
 const dataset2ManualEvidence = ref<Dataset2ManualEvidence | null>(null);
 const dataset2ManualEvidenceHistory = ref<Dataset2ManualEvidence[]>([]);
+const dataset2ManualEvidenceAcceptance = ref<Dataset2ManualEvidenceAcceptance | null>(null);
+const dataset2ManualEvidenceAcceptanceHistory = ref<Dataset2ManualEvidenceAcceptance[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -6510,7 +6579,7 @@ async function verifyDataset2ManualEvidence() {
         dry_run_verification_id: dataset2CleanupDryRun.value?.event_id ?? dataset2CleanupDryRun.value?.id,
         evidence_package: {},
         verified_by: "dashboard",
-        note: "V5.6-P9 empty evidence package verification only"
+        note: "V5.6-P10 empty evidence package verification only"
       })
     });
     await loadDataset2ManualEvidenceHistory();
@@ -6528,6 +6597,46 @@ async function loadDataset2ManualEvidenceHistory() {
     dataset2ManualEvidence.value = dataset2ManualEvidenceHistory.value[0] ?? dataset2ManualEvidence.value;
   } catch {
     dataset2ManualEvidenceHistory.value = [];
+  }
+}
+
+async function reviewDataset2ManualEvidenceAcceptance() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ManualEvidence.value?.event_id && !dataset2ManualEvidence.value?.id) {
+      await loadDataset2ManualEvidenceHistory();
+    }
+    dataset2ManualEvidenceAcceptance.value = await fetchJson<Dataset2ManualEvidenceAcceptance>(
+      "/api/learning/dataset2/staging/cleanup-manual-evidence/acceptance-review",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          manual_evidence_verification_id: dataset2ManualEvidence.value?.event_id ?? dataset2ManualEvidence.value?.id,
+          accepted_by: "dashboard",
+          acceptance_decision: "accepted_for_cleanup_review",
+          note: "V5.6-P10 metadata-only acceptance review"
+        })
+      }
+    );
+    await loadDataset2ManualEvidenceAcceptanceHistory();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 manual evidence acceptance failed";
+    dataset2ManualEvidenceAcceptance.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ManualEvidenceAcceptanceHistory() {
+  try {
+    dataset2ManualEvidenceAcceptanceHistory.value = await fetchJson<Dataset2ManualEvidenceAcceptance[]>(
+      "/api/learning/dataset2/staging/cleanup-manual-evidence/acceptance-reviews?limit=5"
+    );
+    dataset2ManualEvidenceAcceptance.value =
+      dataset2ManualEvidenceAcceptanceHistory.value[0] ?? dataset2ManualEvidenceAcceptance.value;
+  } catch {
+    dataset2ManualEvidenceAcceptanceHistory.value = [];
   }
 }
 
@@ -8524,6 +8633,7 @@ onMounted(async () => {
     loadDataset2CleanupExecutionSpecs(),
     loadDataset2CleanupDryRuns(),
     loadDataset2ManualEvidenceHistory(),
+    loadDataset2ManualEvidenceAcceptanceHistory(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),

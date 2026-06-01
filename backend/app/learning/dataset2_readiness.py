@@ -60,7 +60,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P9"
+    stage = "V5.6-P10"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
@@ -70,6 +70,7 @@ class Dataset2TrainingReadinessService:
     staging_cleanup_execution_spec_event_type = "dataset2_staging_cleanup_execution_spec"
     staging_cleanup_dry_run_verification_event_type = "dataset2_staging_cleanup_dry_run_verification"
     staging_cleanup_manual_evidence_event_type = "dataset2_staging_cleanup_manual_evidence_verification"
+    staging_cleanup_manual_evidence_acceptance_event_type = "dataset2_staging_cleanup_manual_evidence_acceptance_review"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -1500,6 +1501,182 @@ class Dataset2TrainingReadinessService:
             )
         return verifications
 
+    def staging_cleanup_manual_evidence_acceptance_review(
+        self,
+        manual_evidence_verification_id: int | None = None,
+        accepted_by: str = "operator",
+        acceptance_decision: str = "accepted_for_cleanup_review",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        manual_evidence = (
+            self._manual_evidence_by_id(store, manual_evidence_verification_id)
+            if manual_evidence_verification_id
+            else self._latest_manual_evidence(store)
+        )
+        if manual_evidence is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_manual_evidence_acceptance_review.v1",
+                "stage": self.stage,
+                "status": "manual_evidence_acceptance_blocked_missing_verification",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "manual_evidence_verification_id": manual_evidence_verification_id,
+                "checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "warning_check_count": 0,
+                    "manual_evidence_check_count": 0,
+                    "manual_evidence_blocked_check_count": None,
+                    "record_bodies_included": False,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "manual_evidence_acceptance_recorded": False,
+                    "manual_evidence_ready_for_cleanup_application_review": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "training_freeze_allowed": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "run_dataset2_manual_evidence_verification_before_acceptance_review",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        checks = self._manual_evidence_acceptance_checks(
+            manual_evidence,
+            accepted_by=accepted_by,
+            acceptance_decision=acceptance_decision,
+        )
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        warning_count = sum(1 for check in checks if check.get("status") == "warning")
+        ready_for_cleanup_review = blocked_count == 0 and acceptance_decision == "accepted_for_cleanup_review"
+        evidence_summary = manual_evidence.get("evidence_summary") or {}
+        manual_summary = manual_evidence.get("summary") or {}
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_manual_evidence_acceptance_review.v1",
+            "stage": self.stage,
+            "status": (
+                "manual_evidence_accepted_for_cleanup_review"
+                if ready_for_cleanup_review
+                else "manual_evidence_acceptance_blocked"
+            ),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "manual_evidence_verification_id": manual_evidence.get("id"),
+            "dry_run_verification_id": manual_evidence.get("dry_run_verification_id"),
+            "execution_spec_event_id": manual_evidence.get("execution_spec_event_id"),
+            "preflight_event_id": manual_evidence.get("preflight_event_id"),
+            "approval_event_id": manual_evidence.get("approval_event_id"),
+            "fix_plan_event_id": manual_evidence.get("fix_plan_event_id"),
+            "quality_review_id": manual_evidence.get("quality_review_id"),
+            "package_id": manual_evidence.get("package_id"),
+            "source_manual_evidence_status": manual_evidence.get("status"),
+            "evidence_summary": {
+                "provided_sections": sorted(evidence_summary.get("provided_sections") or []),
+                "provided_section_count": evidence_summary.get("provided_section_count", 0),
+                "evidence_package_hash": evidence_summary.get("evidence_package_hash"),
+                "record_bodies_included": bool(evidence_summary.get("record_bodies_included")),
+                "evidence_package_body_included": False,
+            },
+            "source_manual_evidence_summary": {
+                "check_count": manual_summary.get("check_count", 0),
+                "blocked_check_count": manual_summary.get("blocked_check_count", 0),
+                "warning_check_count": manual_summary.get("warning_check_count", 0),
+                "provided_section_count": manual_summary.get("provided_section_count", 0),
+                "record_bodies_included": bool(manual_summary.get("record_bodies_included")),
+            },
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "warning_check_count": warning_count,
+                "manual_evidence_check_count": manual_summary.get("check_count", 0),
+                "manual_evidence_blocked_check_count": manual_summary.get("blocked_check_count", 0),
+                "provided_section_count": evidence_summary.get("provided_section_count", 0),
+                "record_bodies_included": bool(evidence_summary.get("record_bodies_included"))
+                or bool(manual_summary.get("record_bodies_included")),
+            },
+            "acceptance": {
+                "accepted_by": accepted_by or "operator",
+                "acceptance_decision": acceptance_decision,
+                "note": note,
+                "record_bodies_included": False,
+                "evidence_package_body_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "manual_evidence_acceptance_recorded": True,
+                "manual_evidence_ready_for_cleanup_application_review": ready_for_cleanup_review,
+                "cleanup_application_allowed_now": False,
+                "cleanup_executed_now": False,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "resolve_manual_evidence_acceptance_blocks_before_cleanup_application_review"
+                    if blocked_count
+                    else "prepare_separate_cleanup_application_gate_before_any_staging_mutation"
+                ),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_manual_evidence_acceptance_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_manual_evidence_acceptance_reviews(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_cleanup_manual_evidence_acceptance_event_type, max(1, min(limit, 100))),
+        )
+        reviews: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            reviews.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return reviews
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -1755,6 +1932,32 @@ class Dataset2TrainingReadinessService:
             LIMIT 1
             """,
             (self.staging_cleanup_dry_run_verification_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _manual_evidence_by_id(self, store: SQLiteStore, manual_evidence_id: int | None) -> dict[str, Any] | None:
+        if manual_evidence_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_cleanup_manual_evidence_event_type, manual_evidence_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_manual_evidence(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_cleanup_manual_evidence_event_type,),
         )
         return self._event_payload(row) if row else None
 
@@ -2303,6 +2506,109 @@ class Dataset2TrainingReadinessService:
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
         }
+
+    def _manual_evidence_acceptance_checks(
+        self,
+        manual_evidence: dict[str, Any],
+        accepted_by: str,
+        acceptance_decision: str,
+    ) -> list[dict[str, Any]]:
+        evidence_summary = manual_evidence.get("evidence_summary") or {}
+        manual_summary = manual_evidence.get("summary") or {}
+        manual_decision = manual_evidence.get("decision") or {}
+        check_status = {
+            str(check.get("name")): str(check.get("status"))
+            for check in manual_evidence.get("checks") or []
+            if isinstance(check, dict)
+        }
+        allowed_decisions = {"accepted_for_cleanup_review", "needs_revision", "rejected"}
+        blocked_check_count = int(manual_summary.get("blocked_check_count") or 0)
+        return [
+            self._manual_evidence_check(
+                "manual_evidence_available",
+                "passed" if manual_evidence.get("id") else "blocked",
+                manual_evidence.get("id"),
+                "existing manual evidence verification",
+                "acceptance review must reference an existing manual evidence verification event",
+            ),
+            self._manual_evidence_check(
+                "manual_evidence_package_verified",
+                "passed"
+                if manual_evidence.get("status") == "manual_evidence_package_verified_for_cleanup_review"
+                and manual_decision.get("manual_evidence_accepted_for_review") is True
+                else "blocked",
+                {
+                    "status": manual_evidence.get("status"),
+                    "manual_evidence_accepted_for_review": manual_decision.get("manual_evidence_accepted_for_review"),
+                },
+                "manual_evidence_package_verified_for_cleanup_review",
+                "only a passed P9 manual evidence verification can be accepted for cleanup review",
+            ),
+            self._manual_evidence_check(
+                "manual_evidence_blocked_checks_clear",
+                "passed" if blocked_check_count == 0 else "blocked",
+                blocked_check_count,
+                0,
+                "manual evidence cannot have blocked checks at acceptance time",
+            ),
+            self._manual_evidence_check(
+                "evidence_package_hash_present",
+                "passed" if bool(evidence_summary.get("evidence_package_hash")) else "blocked",
+                bool(evidence_summary.get("evidence_package_hash")),
+                True,
+                "acceptance review must pin the exact manual evidence summary hash",
+            ),
+            self._manual_evidence_check(
+                "record_bodies_excluded",
+                "passed"
+                if not evidence_summary.get("record_bodies_included") and not manual_summary.get("record_bodies_included")
+                else "blocked",
+                {
+                    "evidence_summary_record_bodies": bool(evidence_summary.get("record_bodies_included")),
+                    "manual_summary_record_bodies": bool(manual_summary.get("record_bodies_included")),
+                },
+                "no record bodies",
+                "acceptance review must not rely on or persist source record bodies",
+            ),
+            self._manual_evidence_check(
+                "execution_requests_excluded",
+                "passed" if check_status.get("execution_requests_excluded") == "passed" else "blocked",
+                check_status.get("execution_requests_excluded"),
+                "passed",
+                "manual evidence must not include SQL, shell, patch, export, training, or mutation requests",
+            ),
+            self._manual_evidence_check(
+                "acceptance_metadata_present",
+                "passed" if bool(accepted_by) and acceptance_decision in allowed_decisions else "blocked",
+                {"accepted_by_present": bool(accepted_by), "acceptance_decision": acceptance_decision},
+                sorted(allowed_decisions),
+                "operator acceptance metadata must be explicit and constrained",
+            ),
+            self._manual_evidence_check(
+                "acceptance_decision_allows_review_only_progress",
+                "passed" if acceptance_decision == "accepted_for_cleanup_review" else "blocked",
+                acceptance_decision,
+                "accepted_for_cleanup_review",
+                "needs_revision or rejected evidence cannot advance to the next review gate",
+            ),
+            self._manual_evidence_check(
+                "cleanup_and_training_remain_blocked",
+                "passed"
+                if manual_decision.get("cleanup_application_allowed_now") is False
+                and manual_decision.get("cleanup_executed_now") is False
+                and manual_decision.get("writes_learning_samples_now") is False
+                and manual_decision.get("training_started_now") is False
+                else "blocked",
+                {
+                    "cleanup_application_allowed_now": manual_decision.get("cleanup_application_allowed_now"),
+                    "cleanup_executed_now": manual_decision.get("cleanup_executed_now"),
+                    "writes_learning_samples_now": manual_decision.get("writes_learning_samples_now"),
+                    "training_started_now": manual_decision.get("training_started_now"),
+                },
+                "all false",
+                "P10 acceptance is evidence-only and cannot permit cleanup or training execution",
+            ),
+        ]
 
     def _forbidden_evidence_paths(self, value: Any, prefix: str = "") -> list[str]:
         forbidden_keys = {
