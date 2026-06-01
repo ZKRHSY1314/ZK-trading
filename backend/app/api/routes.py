@@ -204,6 +204,13 @@ class Dataset2StagingCleanupDryRunVerificationInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingCleanupManualEvidenceInput(BaseModel):
+    dry_run_verification_id: int | None = None
+    evidence_package: dict = Field(default_factory=dict)
+    verified_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -939,6 +946,22 @@ def dataset2_staging_cleanup_dry_run_verification(payload: Dataset2StagingCleanu
 @router.get("/learning/dataset2/staging/cleanup-execution-spec/dry-run-verifications")
 def dataset2_staging_cleanup_dry_run_verifications(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_dry_run_verifications(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/cleanup-manual-evidence/verify")
+def dataset2_staging_cleanup_manual_evidence_verification(payload: Dataset2StagingCleanupManualEvidenceInput | None = None) -> dict:
+    payload = payload or Dataset2StagingCleanupManualEvidenceInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_manual_evidence_verification(
+        dry_run_verification_id=payload.dry_run_verification_id,
+        evidence_package=payload.evidence_package,
+        verified_by=payload.verified_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-manual-evidence/verifications")
+def dataset2_staging_cleanup_manual_evidence_verifications(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_manual_evidence_verifications(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])

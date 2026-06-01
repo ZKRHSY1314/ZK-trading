@@ -60,7 +60,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P8"
+    stage = "V5.6-P9"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
@@ -69,6 +69,7 @@ class Dataset2TrainingReadinessService:
     staging_fix_preflight_event_type = "dataset2_staging_fix_preflight"
     staging_cleanup_execution_spec_event_type = "dataset2_staging_cleanup_execution_spec"
     staging_cleanup_dry_run_verification_event_type = "dataset2_staging_cleanup_dry_run_verification"
+    staging_cleanup_manual_evidence_event_type = "dataset2_staging_cleanup_manual_evidence_verification"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -1342,6 +1343,163 @@ class Dataset2TrainingReadinessService:
             )
         return verifications
 
+    def staging_cleanup_manual_evidence_verification(
+        self,
+        dry_run_verification_id: int | None = None,
+        evidence_package: dict[str, Any] | None = None,
+        verified_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        dry_run = (
+            self._cleanup_dry_run_by_id(store, dry_run_verification_id)
+            if dry_run_verification_id
+            else self._latest_cleanup_dry_run(store)
+        )
+        if dry_run is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_manual_evidence_verification.v1",
+                "stage": self.stage,
+                "status": "manual_evidence_blocked_missing_dry_run",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "dry_run_verification_id": dry_run_verification_id,
+                "checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "warning_check_count": 0,
+                    "provided_section_count": 0,
+                    "record_bodies_included": False,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "manual_evidence_accepted_for_review": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "run_dataset2_cleanup_dry_run_verification_before_manual_evidence",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        evidence = evidence_package if isinstance(evidence_package, dict) else {}
+        checks = self._manual_evidence_checks(dry_run, evidence)
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        warning_count = sum(1 for check in checks if check.get("status") == "warning")
+        body_hits = self._forbidden_evidence_paths(evidence)
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_manual_evidence_verification.v1",
+            "stage": self.stage,
+            "status": (
+                "manual_evidence_blocked"
+                if blocked_count
+                else "manual_evidence_package_verified_for_cleanup_review"
+            ),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "dry_run_verification_id": dry_run.get("id"),
+            "execution_spec_event_id": dry_run.get("execution_spec_event_id"),
+            "preflight_event_id": dry_run.get("preflight_event_id"),
+            "approval_event_id": dry_run.get("approval_event_id"),
+            "fix_plan_event_id": dry_run.get("fix_plan_event_id"),
+            "quality_review_id": dry_run.get("quality_review_id"),
+            "package_id": dry_run.get("package_id"),
+            "source_dry_run_status": dry_run.get("status"),
+            "evidence_summary": {
+                "provided_sections": sorted(evidence.keys()),
+                "provided_section_count": len(evidence),
+                "evidence_package_hash": self._stable_hash(evidence) if evidence else None,
+                "record_bodies_included": bool(body_hits),
+                "forbidden_evidence_paths": body_hits,
+                "evidence_package_body_included": False,
+            },
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "warning_check_count": warning_count,
+                "provided_section_count": len(evidence),
+                "record_bodies_included": bool(body_hits),
+                "dry_run_blocked_check_count": dry_run.get("summary", {}).get("blocked_check_count", 0),
+            },
+            "verification": {
+                "verified_by": verified_by or "operator",
+                "note": note,
+                "record_bodies_included": False,
+                "evidence_package_body_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "manual_evidence_accepted_for_review": blocked_count == 0,
+                "cleanup_application_allowed_now": False,
+                "cleanup_executed_now": False,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "resolve_manual_evidence_blocks_before_cleanup_application"
+                    if blocked_count
+                    else "prepare_separate_cleanup_application_review_stage"
+                ),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_manual_evidence_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_manual_evidence_verifications(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_cleanup_manual_evidence_event_type, max(1, min(limit, 100))),
+        )
+        verifications: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            verifications.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return verifications
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -1571,6 +1729,32 @@ class Dataset2TrainingReadinessService:
             LIMIT 1
             """,
             (self.staging_cleanup_execution_spec_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _cleanup_dry_run_by_id(self, store: SQLiteStore, dry_run_id: int | None) -> dict[str, Any] | None:
+        if dry_run_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_cleanup_dry_run_verification_event_type, dry_run_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_cleanup_dry_run(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_cleanup_dry_run_verification_event_type,),
         )
         return self._event_payload(row) if row else None
 
@@ -2007,6 +2191,164 @@ class Dataset2TrainingReadinessService:
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
         }
+
+    def _manual_evidence_checks(self, dry_run: dict[str, Any], evidence: dict[str, Any]) -> list[dict[str, Any]]:
+        dry_run_summary = dry_run.get("summary") or {}
+        historical = evidence.get("historical_outcome_source") if isinstance(evidence.get("historical_outcome_source"), dict) else {}
+        split_ack = evidence.get("split_policy_ack") if isinstance(evidence.get("split_policy_ack"), dict) else {}
+        label_policy = evidence.get("label_support_policy") if isinstance(evidence.get("label_support_policy"), dict) else {}
+        reviewer = evidence.get("reviewer") if isinstance(evidence.get("reviewer"), dict) else {}
+        quality_dispositions = evidence.get("quality_flag_dispositions")
+        if isinstance(quality_dispositions, dict):
+            disposition_count = len(quality_dispositions)
+        elif isinstance(quality_dispositions, list):
+            disposition_count = len(quality_dispositions)
+        else:
+            disposition_count = 0
+        field_coverage = historical.get("field_coverage") if isinstance(historical.get("field_coverage"), dict) else {}
+        covered_fields = {field for field, covered in field_coverage.items() if covered}
+        required_fields = set(HISTORICAL_OUTCOME_FIELDS)
+        join_keys = set(historical.get("join_keys") or []) if isinstance(historical.get("join_keys"), list) else set()
+        forbidden_paths = self._forbidden_evidence_paths(evidence)
+        forbidden_actions = self._forbidden_evidence_action_paths(evidence)
+        return [
+            self._manual_evidence_check(
+                "dry_run_available",
+                "passed" if dry_run.get("id") else "blocked",
+                dry_run.get("id"),
+                "existing dry-run verification",
+                "manual evidence must be tied to a dry-run verification",
+            ),
+            self._manual_evidence_check(
+                "dry_run_blocked_checks_addressed",
+                "passed" if int(dry_run_summary.get("blocked_check_count") or 0) == 0 or bool(evidence) else "blocked",
+                dry_run_summary.get("blocked_check_count", 0),
+                "evidence supplied for blocked checks",
+                "blocked dry-run checks need explicit manual evidence before cleanup application review",
+            ),
+            self._manual_evidence_check(
+                "historical_outcome_source_reviewed",
+                "passed"
+                if historical.get("source_hash")
+                and {"stock_code", "signal_date"}.issubset(join_keys)
+                and required_fields.issubset(covered_fields)
+                else "blocked",
+                {
+                    "source_hash_present": bool(historical.get("source_hash")),
+                    "join_keys": sorted(join_keys),
+                    "covered_field_count": len(covered_fields),
+                    "required_field_count": len(required_fields),
+                },
+                "source_hash + stock_code/signal_date join keys + full required field coverage",
+                "historical outcome evidence must prove joinability and target-field coverage",
+            ),
+            self._manual_evidence_check(
+                "quality_flag_dispositions_reviewed",
+                "passed" if disposition_count > 0 else "blocked",
+                disposition_count,
+                ">0 dispositions",
+                "quality flags must be corrected, accepted with evidence, or quarantined before cleanup application",
+            ),
+            self._manual_evidence_check(
+                "split_policy_acknowledged",
+                "passed" if split_ack.get("deterministic") is True and bool(split_ack.get("policy_id") or split_ack.get("policy")) else "blocked",
+                {
+                    "deterministic": split_ack.get("deterministic"),
+                    "policy_id": split_ack.get("policy_id") or split_ack.get("policy"),
+                },
+                "deterministic split policy id",
+                "time-aware split policy must be acknowledged before cleanup application",
+            ),
+            self._manual_evidence_check(
+                "label_support_policy_reviewed",
+                "passed"
+                if label_policy.get("policy") in {"class_weighting", "label_consolidation", "sample_expansion"}
+                and bool(label_policy.get("rationale"))
+                else "warning",
+                {"policy": label_policy.get("policy"), "has_rationale": bool(label_policy.get("rationale"))},
+                "class_weighting|label_consolidation|sample_expansion with rationale",
+                "low-support labels require a documented policy before training freeze",
+            ),
+            self._manual_evidence_check(
+                "reviewer_metadata_present",
+                "passed" if bool(reviewer.get("name")) and bool(reviewer.get("reviewed_at")) else "blocked",
+                {"name_present": bool(reviewer.get("name")), "reviewed_at_present": bool(reviewer.get("reviewed_at"))},
+                "reviewer.name + reviewer.reviewed_at",
+                "manual evidence package must identify the human reviewer and review timestamp",
+            ),
+            self._manual_evidence_check(
+                "record_bodies_excluded",
+                "passed" if not forbidden_paths else "blocked",
+                {"forbidden_paths": forbidden_paths},
+                [],
+                "manual evidence package must not include records, rows, normalized_json, or source bodies",
+            ),
+            self._manual_evidence_check(
+                "execution_requests_excluded",
+                "passed" if not forbidden_actions else "blocked",
+                {"forbidden_paths": forbidden_actions},
+                [],
+                "manual evidence package must not request SQL, shell, patch, export, training, or learning-sample writes",
+            ),
+        ]
+
+    def _manual_evidence_check(self, name: str, status: str, value: Any, limit: Any, reason: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": status,
+            "value": value,
+            "limit": limit,
+            "reason": reason,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _forbidden_evidence_paths(self, value: Any, prefix: str = "") -> list[str]:
+        forbidden_keys = {
+            "records",
+            "rows",
+            "source_records",
+            "normalized_records",
+            "raw_records",
+            "record_bodies",
+            "normalized_json",
+            "payload_json",
+            "all_training_patterns",
+        }
+        return self._matching_evidence_paths(value, forbidden_keys, prefix)
+
+    def _forbidden_evidence_action_paths(self, value: Any, prefix: str = "") -> list[str]:
+        forbidden_keys = {
+            "sql",
+            "execute_sql",
+            "shell",
+            "command",
+            "apply_patch",
+            "patch",
+            "write_learning_samples",
+            "learning_samples",
+            "start_training",
+            "export_file",
+            "download",
+            "mutate_staging_records",
+        }
+        return self._matching_evidence_paths(value, forbidden_keys, prefix)
+
+    def _matching_evidence_paths(self, value: Any, keys: set[str], prefix: str = "") -> list[str]:
+        matches: list[str] = []
+        if isinstance(value, dict):
+            for key, item in value.items():
+                key_text = str(key)
+                path = f"{prefix}.{key_text}" if prefix else key_text
+                if key_text.lower() in keys:
+                    matches.append(path)
+                matches.extend(self._matching_evidence_paths(item, keys, path))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+                matches.extend(self._matching_evidence_paths(item, keys, path))
+        return matches
 
     def _staging_row(self, row: dict[str, Any]) -> dict[str, Any]:
         row = dict(row)

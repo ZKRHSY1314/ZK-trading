@@ -1494,6 +1494,20 @@
           </span>
           <small>{{ dataset2CleanupDryRun.decision.next_required_action }}</small>
         </div>
+        <div v-if="dataset2ManualEvidence" class="report">
+          <strong>Dataset2 Manual Evidence / {{ dataset2ManualEvidence.status }}</strong>
+          <span>
+            event {{ dataset2ManualEvidence.event_id }} /
+            sections {{ dataset2ManualEvidence.summary.provided_section_count }} /
+            blocked {{ dataset2ManualEvidence.summary.blocked_check_count }}
+          </span>
+          <span>
+            evidence accepted {{ dataset2ManualEvidence.decision.manual_evidence_accepted_for_review ? "yes" : "no" }} /
+            cleanup {{ dataset2ManualEvidence.decision.cleanup_executed_now ? "executed" : "not executed" }} /
+            training {{ dataset2ManualEvidence.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ManualEvidence.decision.next_required_action }}</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -1533,6 +1547,9 @@
           </button>
           <button data-testid="dataset2-cleanup-dry-run-button" @click="verifyDataset2CleanupDryRun" :disabled="dataset2Loading">
             Dataset2 dry-run verify
+          </button>
+          <button data-testid="dataset2-manual-evidence-button" @click="verifyDataset2ManualEvidence" :disabled="dataset2Loading">
+            Dataset2 manual evidence
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -2315,6 +2332,56 @@ type Dataset2CleanupDryRun = {
   verification: {
     verified_by: string;
     note?: string | null;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2ManualEvidence = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  dry_run_verification_id?: number | null;
+  execution_spec_event_id?: number | null;
+  evidence_summary: {
+    provided_sections: string[];
+    provided_section_count: number;
+    evidence_package_hash?: string | null;
+    record_bodies_included: boolean;
+    evidence_package_body_included: boolean;
+  };
+  checks: Array<{
+    name: string;
+    status: string;
+    reason: string;
+    review_only: boolean;
+  }>;
+  summary: {
+    check_count: number;
+    blocked_check_count: number;
+    warning_check_count: number;
+    provided_section_count: number;
+    record_bodies_included: boolean;
+    dry_run_blocked_check_count: number;
+  };
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now: boolean;
+    writes_staging_records_now: boolean;
+    writes_learning_samples_now: boolean;
+    mutates_staging_records_now: boolean;
+    manual_evidence_accepted_for_review: boolean;
+    cleanup_application_allowed_now: boolean;
+    cleanup_executed_now: boolean;
+    can_promote_to_learning_samples_now: boolean;
+    training_started_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  verification: {
+    verified_by: string;
+    note?: string | null;
+    evidence_package_body_included: boolean;
   };
   safety_summary: Record<string, boolean>;
 };
@@ -5865,6 +5932,8 @@ const dataset2CleanupExecutionSpec = ref<Dataset2CleanupExecutionSpec | null>(nu
 const dataset2CleanupExecutionSpecs = ref<Dataset2CleanupExecutionSpec[]>([]);
 const dataset2CleanupDryRun = ref<Dataset2CleanupDryRun | null>(null);
 const dataset2CleanupDryRuns = ref<Dataset2CleanupDryRun[]>([]);
+const dataset2ManualEvidence = ref<Dataset2ManualEvidence | null>(null);
+const dataset2ManualEvidenceHistory = ref<Dataset2ManualEvidence[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -6425,6 +6494,40 @@ async function loadDataset2CleanupDryRuns() {
     dataset2CleanupDryRun.value = dataset2CleanupDryRuns.value[0] ?? dataset2CleanupDryRun.value;
   } catch {
     dataset2CleanupDryRuns.value = [];
+  }
+}
+
+async function verifyDataset2ManualEvidence() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2CleanupDryRun.value?.event_id && !dataset2CleanupDryRun.value?.id) {
+      await verifyDataset2CleanupDryRun();
+    }
+    dataset2ManualEvidence.value = await fetchJson<Dataset2ManualEvidence>("/api/learning/dataset2/staging/cleanup-manual-evidence/verify", {
+      method: "POST",
+      body: JSON.stringify({
+        dry_run_verification_id: dataset2CleanupDryRun.value?.event_id ?? dataset2CleanupDryRun.value?.id,
+        evidence_package: {},
+        verified_by: "dashboard",
+        note: "V5.6-P9 empty evidence package verification only"
+      })
+    });
+    await loadDataset2ManualEvidenceHistory();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 manual evidence verification failed";
+    dataset2ManualEvidence.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ManualEvidenceHistory() {
+  try {
+    dataset2ManualEvidenceHistory.value = await fetchJson<Dataset2ManualEvidence[]>("/api/learning/dataset2/staging/cleanup-manual-evidence/verifications?limit=5");
+    dataset2ManualEvidence.value = dataset2ManualEvidenceHistory.value[0] ?? dataset2ManualEvidence.value;
+  } catch {
+    dataset2ManualEvidenceHistory.value = [];
   }
 }
 
@@ -8420,6 +8523,7 @@ onMounted(async () => {
     loadDataset2StagingFixPreflights(),
     loadDataset2CleanupExecutionSpecs(),
     loadDataset2CleanupDryRuns(),
+    loadDataset2ManualEvidenceHistory(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),
