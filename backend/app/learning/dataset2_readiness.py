@@ -60,7 +60,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P7"
+    stage = "V5.6-P8"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
@@ -68,6 +68,7 @@ class Dataset2TrainingReadinessService:
     staging_fix_plan_approval_event_type = "dataset2_staging_fix_plan_approval"
     staging_fix_preflight_event_type = "dataset2_staging_fix_preflight"
     staging_cleanup_execution_spec_event_type = "dataset2_staging_cleanup_execution_spec"
+    staging_cleanup_dry_run_verification_event_type = "dataset2_staging_cleanup_dry_run_verification"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -1196,6 +1197,151 @@ class Dataset2TrainingReadinessService:
             )
         return specs
 
+    def staging_cleanup_dry_run_verification(
+        self,
+        execution_spec_event_id: int | None = None,
+        verified_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        spec = (
+            self._cleanup_execution_spec_by_id(store, execution_spec_event_id)
+            if execution_spec_event_id
+            else self._latest_cleanup_execution_spec(store)
+        )
+        if spec is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_dry_run_verification.v1",
+                "stage": self.stage,
+                "status": "dry_run_blocked_missing_execution_spec",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "execution_spec_event_id": execution_spec_event_id,
+                "checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "warning_check_count": 0,
+                    "execution_step_count": 0,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "dry_run_executed_now": False,
+                    "cleanup_executed_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "create_dataset2_cleanup_execution_spec_before_dry_run_verification",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        checks = self._cleanup_dry_run_checks(spec)
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        warning_count = sum(1 for check in checks if check.get("status") == "warning")
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_dry_run_verification.v1",
+            "stage": self.stage,
+            "status": (
+                "dry_run_blocked_manual_evidence_required"
+                if blocked_count
+                else "dry_run_passed_ready_for_manual_application_review"
+            ),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "execution_spec_event_id": spec.get("id"),
+            "preflight_event_id": spec.get("preflight_event_id"),
+            "approval_event_id": spec.get("approval_event_id"),
+            "fix_plan_event_id": spec.get("fix_plan_event_id"),
+            "quality_review_id": spec.get("quality_review_id"),
+            "package_id": spec.get("package_id"),
+            "source_execution_spec_status": spec.get("status"),
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "warning_check_count": warning_count,
+                "execution_step_count": len(spec.get("execution_steps") or []),
+                "blocked_source_check_count": spec.get("summary", {}).get("blocked_source_check_count", 0),
+                "record_body_count": spec.get("summary", {}).get("record_body_count", 0),
+            },
+            "verification": {
+                "verified_by": verified_by or "operator",
+                "note": note,
+                "dry_run_only": True,
+                "record_bodies_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "dry_run_executed_now": True,
+                "cleanup_executed_now": False,
+                "cleanup_application_allowed_now": False,
+                "can_advance_to_manual_cleanup_application_review": blocked_count == 0,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "resolve_blocked_dry_run_checks_before_cleanup_application"
+                    if blocked_count
+                    else "prepare_separate_manual_cleanup_application_stage"
+                ),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_dry_run_verification_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_dry_run_verifications(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_cleanup_dry_run_verification_event_type, max(1, min(limit, 100))),
+        )
+        verifications: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            verifications.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return verifications
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -1399,6 +1545,32 @@ class Dataset2TrainingReadinessService:
             LIMIT 1
             """,
             (self.staging_fix_preflight_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _cleanup_execution_spec_by_id(self, store: SQLiteStore, spec_id: int | None) -> dict[str, Any] | None:
+        if spec_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_cleanup_execution_spec_event_type, spec_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_cleanup_execution_spec(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_cleanup_execution_spec_event_type,),
         )
         return self._event_payload(row) if row else None
 
@@ -1730,6 +1902,107 @@ class Dataset2TrainingReadinessService:
                 "create_export_file",
                 "enable_live_trading",
             ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _cleanup_dry_run_checks(self, spec: dict[str, Any]) -> list[dict[str, Any]]:
+        steps = spec.get("execution_steps") or []
+        summary = spec.get("summary") or {}
+        spec_meta = spec.get("spec") or {}
+        decision = spec.get("decision") or {}
+        required_forbidden = {
+            "execute_sql",
+            "mutate_staging_records",
+            "modify_dataset2_source_files",
+            "write_learning_samples",
+            "start_training",
+            "create_export_file",
+            "enable_live_trading",
+        }
+        missing_forbidden = [
+            step.get("id")
+            for step in steps
+            if not required_forbidden.issubset(set(step.get("forbidden_actions") or []))
+        ]
+        blocked_source_count = int(summary.get("blocked_source_check_count") or 0)
+        checks = [
+            self._dry_run_check(
+                "execution_spec_present",
+                "passed" if steps else "blocked",
+                len(steps),
+                ">0",
+                "execution spec must contain reviewed future steps",
+            ),
+            self._dry_run_check(
+                "spec_non_executable",
+                "passed" if not spec_meta.get("contains_executable_code") and not spec_meta.get("sql_included") else "blocked",
+                {
+                    "contains_executable_code": bool(spec_meta.get("contains_executable_code")),
+                    "sql_included": bool(spec_meta.get("sql_included")),
+                },
+                {"contains_executable_code": False, "sql_included": False},
+                "dry-run verifier accepts descriptive specs only",
+            ),
+            self._dry_run_check(
+                "record_bodies_excluded",
+                "passed" if not spec_meta.get("record_bodies_included") and summary.get("record_body_count", 0) == 0 else "blocked",
+                {
+                    "record_bodies_included": bool(spec_meta.get("record_bodies_included")),
+                    "record_body_count": summary.get("record_body_count", 0),
+                },
+                {"record_bodies_included": False, "record_body_count": 0},
+                "event payloads must not include staged record bodies",
+            ),
+            self._dry_run_check(
+                "no_mutation_allowed",
+                "passed"
+                if not spec_meta.get("can_execute_now")
+                and not decision.get("cleanup_executed_now")
+                and not decision.get("mutates_staging_records_now")
+                and not decision.get("writes_learning_samples_now")
+                else "blocked",
+                {
+                    "can_execute_now": bool(spec_meta.get("can_execute_now")),
+                    "cleanup_executed_now": bool(decision.get("cleanup_executed_now")),
+                    "mutates_staging_records_now": bool(decision.get("mutates_staging_records_now")),
+                    "writes_learning_samples_now": bool(decision.get("writes_learning_samples_now")),
+                },
+                False,
+                "dry-run verification must not allow cleanup application or training writes",
+            ),
+            self._dry_run_check(
+                "forbidden_actions_complete",
+                "passed" if not missing_forbidden else "blocked",
+                {"missing_step_ids": missing_forbidden},
+                [],
+                "every future step must carry the full forbidden-action set",
+            ),
+            self._dry_run_check(
+                "blocked_source_checks_resolved",
+                "passed" if blocked_source_count == 0 else "blocked",
+                blocked_source_count,
+                0,
+                "source preflight blocked checks must be resolved before cleanup can be applied",
+            ),
+            self._dry_run_check(
+                "manual_steps_acknowledged",
+                "warning" if any(step.get("execution_mode") == "manual_operator_action" for step in steps) else "passed",
+                summary.get("manual_step_count", 0),
+                "operator review",
+                "manual steps require external evidence before a later application stage",
+            ),
+        ]
+        return checks
+
+    def _dry_run_check(self, name: str, status: str, value: Any, limit: Any, reason: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": status,
+            "value": value,
+            "limit": limit,
+            "reason": reason,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,

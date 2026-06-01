@@ -198,6 +198,12 @@ class Dataset2StagingCleanupExecutionSpecInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingCleanupDryRunVerificationInput(BaseModel):
+    execution_spec_event_id: int | None = None
+    verified_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -918,6 +924,21 @@ def dataset2_staging_cleanup_execution_spec(payload: Dataset2StagingCleanupExecu
 @router.get("/learning/dataset2/staging/cleanup-execution-specs")
 def dataset2_staging_cleanup_execution_specs(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_execution_specs(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-spec/dry-run-verify")
+def dataset2_staging_cleanup_dry_run_verification(payload: Dataset2StagingCleanupDryRunVerificationInput | None = None) -> dict:
+    payload = payload or Dataset2StagingCleanupDryRunVerificationInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_dry_run_verification(
+        execution_spec_event_id=payload.execution_spec_event_id,
+        verified_by=payload.verified_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-spec/dry-run-verifications")
+def dataset2_staging_cleanup_dry_run_verifications(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_dry_run_verifications(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])
