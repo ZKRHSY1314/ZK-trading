@@ -331,6 +331,12 @@ class Dataset2StagingCleanupExecutionControlledApplyExecutionDryRunInput(BaseMod
     dry_run_decision: str = "simulated_for_controlled_cleanup_apply_execution_review"
     note: str | None = None
 
+class Dataset2StagingCleanupExecutionControlledApplyExecutionDryRunReviewInput(BaseModel):
+    apply_execution_dry_run_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "approved_for_controlled_cleanup_apply_execution_plan"
+    note: str | None = None
+
 
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
@@ -1404,6 +1410,26 @@ def dataset2_staging_cleanup_execution_controlled_apply_execution_dry_run(
 @router.get("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-dry-runs")
 def dataset2_staging_cleanup_execution_controlled_apply_execution_dry_runs(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_apply_execution_dry_runs(
+        limit=limit
+    )
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-dry-run-review")
+def dataset2_staging_cleanup_execution_controlled_apply_execution_dry_run_review(
+    payload: Dataset2StagingCleanupExecutionControlledApplyExecutionDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupExecutionControlledApplyExecutionDryRunReviewInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_execution_controlled_apply_execution_dry_run_review(
+        apply_execution_dry_run_id=payload.apply_execution_dry_run_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-dry-run-reviews")
+def dataset2_staging_cleanup_execution_controlled_apply_execution_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_apply_execution_dry_run_reviews(
         limit=limit
     )
 
