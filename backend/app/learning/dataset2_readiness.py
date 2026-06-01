@@ -60,7 +60,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P18"
+    stage = "V5.6-P19"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
@@ -79,6 +79,7 @@ class Dataset2TrainingReadinessService:
     staging_cleanup_execution_dry_run_review_event_type = "dataset2_staging_cleanup_execution_dry_run_review"
     staging_cleanup_execution_plan_event_type = "dataset2_staging_cleanup_execution_plan"
     staging_cleanup_execution_plan_preflight_event_type = "dataset2_staging_cleanup_execution_plan_preflight"
+    staging_cleanup_execution_controlled_dry_run_event_type = "dataset2_staging_cleanup_execution_controlled_dry_run"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -3448,6 +3449,216 @@ class Dataset2TrainingReadinessService:
             )
         return preflights
 
+    def staging_cleanup_execution_controlled_dry_run(
+        self,
+        plan_preflight_id: int | None = None,
+        simulated_by: str = "operator",
+        dry_run_decision: str = "simulated_for_controlled_cleanup_review",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        plan_preflight = (
+            self._cleanup_execution_plan_preflight_by_id(store, plan_preflight_id)
+            if plan_preflight_id
+            else self._latest_cleanup_execution_plan_preflight(store)
+        )
+        if plan_preflight is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_execution_controlled_dry_run.v1",
+                "stage": self.stage,
+                "status": "controlled_cleanup_dry_run_blocked_missing_preflight",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "plan_preflight_id": plan_preflight_id,
+                "source_preflight_status": None,
+                "simulation": self._empty_controlled_cleanup_dry_run_simulation(),
+                "checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "warning_check_count": 0,
+                    "staging_record_count_before": 0,
+                    "expected_staging_record_count_after": 0,
+                    "automated_operation_count": 0,
+                    "manual_operation_count": 0,
+                    "simulated_mutation_count": 0,
+                    "record_bodies_included": False,
+                },
+                "dry_run": {
+                    "simulated_by": simulated_by or "operator",
+                    "dry_run_decision": dry_run_decision,
+                    "note": note,
+                    "record_bodies_included": False,
+                    "evidence_package_body_included": False,
+                    "review_only": True,
+                    "simulation_only": True,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "controlled_cleanup_dry_run_recorded": False,
+                    "controlled_cleanup_dry_run_ready_for_review": False,
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "future_controlled_cleanup_review_required": True,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "training_freeze_allowed": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "run_dataset2_cleanup_execution_plan_preflight_before_controlled_dry_run",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        simulation = self._controlled_cleanup_dry_run_simulation(store, plan_preflight)
+        checks = self._controlled_cleanup_dry_run_checks(
+            plan_preflight,
+            simulation=simulation,
+            simulated_by=simulated_by,
+            dry_run_decision=dry_run_decision,
+        )
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        warning_count = sum(1 for check in checks if check.get("status") == "warning")
+        ready_for_review = blocked_count == 0 and dry_run_decision == "simulated_for_controlled_cleanup_review"
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_execution_controlled_dry_run.v1",
+            "stage": self.stage,
+            "status": "controlled_cleanup_dry_run_ready_for_review" if ready_for_review else "controlled_cleanup_dry_run_blocked",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "plan_preflight_id": plan_preflight.get("id"),
+            "execution_plan_id": plan_preflight.get("execution_plan_id"),
+            "dry_run_review_id": plan_preflight.get("dry_run_review_id"),
+            "dry_run_id": plan_preflight.get("dry_run_id"),
+            "preflight_id": plan_preflight.get("preflight_id"),
+            "manual_approval_id": plan_preflight.get("manual_approval_id"),
+            "package_id": plan_preflight.get("package_id"),
+            "source_preflight_status": plan_preflight.get("status"),
+            "source_preflight_summary": {
+                "check_count": (plan_preflight.get("summary") or {}).get("check_count", 0),
+                "blocked_check_count": (plan_preflight.get("summary") or {}).get("blocked_check_count", 0),
+                "warning_check_count": (plan_preflight.get("summary") or {}).get("warning_check_count", 0),
+                "staging_record_count": (plan_preflight.get("summary") or {}).get("staging_record_count", 0),
+                "automated_operation_count": (plan_preflight.get("summary") or {}).get("automated_operation_count", 0),
+                "manual_operation_count": (plan_preflight.get("summary") or {}).get("manual_operation_count", 0),
+                "record_bodies_included": False,
+            },
+            "simulation": simulation,
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "warning_check_count": warning_count,
+                "source_preflight_blocked_check_count": (plan_preflight.get("summary") or {}).get("blocked_check_count", 0),
+                "staging_record_count_before": simulation.get("staging_record_count_before", 0),
+                "expected_staging_record_count_after": simulation.get("expected_staging_record_count_after", 0),
+                "learning_sample_count_before": simulation.get("learning_sample_count_before", 0),
+                "expected_learning_sample_count_after": simulation.get("expected_learning_sample_count_after", 0),
+                "automated_operation_count": simulation.get("automated_operation_count", 0),
+                "manual_operation_count": simulation.get("manual_operation_count", 0),
+                "simulated_quality_flag_reduction_count": simulation.get("simulated_quality_flag_reduction_count", 0),
+                "simulated_manual_flag_remaining_count": simulation.get("simulated_manual_flag_remaining_count", 0),
+                "simulated_mutation_count": simulation.get("simulated_mutation_count", 0),
+                "record_bodies_included": False,
+            },
+            "dry_run": {
+                "simulated_by": simulated_by or "operator",
+                "dry_run_decision": dry_run_decision,
+                "note": note,
+                "record_bodies_included": False,
+                "evidence_package_body_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "controlled_cleanup_dry_run_recorded": True,
+                "controlled_cleanup_dry_run_ready_for_review": ready_for_review,
+                "cleanup_execution_approved_now": False,
+                "cleanup_application_allowed_now": False,
+                "cleanup_executed_now": False,
+                "can_execute_cleanup_now": False,
+                "future_controlled_cleanup_review_required": True,
+                "future_cleanup_execution_requires_separate_run": True,
+                "manual_backfill_required": int(simulation.get("manual_operation_count") or 0) > 0,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "resolve_controlled_cleanup_dry_run_blocks_before_review"
+                    if blocked_count
+                    else "review_controlled_cleanup_dry_run_before_any_cleanup_execution"
+                ),
+            },
+            "source_preflight_decision": {
+                "cleanup_execution_plan_preflight_ready_for_dry_run": (plan_preflight.get("decision") or {}).get(
+                    "cleanup_execution_plan_preflight_ready_for_dry_run"
+                ),
+                "cleanup_execution_approved_now": (plan_preflight.get("decision") or {}).get(
+                    "cleanup_execution_approved_now"
+                ),
+                "cleanup_application_allowed_now": (plan_preflight.get("decision") or {}).get(
+                    "cleanup_application_allowed_now"
+                ),
+                "cleanup_executed_now": (plan_preflight.get("decision") or {}).get("cleanup_executed_now"),
+                "can_execute_cleanup_now": (plan_preflight.get("decision") or {}).get("can_execute_cleanup_now"),
+                "writes_learning_samples_now": (plan_preflight.get("decision") or {}).get("writes_learning_samples_now"),
+                "training_started_now": (plan_preflight.get("decision") or {}).get("training_started_now"),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_execution_controlled_dry_run_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_execution_controlled_dry_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_cleanup_execution_controlled_dry_run_event_type, max(1, min(limit, 100))),
+        )
+        dry_runs: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            dry_runs.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return dry_runs
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -4035,6 +4246,36 @@ class Dataset2TrainingReadinessService:
             LIMIT 1
             """,
             (self.staging_cleanup_execution_plan_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _cleanup_execution_plan_preflight_by_id(
+        self,
+        store: SQLiteStore,
+        plan_preflight_id: int | None,
+    ) -> dict[str, Any] | None:
+        if plan_preflight_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_cleanup_execution_plan_preflight_event_type, plan_preflight_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_cleanup_execution_plan_preflight(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_cleanup_execution_plan_preflight_event_type,),
         )
         return self._event_payload(row) if row else None
 
@@ -6127,6 +6368,273 @@ class Dataset2TrainingReadinessService:
                 },
                 "all false",
                 "P18 preflight only prepares a later dry-run; cleanup execution and training stay blocked",
+            ),
+        ]
+
+    def _empty_controlled_cleanup_dry_run_simulation(self) -> dict[str, Any]:
+        return {
+            "package_id": None,
+            "lock_key": None,
+            "staging_record_count_before": 0,
+            "expected_staging_record_count_after": 0,
+            "learning_sample_count_before": 0,
+            "expected_learning_sample_count_after": 0,
+            "automated_operation_count": 0,
+            "manual_operation_count": 0,
+            "automated_batches": [],
+            "manual_backfill_batches": [],
+            "simulated_quality_flag_reduction_count": 0,
+            "simulated_manual_flag_remaining_count": 0,
+            "simulated_mutation_count": 0,
+            "staging_count_still_matches": False,
+            "contains_sql": False,
+            "contains_executable_code": False,
+            "can_execute_now": False,
+            "record_bodies_included": False,
+            "affected_rows_body_included": False,
+            "writes_staging_records_now": False,
+            "writes_learning_samples_now": False,
+            "mutates_staging_records_now": False,
+            "review_only": True,
+            "simulation_only": True,
+        }
+
+    def _controlled_cleanup_dry_run_simulation(
+        self,
+        store: SQLiteStore,
+        plan_preflight: dict[str, Any],
+    ) -> dict[str, Any]:
+        preflight = plan_preflight.get("preflight") or {}
+        package_id = preflight.get("package_id") or plan_preflight.get("package_id")
+        current_staging_count = self._staging_record_count(store, package_id)
+        current_learning_count = self._learning_sample_count(store)
+        preflight_staging_count = int(preflight.get("staging_record_count") or 0)
+        automated_count = int(preflight.get("automated_operation_count") or 0)
+        manual_count = int(preflight.get("manual_operation_count") or 0)
+        automated_batches = preflight.get("automated_batches") or []
+        manual_batches = preflight.get("manual_backfill_batches") or []
+        return {
+            "package_id": package_id,
+            "lock_key": preflight.get("lock_key"),
+            "source_plan_preflight_id": plan_preflight.get("id"),
+            "source_execution_plan_id": plan_preflight.get("execution_plan_id"),
+            "staging_record_count_before": current_staging_count,
+            "expected_staging_record_count_after": current_staging_count,
+            "preflight_staging_record_count": preflight_staging_count,
+            "staging_count_still_matches": current_staging_count == preflight_staging_count and current_staging_count > 0,
+            "learning_sample_count_before": current_learning_count,
+            "expected_learning_sample_count_after": current_learning_count,
+            "automated_operation_count": automated_count,
+            "manual_operation_count": manual_count,
+            "automated_batch_count": len(automated_batches),
+            "manual_backfill_batch_count": len(manual_batches),
+            "automated_batches": [
+                {
+                    "batch_name": batch.get("batch_name"),
+                    "operation": batch.get("operation"),
+                    "operation_count": batch.get("operation_count", 0),
+                    "mode": batch.get("mode"),
+                    "simulated_effect": "future_quality_flag_or_field_normalization",
+                    "record_bodies_included": False,
+                }
+                for batch in automated_batches
+            ],
+            "manual_backfill_batches": [
+                {
+                    "batch_name": batch.get("batch_name"),
+                    "operation": batch.get("operation"),
+                    "operation_count": batch.get("operation_count", 0),
+                    "mode": batch.get("mode"),
+                    "simulated_effect": "manual_evidence_required_no_automatic_mutation",
+                    "record_bodies_included": False,
+                }
+                for batch in manual_batches
+            ],
+            "simulated_quality_flag_reduction_count": automated_count,
+            "simulated_manual_flag_remaining_count": manual_count,
+            "simulated_mutation_count": automated_count,
+            "transaction_required": bool(preflight.get("transaction_required")),
+            "rollback_required": bool(preflight.get("rollback_required")),
+            "allowed_tables": preflight.get("allowed_tables") or ["dataset2_staging_records"],
+            "forbidden_tables": preflight.get("forbidden_tables") or ["learning_samples"],
+            "contains_sql": False,
+            "contains_executable_code": False,
+            "can_execute_now": False,
+            "record_bodies_included": False,
+            "affected_rows_body_included": False,
+            "writes_staging_records_now": False,
+            "writes_learning_samples_now": False,
+            "mutates_staging_records_now": False,
+            "review_only": True,
+            "simulation_only": True,
+        }
+
+    def _controlled_cleanup_dry_run_checks(
+        self,
+        plan_preflight: dict[str, Any],
+        simulation: dict[str, Any],
+        simulated_by: str,
+        dry_run_decision: str,
+    ) -> list[dict[str, Any]]:
+        summary = plan_preflight.get("summary") or {}
+        decision = plan_preflight.get("decision") or {}
+        blocked_check_count = int(summary.get("blocked_check_count") or 0)
+        allowed_decisions = {"simulated_for_controlled_cleanup_review", "needs_revision", "rejected"}
+        return [
+            self._manual_evidence_check(
+                "plan_preflight_available",
+                "passed" if plan_preflight.get("id") else "blocked",
+                plan_preflight.get("id"),
+                "existing cleanup execution plan preflight",
+                "controlled cleanup dry-run must reference an existing P18 preflight event",
+            ),
+            self._manual_evidence_check(
+                "plan_preflight_ready_for_dry_run",
+                "passed"
+                if plan_preflight.get("status") == "cleanup_execution_plan_preflight_ready_for_dry_run"
+                and decision.get("cleanup_execution_plan_preflight_ready_for_dry_run") is True
+                else "blocked",
+                {
+                    "status": plan_preflight.get("status"),
+                    "cleanup_execution_plan_preflight_ready_for_dry_run": decision.get(
+                        "cleanup_execution_plan_preflight_ready_for_dry_run"
+                    ),
+                },
+                "cleanup_execution_plan_preflight_ready_for_dry_run",
+                "only a passed P18 preflight can enter controlled cleanup dry-run",
+            ),
+            self._manual_evidence_check(
+                "source_preflight_blocked_checks_clear",
+                "passed" if blocked_check_count == 0 else "blocked",
+                blocked_check_count,
+                0,
+                "P18 preflight checks must have no blocked items",
+            ),
+            self._manual_evidence_check(
+                "lock_key_present",
+                "passed" if bool(simulation.get("lock_key")) else "blocked",
+                simulation.get("lock_key"),
+                "deterministic preflight lock key",
+                "controlled cleanup dry-run must carry the P18 lock key for later review",
+            ),
+            self._manual_evidence_check(
+                "staging_count_still_matches",
+                "passed" if simulation.get("staging_count_still_matches") is True else "blocked",
+                {
+                    "current": simulation.get("staging_record_count_before"),
+                    "preflight": simulation.get("preflight_staging_record_count"),
+                },
+                "matching nonzero counts",
+                "controlled dry-run must simulate the same package count as the P18 preflight",
+            ),
+            self._manual_evidence_check(
+                "automated_dry_run_scope_present",
+                "passed"
+                if int(simulation.get("automated_operation_count") or 0) > 0
+                and int(simulation.get("automated_batch_count") or 0) > 0
+                else "blocked",
+                {
+                    "automated_operation_count": simulation.get("automated_operation_count"),
+                    "automated_batch_count": simulation.get("automated_batch_count"),
+                },
+                ">0 automated operations with scoped batches",
+                "controlled dry-run must be limited to the reviewed automated cleanup batches",
+            ),
+            self._manual_evidence_check(
+                "manual_backfill_separated",
+                "warning" if int(simulation.get("manual_operation_count") or 0) > 0 else "passed",
+                simulation.get("manual_operation_count"),
+                0,
+                "manual evidence and historical-outcome items remain separate from automated cleanup simulation",
+            ),
+            self._manual_evidence_check(
+                "simulation_contains_no_executable_payload",
+                "passed"
+                if not simulation.get("contains_sql")
+                and not simulation.get("contains_executable_code")
+                and not simulation.get("can_execute_now")
+                else "blocked",
+                {
+                    "contains_sql": bool(simulation.get("contains_sql")),
+                    "contains_executable_code": bool(simulation.get("contains_executable_code")),
+                    "can_execute_now": bool(simulation.get("can_execute_now")),
+                },
+                "all false",
+                "P19 controlled dry-run cannot contain executable SQL, runnable code, or execution permission",
+            ),
+            self._manual_evidence_check(
+                "aggregate_only_no_record_bodies",
+                "passed"
+                if simulation.get("record_bodies_included") is False
+                and simulation.get("affected_rows_body_included") is False
+                else "blocked",
+                {
+                    "record_bodies_included": simulation.get("record_bodies_included"),
+                    "affected_rows_body_included": simulation.get("affected_rows_body_included"),
+                },
+                "no record bodies",
+                "controlled dry-run stores aggregate counts only",
+            ),
+            self._manual_evidence_check(
+                "learning_samples_unchanged",
+                "passed"
+                if simulation.get("learning_sample_count_before") == simulation.get("expected_learning_sample_count_after")
+                else "blocked",
+                {
+                    "before": simulation.get("learning_sample_count_before"),
+                    "expected_after": simulation.get("expected_learning_sample_count_after"),
+                },
+                "unchanged",
+                "P19 controlled dry-run cannot write or project writes to learning_samples",
+            ),
+            self._manual_evidence_check(
+                "dry_run_metadata_present",
+                "passed" if bool(simulated_by) and dry_run_decision in allowed_decisions else "blocked",
+                {"simulated_by_present": bool(simulated_by), "dry_run_decision": dry_run_decision},
+                sorted(allowed_decisions),
+                "operator dry-run metadata must be explicit and constrained",
+            ),
+            self._manual_evidence_check(
+                "dry_run_decision_allows_review_only",
+                "passed" if dry_run_decision == "simulated_for_controlled_cleanup_review" else "blocked",
+                dry_run_decision,
+                "simulated_for_controlled_cleanup_review",
+                "needs_revision or rejected dry-runs cannot advance to later review",
+            ),
+            self._manual_evidence_check(
+                "source_preflight_kept_execution_blocked",
+                "passed"
+                if decision.get("cleanup_execution_approved_now") is False
+                and decision.get("cleanup_application_allowed_now") is False
+                and decision.get("cleanup_executed_now") is False
+                and decision.get("can_execute_cleanup_now") is False
+                and decision.get("writes_learning_samples_now") is False
+                and decision.get("training_started_now") is False
+                else "blocked",
+                {
+                    "cleanup_execution_approved_now": decision.get("cleanup_execution_approved_now"),
+                    "cleanup_application_allowed_now": decision.get("cleanup_application_allowed_now"),
+                    "cleanup_executed_now": decision.get("cleanup_executed_now"),
+                    "can_execute_cleanup_now": decision.get("can_execute_cleanup_now"),
+                    "writes_learning_samples_now": decision.get("writes_learning_samples_now"),
+                    "training_started_now": decision.get("training_started_now"),
+                },
+                "all false",
+                "P18 preflight must not have executed cleanup or training",
+            ),
+            self._manual_evidence_check(
+                "cleanup_and_training_remain_blocked",
+                "passed",
+                {
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "writes_learning_samples_now": False,
+                    "training_started_now": False,
+                },
+                "all false",
+                "P19 controlled dry-run remains simulation-only; cleanup execution and training stay blocked",
             ),
         ]
 
