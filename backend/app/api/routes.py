@@ -295,6 +295,13 @@ class Dataset2StagingCleanupExecutionControlledApprovalInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingCleanupExecutionControlledPreflightInput(BaseModel):
+    controlled_approval_id: int | None = None
+    requested_by: str = "operator"
+    preflight_decision: str = "prepared_for_controlled_cleanup_execution_apply_dry_run"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -1262,6 +1269,24 @@ def dataset2_staging_cleanup_execution_controlled_approval(
 @router.get("/learning/dataset2/staging/cleanup-execution-controlled-approvals")
 def dataset2_staging_cleanup_execution_controlled_approvals(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-controlled-preflight")
+def dataset2_staging_cleanup_execution_controlled_preflight(
+    payload: Dataset2StagingCleanupExecutionControlledPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupExecutionControlledPreflightInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_execution_controlled_preflight(
+        controlled_approval_id=payload.controlled_approval_id,
+        requested_by=payload.requested_by,
+        preflight_decision=payload.preflight_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-controlled-preflights")
+def dataset2_staging_cleanup_execution_controlled_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_preflights(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])
