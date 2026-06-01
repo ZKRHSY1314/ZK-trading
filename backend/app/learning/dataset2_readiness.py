@@ -60,7 +60,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P24"
+    stage = "V5.6-P25"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
@@ -94,6 +94,9 @@ class Dataset2TrainingReadinessService:
     )
     staging_cleanup_execution_controlled_apply_dry_run_review_event_type = (
         "dataset2_staging_cleanup_execution_controlled_apply_dry_run_review"
+    )
+    staging_cleanup_execution_controlled_apply_approval_event_type = (
+        "dataset2_staging_cleanup_execution_controlled_apply_approval"
     )
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
@@ -4845,6 +4848,233 @@ class Dataset2TrainingReadinessService:
             )
         return reviews
 
+    def staging_cleanup_execution_controlled_apply_approval(
+        self,
+        apply_review_id: int | None = None,
+        approved_by: str = "operator",
+        approval_decision: str = "approved_for_controlled_cleanup_apply_execution_preflight",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        review = (
+            self._cleanup_execution_controlled_apply_dry_run_review_by_id(store, apply_review_id)
+            if apply_review_id
+            else self._latest_cleanup_execution_controlled_apply_dry_run_review(store)
+        )
+        if review is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_execution_controlled_apply_approval.v1",
+                "stage": self.stage,
+                "status": "controlled_cleanup_apply_execution_approval_blocked_missing_review",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "apply_review_id": apply_review_id,
+                "source_review_status": None,
+                "source_review_summary": {
+                    "check_count": 0,
+                    "blocked_check_count": None,
+                    "automated_operation_count": 0,
+                    "manual_operation_count": 0,
+                    "simulated_mutation_count": 0,
+                    "record_bodies_included": False,
+                },
+                "approval_scope": self._empty_controlled_apply_approval_scope(),
+                "checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "warning_check_count": 0,
+                    "source_review_blocked_check_count": None,
+                    "automated_operation_count": 0,
+                    "manual_operation_count": 0,
+                    "simulated_mutation_count": 0,
+                    "record_bodies_included": False,
+                },
+                "approval": {
+                    "approved_by": approved_by or "operator",
+                    "approval_decision": approval_decision,
+                    "note": note,
+                    "record_bodies_included": False,
+                    "evidence_package_body_included": False,
+                    "review_only": True,
+                    "simulation_only": True,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "controlled_cleanup_apply_execution_approval_recorded": False,
+                    "controlled_cleanup_apply_execution_approval_accepted": False,
+                    "controlled_cleanup_apply_approved_for_future_preflight": False,
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "can_generate_controlled_cleanup_apply_execution_preflight_now": False,
+                    "future_controlled_cleanup_apply_execution_preflight_required": True,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "training_freeze_allowed": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "review_dataset2_controlled_cleanup_apply_dry_run_before_approval",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        approval_scope = self._controlled_apply_approval_scope(review)
+        checks = self._controlled_cleanup_apply_approval_checks(
+            review,
+            approval_scope=approval_scope,
+            approved_by=approved_by,
+            approval_decision=approval_decision,
+        )
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        warning_count = sum(1 for check in checks if check.get("status") == "warning")
+        accepted = blocked_count == 0 and approval_decision == "approved_for_controlled_cleanup_apply_execution_preflight"
+        review_summary = review.get("summary") or {}
+        simulation_summary = review.get("simulation_summary") or {}
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_execution_controlled_apply_approval.v1",
+            "stage": self.stage,
+            "status": (
+                "controlled_cleanup_apply_execution_approval_ready_for_preflight"
+                if accepted
+                else "controlled_cleanup_apply_execution_approval_blocked"
+            ),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "apply_review_id": review.get("id"),
+            "apply_dry_run_id": review.get("apply_dry_run_id"),
+            "controlled_preflight_id": review.get("controlled_preflight_id"),
+            "controlled_approval_id": review.get("controlled_approval_id"),
+            "controlled_review_id": review.get("controlled_review_id"),
+            "controlled_dry_run_id": review.get("controlled_dry_run_id"),
+            "plan_preflight_id": review.get("plan_preflight_id"),
+            "execution_plan_id": review.get("execution_plan_id"),
+            "dry_run_review_id": review.get("dry_run_review_id"),
+            "dry_run_id": review.get("dry_run_id"),
+            "preflight_id": review.get("preflight_id"),
+            "manual_approval_id": review.get("manual_approval_id"),
+            "package_id": review.get("package_id"),
+            "source_review_status": review.get("status"),
+            "source_review_summary": {
+                "check_count": review_summary.get("check_count", 0),
+                "blocked_check_count": review_summary.get("blocked_check_count", 0),
+                "warning_check_count": review_summary.get("warning_check_count", 0),
+                "source_dry_run_blocked_check_count": review_summary.get("source_dry_run_blocked_check_count"),
+                "automated_operation_count": review_summary.get("automated_operation_count", 0),
+                "manual_operation_count": review_summary.get("manual_operation_count", 0),
+                "simulated_mutation_count": review_summary.get("simulated_mutation_count", 0),
+                "record_bodies_included": False,
+            },
+            "simulation_summary": self._controlled_apply_review_simulation_summary(simulation_summary),
+            "approval_scope": approval_scope,
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "warning_check_count": warning_count,
+                "source_review_check_count": review_summary.get("check_count", 0),
+                "source_review_blocked_check_count": review_summary.get("blocked_check_count", 0),
+                "automated_operation_count": approval_scope.get("automated_operation_count", 0),
+                "manual_operation_count": approval_scope.get("manual_operation_count", 0),
+                "simulated_mutation_count": approval_scope.get("simulated_mutation_count", 0),
+                "record_bodies_included": False,
+            },
+            "approval": {
+                "approved_by": approved_by or "operator",
+                "approval_decision": approval_decision,
+                "note": note,
+                "record_bodies_included": False,
+                "evidence_package_body_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "controlled_cleanup_apply_execution_approval_recorded": True,
+                "controlled_cleanup_apply_execution_approval_accepted": accepted,
+                "controlled_cleanup_apply_approved_for_future_preflight": accepted,
+                "cleanup_execution_approved_now": False,
+                "cleanup_application_allowed_now": False,
+                "cleanup_executed_now": False,
+                "can_execute_cleanup_now": False,
+                "can_generate_controlled_cleanup_apply_execution_preflight_now": accepted,
+                "future_controlled_cleanup_apply_execution_preflight_required": True,
+                "future_cleanup_execution_requires_separate_run": True,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "resolve_controlled_cleanup_apply_execution_approval_blocks_before_preflight"
+                    if blocked_count
+                    else "run_controlled_cleanup_apply_execution_preflight_before_any_staging_mutation"
+                ),
+            },
+            "source_review_decision": {
+                "controlled_cleanup_apply_dry_run_review_accepted": (review.get("decision") or {}).get(
+                    "controlled_cleanup_apply_dry_run_review_accepted"
+                ),
+                "cleanup_execution_approved_now": (review.get("decision") or {}).get("cleanup_execution_approved_now"),
+                "cleanup_application_allowed_now": (review.get("decision") or {}).get(
+                    "cleanup_application_allowed_now"
+                ),
+                "cleanup_executed_now": (review.get("decision") or {}).get("cleanup_executed_now"),
+                "can_execute_cleanup_now": (review.get("decision") or {}).get("can_execute_cleanup_now"),
+                "writes_learning_samples_now": (review.get("decision") or {}).get("writes_learning_samples_now"),
+                "training_started_now": (review.get("decision") or {}).get("training_started_now"),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_execution_controlled_apply_approval_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_execution_controlled_apply_approvals(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_cleanup_execution_controlled_apply_approval_event_type, max(1, min(limit, 100))),
+        )
+        approvals: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            approvals.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return approvals
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -5612,6 +5842,36 @@ class Dataset2TrainingReadinessService:
             LIMIT 1
             """,
             (self.staging_cleanup_execution_controlled_apply_dry_run_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _cleanup_execution_controlled_apply_dry_run_review_by_id(
+        self,
+        store: SQLiteStore,
+        review_id: int | None,
+    ) -> dict[str, Any] | None:
+        if review_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_cleanup_execution_controlled_apply_dry_run_review_event_type, review_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_cleanup_execution_controlled_apply_dry_run_review(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_cleanup_execution_controlled_apply_dry_run_review_event_type,),
         )
         return self._event_payload(row) if row else None
 
@@ -9045,6 +9305,271 @@ class Dataset2TrainingReadinessService:
                 },
                 "all false",
                 "P24 records review evidence only; cleanup execution and training stay blocked",
+            ),
+        ]
+
+    def _empty_controlled_apply_approval_scope(self) -> dict[str, Any]:
+        return {
+            "package_id": None,
+            "lock_key": None,
+            "automated_operation_count": 0,
+            "manual_operation_count": 0,
+            "simulated_mutation_count": 0,
+            "approval_scope": "controlled_apply_preflight_only",
+            "requires_preflight": True,
+            "requires_transaction": True,
+            "requires_rollback": True,
+            "contains_sql": False,
+            "contains_executable_code": False,
+            "can_execute_now": False,
+            "record_bodies_included": False,
+            "affected_rows_body_included": False,
+            "writes_staging_records_now": False,
+            "writes_learning_samples_now": False,
+            "mutates_staging_records_now": False,
+            "review_only": True,
+            "simulation_only": True,
+        }
+
+    def _controlled_apply_approval_scope(self, review: dict[str, Any]) -> dict[str, Any]:
+        simulation = review.get("simulation_summary") or {}
+        return {
+            "package_id": simulation.get("package_id") or review.get("package_id"),
+            "lock_key": simulation.get("lock_key"),
+            "apply_review_id": review.get("id"),
+            "apply_dry_run_id": review.get("apply_dry_run_id"),
+            "controlled_preflight_id": review.get("controlled_preflight_id"),
+            "controlled_approval_id": review.get("controlled_approval_id"),
+            "controlled_review_id": review.get("controlled_review_id"),
+            "controlled_dry_run_id": review.get("controlled_dry_run_id"),
+            "automated_operation_count": simulation.get("automated_operation_count", 0),
+            "manual_operation_count": simulation.get("manual_operation_count", 0),
+            "simulated_mutation_count": simulation.get("simulated_mutation_count", 0),
+            "approval_scope": "controlled_apply_preflight_only",
+            "allowed_next_stage": "controlled_cleanup_apply_execution_preflight",
+            "requires_preflight": True,
+            "requires_transaction": True,
+            "requires_rollback": True,
+            "allowed_tables": simulation.get("allowed_tables") or ["dataset2_staging_records"],
+            "forbidden_tables": simulation.get("forbidden_tables") or ["learning_samples"],
+            "contains_sql": False,
+            "contains_executable_code": False,
+            "can_execute_now": False,
+            "record_bodies_included": False,
+            "affected_rows_body_included": False,
+            "writes_staging_records_now": False,
+            "writes_learning_samples_now": False,
+            "mutates_staging_records_now": False,
+            "review_only": True,
+            "simulation_only": True,
+        }
+
+    def _controlled_cleanup_apply_approval_checks(
+        self,
+        review: dict[str, Any],
+        approval_scope: dict[str, Any],
+        approved_by: str,
+        approval_decision: str,
+    ) -> list[dict[str, Any]]:
+        summary = review.get("summary") or {}
+        decision = review.get("decision") or {}
+        simulation = review.get("simulation_summary") or {}
+        blocked_check_count = int(summary.get("blocked_check_count") or 0)
+        allowed_decisions = {
+            "approved_for_controlled_cleanup_apply_execution_preflight",
+            "needs_revision",
+            "rejected",
+        }
+        return [
+            self._manual_evidence_check(
+                "apply_review_available",
+                "passed" if review.get("id") else "blocked",
+                review.get("id"),
+                "existing controlled cleanup apply dry-run review",
+                "controlled apply approval must reference an existing P24 review event",
+            ),
+            self._manual_evidence_check(
+                "apply_review_accepted_for_approval",
+                "passed"
+                if review.get("status") == "controlled_cleanup_apply_dry_run_review_accepted"
+                and decision.get("controlled_cleanup_apply_dry_run_review_accepted") is True
+                else "blocked",
+                {
+                    "status": review.get("status"),
+                    "controlled_cleanup_apply_dry_run_review_accepted": decision.get(
+                        "controlled_cleanup_apply_dry_run_review_accepted"
+                    ),
+                },
+                "controlled_cleanup_apply_dry_run_review_accepted",
+                "only an accepted P24 review can enter apply execution approval",
+            ),
+            self._manual_evidence_check(
+                "source_review_blocked_checks_clear",
+                "passed" if blocked_check_count == 0 else "blocked",
+                blocked_check_count,
+                0,
+                "P24 review checks must have no blocked items",
+            ),
+            self._manual_evidence_check(
+                "approval_scope_is_preflight_only",
+                "passed"
+                if approval_scope.get("approval_scope") == "controlled_apply_preflight_only"
+                and approval_scope.get("requires_preflight") is True
+                else "blocked",
+                {
+                    "approval_scope": approval_scope.get("approval_scope"),
+                    "requires_preflight": approval_scope.get("requires_preflight"),
+                },
+                "controlled_apply_preflight_only",
+                "P25 approval can only permit a later preflight, not cleanup execution",
+            ),
+            self._manual_evidence_check(
+                "aggregate_apply_simulation_present",
+                "passed" if int(approval_scope.get("simulated_mutation_count") or 0) > 0 else "blocked",
+                approval_scope.get("simulated_mutation_count"),
+                ">0",
+                "approval metadata must carry aggregate apply dry-run impact",
+            ),
+            self._manual_evidence_check(
+                "manual_backfill_separated",
+                "warning" if int(approval_scope.get("manual_operation_count") or 0) > 0 else "passed",
+                approval_scope.get("manual_operation_count"),
+                0,
+                "manual evidence and historical-outcome work remains separated from any future automated apply",
+            ),
+            self._manual_evidence_check(
+                "transaction_and_rollback_required",
+                "passed"
+                if approval_scope.get("requires_transaction") and approval_scope.get("requires_rollback")
+                else "blocked",
+                {
+                    "requires_transaction": approval_scope.get("requires_transaction"),
+                    "requires_rollback": approval_scope.get("requires_rollback"),
+                },
+                "transaction and rollback required",
+                "future apply execution preflight must preserve transaction and rollback gates",
+            ),
+            self._manual_evidence_check(
+                "table_scope_limited",
+                "passed"
+                if approval_scope.get("allowed_tables") == ["dataset2_staging_records"]
+                and "learning_samples" in (approval_scope.get("forbidden_tables") or [])
+                else "blocked",
+                {
+                    "allowed_tables": approval_scope.get("allowed_tables"),
+                    "forbidden_tables": approval_scope.get("forbidden_tables"),
+                },
+                "dataset2_staging_records only; learning_samples forbidden",
+                "future apply can only target staging records, never training tables",
+            ),
+            self._manual_evidence_check(
+                "simulation_contains_no_executable_payload",
+                "passed"
+                if not simulation.get("contains_sql")
+                and not simulation.get("contains_executable_code")
+                and not simulation.get("can_execute_now")
+                else "blocked",
+                {
+                    "contains_sql": bool(simulation.get("contains_sql")),
+                    "contains_executable_code": bool(simulation.get("contains_executable_code")),
+                    "can_execute_now": bool(simulation.get("can_execute_now")),
+                },
+                "all false",
+                "P25 approval cannot accept executable SQL, runnable code, or execution permission",
+            ),
+            self._manual_evidence_check(
+                "approval_scope_contains_no_executable_payload",
+                "passed"
+                if not approval_scope.get("contains_sql")
+                and not approval_scope.get("contains_executable_code")
+                and not approval_scope.get("can_execute_now")
+                else "blocked",
+                {
+                    "contains_sql": bool(approval_scope.get("contains_sql")),
+                    "contains_executable_code": bool(approval_scope.get("contains_executable_code")),
+                    "can_execute_now": bool(approval_scope.get("can_execute_now")),
+                },
+                "all false",
+                "P25 approval scope must not contain execution payloads",
+            ),
+            self._manual_evidence_check(
+                "aggregate_only_no_record_bodies",
+                "passed"
+                if simulation.get("record_bodies_included") is False
+                and simulation.get("affected_rows_body_included") is False
+                and approval_scope.get("record_bodies_included") is False
+                else "blocked",
+                {
+                    "simulation_record_bodies_included": simulation.get("record_bodies_included"),
+                    "affected_rows_body_included": simulation.get("affected_rows_body_included"),
+                    "approval_scope_record_bodies_included": approval_scope.get("record_bodies_included"),
+                },
+                "no record bodies",
+                "controlled apply approval may store aggregate metadata only",
+            ),
+            self._manual_evidence_check(
+                "learning_samples_unchanged",
+                "passed"
+                if simulation.get("learning_sample_count_before")
+                == simulation.get("expected_learning_sample_count_after")
+                else "blocked",
+                {
+                    "before": simulation.get("learning_sample_count_before"),
+                    "expected_after": simulation.get("expected_learning_sample_count_after"),
+                },
+                "unchanged",
+                "P25 approval cannot write or project writes to learning_samples",
+            ),
+            self._manual_evidence_check(
+                "approval_metadata_present",
+                "passed" if bool(approved_by) and approval_decision in allowed_decisions else "blocked",
+                {"approved_by_present": bool(approved_by), "approval_decision": approval_decision},
+                sorted(allowed_decisions),
+                "operator approval metadata must be explicit and constrained",
+            ),
+            self._manual_evidence_check(
+                "approval_decision_allows_preflight_only",
+                "passed"
+                if approval_decision == "approved_for_controlled_cleanup_apply_execution_preflight"
+                else "blocked",
+                approval_decision,
+                "approved_for_controlled_cleanup_apply_execution_preflight",
+                "needs_revision or rejected approvals cannot advance to later apply preflight",
+            ),
+            self._manual_evidence_check(
+                "source_review_kept_execution_blocked",
+                "passed"
+                if decision.get("cleanup_execution_approved_now") is False
+                and decision.get("cleanup_application_allowed_now") is False
+                and decision.get("cleanup_executed_now") is False
+                and decision.get("can_execute_cleanup_now") is False
+                and decision.get("writes_learning_samples_now") is False
+                and decision.get("training_started_now") is False
+                else "blocked",
+                {
+                    "cleanup_execution_approved_now": decision.get("cleanup_execution_approved_now"),
+                    "cleanup_application_allowed_now": decision.get("cleanup_application_allowed_now"),
+                    "cleanup_executed_now": decision.get("cleanup_executed_now"),
+                    "can_execute_cleanup_now": decision.get("can_execute_cleanup_now"),
+                    "writes_learning_samples_now": decision.get("writes_learning_samples_now"),
+                    "training_started_now": decision.get("training_started_now"),
+                },
+                "all false",
+                "P24 review must not have executed cleanup or training",
+            ),
+            self._manual_evidence_check(
+                "cleanup_and_training_remain_blocked",
+                "passed",
+                {
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "writes_learning_samples_now": False,
+                    "training_started_now": False,
+                },
+                "all false",
+                "P25 records approval metadata only; cleanup execution and training stay blocked",
             ),
         ]
 
