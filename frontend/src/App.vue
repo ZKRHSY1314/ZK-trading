@@ -1759,6 +1759,21 @@
           </span>
           <small>{{ dataset2ControlledCleanupApplyPreflight.decision.next_required_action }}</small>
         </div>
+        <div v-if="dataset2ControlledCleanupApplyExecutionDryRun" class="report">
+          <strong>Dataset2 Apply Execution Dry-Run / {{ dataset2ControlledCleanupApplyExecutionDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledCleanupApplyExecutionDryRun.event_id }} /
+            source {{ dataset2ControlledCleanupApplyExecutionDryRun.apply_preflight_id }} /
+            staged {{ dataset2ControlledCleanupApplyExecutionDryRun.summary.staging_record_count_before }}
+          </span>
+          <span>
+            simulated {{ dataset2ControlledCleanupApplyExecutionDryRun.summary.simulated_mutation_count }} /
+            review {{ dataset2ControlledCleanupApplyExecutionDryRun.decision.controlled_cleanup_apply_execution_dry_run_ready_for_review ? "ready" : "blocked" }} /
+            execute now {{ dataset2ControlledCleanupApplyExecutionDryRun.decision.can_execute_cleanup_now ? "yes" : "no" }} /
+            training {{ dataset2ControlledCleanupApplyExecutionDryRun.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledCleanupApplyExecutionDryRun.decision.next_required_action }}</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -1852,6 +1867,9 @@
           </button>
           <button data-testid="dataset2-controlled-cleanup-apply-preflight-button" @click="preflightDataset2ControlledCleanupApply" :disabled="dataset2Loading">
             Dataset2 apply preflight
+          </button>
+          <button data-testid="dataset2-controlled-cleanup-apply-execution-dry-run-button" @click="dryRunDataset2ControlledCleanupApplyExecution" :disabled="dataset2Loading">
+            Dataset2 apply execution dry-run
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -3932,6 +3950,52 @@ type Dataset2ControlledCleanupApplyPreflight = {
     cleanup_executed_now: boolean;
     can_execute_cleanup_now: boolean;
     future_controlled_cleanup_apply_execution_dry_run_required: boolean;
+    can_promote_to_learning_samples_now: boolean;
+    training_started_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2ControlledCleanupApplyExecutionDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  apply_preflight_id?: number | null;
+  apply_approval_id?: number | null;
+  apply_review_id?: number | null;
+  apply_dry_run_id?: number | null;
+  controlled_preflight_id?: number | null;
+  package_id?: string | null;
+  simulation: Dataset2ControlledCleanupApplyDryRun["simulation"] & {
+    source_apply_preflight_id?: number | null;
+    apply_approval_id?: number | null;
+    apply_review_id?: number | null;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: Dataset2ControlledCleanupApplyDryRun["summary"];
+  dry_run: {
+    simulated_by: string;
+    dry_run_decision: string;
+    note?: string | null;
+    record_bodies_included: boolean;
+    evidence_package_body_included: boolean;
+  };
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now: boolean;
+    writes_staging_records_now: boolean;
+    writes_learning_samples_now: boolean;
+    mutates_staging_records_now: boolean;
+    controlled_cleanup_apply_execution_dry_run_recorded: boolean;
+    controlled_cleanup_apply_execution_dry_run_ready_for_review: boolean;
+    cleanup_execution_approved_now: boolean;
+    cleanup_application_allowed_now: boolean;
+    cleanup_executed_now: boolean;
+    can_execute_cleanup_now: boolean;
+    future_controlled_cleanup_apply_execution_review_required: boolean;
     can_promote_to_learning_samples_now: boolean;
     training_started_now: boolean;
     can_start_training_now: boolean;
@@ -7522,6 +7586,8 @@ const dataset2ControlledCleanupApplyApproval = ref<Dataset2ControlledCleanupAppl
 const dataset2ControlledCleanupApplyApprovals = ref<Dataset2ControlledCleanupApplyApproval[]>([]);
 const dataset2ControlledCleanupApplyPreflight = ref<Dataset2ControlledCleanupApplyPreflight | null>(null);
 const dataset2ControlledCleanupApplyPreflights = ref<Dataset2ControlledCleanupApplyPreflight[]>([]);
+const dataset2ControlledCleanupApplyExecutionDryRun = ref<Dataset2ControlledCleanupApplyExecutionDryRun | null>(null);
+const dataset2ControlledCleanupApplyExecutionDryRuns = ref<Dataset2ControlledCleanupApplyExecutionDryRun[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -8808,6 +8874,48 @@ async function loadDataset2ControlledCleanupApplyPreflights() {
       dataset2ControlledCleanupApplyPreflights.value[0] ?? dataset2ControlledCleanupApplyPreflight.value;
   } catch {
     dataset2ControlledCleanupApplyPreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledCleanupApplyExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ControlledCleanupApplyPreflight.value?.event_id && !dataset2ControlledCleanupApplyPreflight.value?.id) {
+      await loadDataset2ControlledCleanupApplyPreflights();
+    }
+    dataset2ControlledCleanupApplyExecutionDryRun.value = await fetchJson<Dataset2ControlledCleanupApplyExecutionDryRun>(
+      "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-dry-run",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          apply_preflight_id:
+            dataset2ControlledCleanupApplyPreflight.value?.event_id ?? dataset2ControlledCleanupApplyPreflight.value?.id,
+          simulated_by: "dashboard",
+          dry_run_decision: "simulated_for_controlled_cleanup_apply_execution_review",
+          note: "V5.6-P27 aggregate-only controlled cleanup apply execution dry-run"
+        })
+      }
+    );
+    await loadDataset2ControlledCleanupApplyExecutionDryRuns();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled cleanup apply execution dry-run failed";
+    dataset2ControlledCleanupApplyExecutionDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledCleanupApplyExecutionDryRuns() {
+  try {
+    dataset2ControlledCleanupApplyExecutionDryRuns.value =
+      await fetchJson<Dataset2ControlledCleanupApplyExecutionDryRun[]>(
+        "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-dry-runs?limit=5"
+      );
+    dataset2ControlledCleanupApplyExecutionDryRun.value =
+      dataset2ControlledCleanupApplyExecutionDryRuns.value[0] ?? dataset2ControlledCleanupApplyExecutionDryRun.value;
+  } catch {
+    dataset2ControlledCleanupApplyExecutionDryRuns.value = [];
   }
 }
 
@@ -10821,6 +10929,7 @@ onMounted(async () => {
     loadDataset2ControlledCleanupApplyDryRunReviews(),
     loadDataset2ControlledCleanupApplyApprovals(),
     loadDataset2ControlledCleanupApplyPreflights(),
+    loadDataset2ControlledCleanupApplyExecutionDryRuns(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),

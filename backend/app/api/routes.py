@@ -325,6 +325,12 @@ class Dataset2StagingCleanupExecutionControlledApplyPreflightInput(BaseModel):
     preflight_decision: str = "prepared_for_controlled_cleanup_apply_execution_dry_run"
     note: str | None = None
 
+class Dataset2StagingCleanupExecutionControlledApplyExecutionDryRunInput(BaseModel):
+    apply_preflight_id: int | None = None
+    simulated_by: str = "operator"
+    dry_run_decision: str = "simulated_for_controlled_cleanup_apply_execution_review"
+    note: str | None = None
+
 
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
@@ -1380,6 +1386,26 @@ def dataset2_staging_cleanup_execution_controlled_apply_preflight(
 @router.get("/learning/dataset2/staging/cleanup-execution-controlled-apply-preflights")
 def dataset2_staging_cleanup_execution_controlled_apply_preflights(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_apply_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-dry-run")
+def dataset2_staging_cleanup_execution_controlled_apply_execution_dry_run(
+    payload: Dataset2StagingCleanupExecutionControlledApplyExecutionDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupExecutionControlledApplyExecutionDryRunInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_execution_controlled_apply_execution_dry_run(
+        apply_preflight_id=payload.apply_preflight_id,
+        simulated_by=payload.simulated_by,
+        dry_run_decision=payload.dry_run_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-dry-runs")
+def dataset2_staging_cleanup_execution_controlled_apply_execution_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_apply_execution_dry_runs(
+        limit=limit
+    )
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])
