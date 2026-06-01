@@ -60,7 +60,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P11"
+    stage = "V5.6-P12"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
@@ -72,6 +72,7 @@ class Dataset2TrainingReadinessService:
     staging_cleanup_manual_evidence_event_type = "dataset2_staging_cleanup_manual_evidence_verification"
     staging_cleanup_manual_evidence_acceptance_event_type = "dataset2_staging_cleanup_manual_evidence_acceptance_review"
     staging_cleanup_application_review_event_type = "dataset2_staging_cleanup_application_review"
+    staging_cleanup_execution_approval_plan_event_type = "dataset2_staging_cleanup_execution_approval_plan"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -1866,6 +1867,221 @@ class Dataset2TrainingReadinessService:
             )
         return reviews
 
+    def staging_cleanup_execution_approval_plan(
+        self,
+        cleanup_application_review_id: int | None = None,
+        planned_by: str = "operator",
+        plan_decision: str = "prepared_for_manual_approval",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        application = (
+            self._cleanup_application_review_by_id(store, cleanup_application_review_id)
+            if cleanup_application_review_id
+            else self._latest_cleanup_application_review(store)
+        )
+        if application is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_execution_approval_plan.v1",
+                "stage": self.stage,
+                "status": "cleanup_execution_approval_plan_blocked_missing_application_review",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "cleanup_application_review_id": cleanup_application_review_id,
+                "approval_plan": {
+                    "steps": [],
+                    "step_count": 0,
+                    "contains_sql": False,
+                    "contains_executable_code": False,
+                    "can_execute_now": False,
+                    "requires_manual_execution_approval": True,
+                    "review_only": True,
+                    "simulation_only": True,
+                },
+                "checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "warning_check_count": 0,
+                    "application_blocked_check_count": None,
+                    "approval_step_count": 0,
+                    "record_bodies_included": False,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "cleanup_execution_approval_plan_recorded": False,
+                    "cleanup_execution_plan_ready_for_manual_approval": False,
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "training_freeze_allowed": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "run_dataset2_cleanup_application_review_before_execution_approval_plan",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        approval_steps = self._cleanup_execution_approval_steps(application)
+        checks = self._cleanup_execution_approval_plan_checks(
+            application,
+            approval_steps=approval_steps,
+            planned_by=planned_by,
+            plan_decision=plan_decision,
+        )
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        warning_count = sum(1 for check in checks if check.get("status") == "warning")
+        ready_for_manual_approval = blocked_count == 0 and plan_decision == "prepared_for_manual_approval"
+        application_summary = application.get("summary") or {}
+        application_decision = application.get("decision") or {}
+        evidence_summary = application.get("evidence_summary") or {}
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_execution_approval_plan.v1",
+            "stage": self.stage,
+            "status": (
+                "cleanup_execution_approval_plan_ready"
+                if ready_for_manual_approval
+                else "cleanup_execution_approval_plan_blocked"
+            ),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "cleanup_application_review_id": application.get("id"),
+            "acceptance_review_id": application.get("acceptance_review_id"),
+            "manual_evidence_verification_id": application.get("manual_evidence_verification_id"),
+            "dry_run_verification_id": application.get("dry_run_verification_id"),
+            "execution_spec_event_id": application.get("execution_spec_event_id"),
+            "preflight_event_id": application.get("preflight_event_id"),
+            "approval_event_id": application.get("approval_event_id"),
+            "fix_plan_event_id": application.get("fix_plan_event_id"),
+            "quality_review_id": application.get("quality_review_id"),
+            "package_id": application.get("package_id"),
+            "source_cleanup_application_status": application.get("status"),
+            "evidence_summary": {
+                "provided_sections": sorted(evidence_summary.get("provided_sections") or []),
+                "provided_section_count": evidence_summary.get("provided_section_count", 0),
+                "evidence_package_hash": evidence_summary.get("evidence_package_hash"),
+                "record_bodies_included": bool(evidence_summary.get("record_bodies_included")),
+                "evidence_package_body_included": False,
+            },
+            "source_cleanup_application_summary": {
+                "check_count": application_summary.get("check_count", 0),
+                "blocked_check_count": application_summary.get("blocked_check_count", 0),
+                "warning_check_count": application_summary.get("warning_check_count", 0),
+                "record_bodies_included": bool(application_summary.get("record_bodies_included")),
+            },
+            "approval_plan": {
+                "steps": approval_steps,
+                "step_count": len(approval_steps),
+                "contains_sql": False,
+                "contains_executable_code": False,
+                "can_execute_now": False,
+                "requires_manual_execution_approval": True,
+                "future_execution_requires_separate_approval": True,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "warning_check_count": warning_count,
+                "application_check_count": application_summary.get("check_count", 0),
+                "application_blocked_check_count": application_summary.get("blocked_check_count", 0),
+                "approval_step_count": len(approval_steps),
+                "record_bodies_included": bool(evidence_summary.get("record_bodies_included"))
+                or bool(application_summary.get("record_bodies_included")),
+            },
+            "planning": {
+                "planned_by": planned_by or "operator",
+                "plan_decision": plan_decision,
+                "note": note,
+                "record_bodies_included": False,
+                "evidence_package_body_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "cleanup_execution_approval_plan_recorded": True,
+                "cleanup_execution_plan_ready_for_manual_approval": ready_for_manual_approval,
+                "cleanup_execution_approved_now": False,
+                "cleanup_application_allowed_now": False,
+                "cleanup_executed_now": False,
+                "can_execute_cleanup_now": False,
+                "future_cleanup_execution_requires_separate_approval": True,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "resolve_cleanup_execution_approval_plan_blocks_before_manual_execution_approval"
+                    if blocked_count
+                    else "prepare_separate_manual_cleanup_execution_approval_before_any_staging_mutation"
+                ),
+            },
+            "source_cleanup_application_decision": {
+                "cleanup_application_ready_for_future_plan": application_decision.get(
+                    "cleanup_application_ready_for_future_plan"
+                ),
+                "cleanup_application_allowed_now": application_decision.get("cleanup_application_allowed_now"),
+                "cleanup_executed_now": application_decision.get("cleanup_executed_now"),
+                "writes_learning_samples_now": application_decision.get("writes_learning_samples_now"),
+                "training_started_now": application_decision.get("training_started_now"),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_execution_approval_plan_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_execution_approval_plans(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_cleanup_execution_approval_plan_event_type, max(1, min(limit, 100))),
+        )
+        plans: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            plans.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return plans
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -2173,6 +2389,32 @@ class Dataset2TrainingReadinessService:
             LIMIT 1
             """,
             (self.staging_cleanup_manual_evidence_acceptance_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _cleanup_application_review_by_id(self, store: SQLiteStore, review_id: int | None) -> dict[str, Any] | None:
+        if review_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_cleanup_application_review_event_type, review_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_cleanup_application_review(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_cleanup_application_review_event_type,),
         )
         return self._event_payload(row) if row else None
 
@@ -2927,6 +3169,212 @@ class Dataset2TrainingReadinessService:
                 },
                 "all false",
                 "P11 cleanup application review is still evidence-only and cannot execute cleanup or training",
+            ),
+        ]
+
+    def _cleanup_execution_approval_steps(self, application: dict[str, Any]) -> list[dict[str, Any]]:
+        package_id = application.get("package_id")
+        evidence_hash = (application.get("evidence_summary") or {}).get("evidence_package_hash")
+        base = {
+            "source_cleanup_application_review_id": application.get("id"),
+            "package_id": package_id,
+            "evidence_package_hash": evidence_hash,
+            "contains_sql": False,
+            "contains_executable_code": False,
+            "can_execute_now": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        return [
+            {
+                **base,
+                "id": "confirm_evidence_hash",
+                "name": "Confirm P9/P10/P11 evidence hash and metadata chain before execution approval.",
+                "execution_mode": "manual_review_required",
+                "approval_required": True,
+                "acceptance_checks": [
+                    "Evidence package hash matches the accepted manual evidence chain.",
+                    "No source record bodies are included in the approval plan.",
+                ],
+                "forbidden_actions": ["execute_sql", "mutate_staging_records", "write_learning_samples", "start_training"],
+            },
+            {
+                **base,
+                "id": "approve_deterministic_split_assignment",
+                "name": "Approve deterministic split assignment policy for future cleanup execution.",
+                "execution_mode": "future_script_after_manual_approval",
+                "approval_required": True,
+                "acceptance_checks": [
+                    "Split policy is deterministic and time-aware.",
+                    "Future execution must log affected record counts before mutation.",
+                ],
+                "forbidden_actions": ["execute_now", "write_source_dataset", "start_training"],
+            },
+            {
+                **base,
+                "id": "approve_historical_outcome_join",
+                "name": "Approve historical outcome join and target-field coverage for future cleanup execution.",
+                "execution_mode": "future_script_after_manual_approval",
+                "approval_required": True,
+                "acceptance_checks": [
+                    "Join keys remain stock_code and signal_date.",
+                    "Historical outcome source hash is pinned before any write.",
+                ],
+                "forbidden_actions": ["execute_now", "store_record_bodies", "write_learning_samples"],
+            },
+            {
+                **base,
+                "id": "approve_quality_flag_dispositions",
+                "name": "Approve quality flag dispositions and quarantine policy for future cleanup execution.",
+                "execution_mode": "future_script_after_manual_approval",
+                "approval_required": True,
+                "acceptance_checks": [
+                    "Every unresolved quality flag is corrected, accepted with evidence, or quarantined.",
+                    "Future execution reports before/after quality counts.",
+                ],
+                "forbidden_actions": ["execute_now", "bypass_quarantine", "start_training"],
+            },
+            {
+                **base,
+                "id": "approve_post_cleanup_verification",
+                "name": "Approve post-cleanup verification gates before any promotion to learning samples.",
+                "execution_mode": "manual_review_required",
+                "approval_required": True,
+                "acceptance_checks": [
+                    "A later stage must rerun staging quality review after cleanup.",
+                    "Promotion to learning_samples remains a separate reviewed stage.",
+                ],
+                "forbidden_actions": ["write_learning_samples", "start_training", "enable_live_trading"],
+            },
+        ]
+
+    def _cleanup_execution_approval_plan_checks(
+        self,
+        application: dict[str, Any],
+        approval_steps: list[dict[str, Any]],
+        planned_by: str,
+        plan_decision: str,
+    ) -> list[dict[str, Any]]:
+        evidence_summary = application.get("evidence_summary") or {}
+        application_summary = application.get("summary") or {}
+        application_decision = application.get("decision") or {}
+        allowed_decisions = {"prepared_for_manual_approval", "needs_revision", "rejected"}
+        blocked_check_count = int(application_summary.get("blocked_check_count") or 0)
+        contains_sql = any(bool(step.get("contains_sql")) for step in approval_steps)
+        contains_executable_code = any(bool(step.get("contains_executable_code")) for step in approval_steps)
+        can_execute_now = any(bool(step.get("can_execute_now")) for step in approval_steps)
+        forbidden_actions = {
+            str(action)
+            for step in approval_steps
+            for action in (step.get("forbidden_actions") or [])
+        }
+        required_forbidden = {"execute_sql", "mutate_staging_records", "write_learning_samples", "start_training"}
+        return [
+            self._manual_evidence_check(
+                "cleanup_application_review_available",
+                "passed" if application.get("id") else "blocked",
+                application.get("id"),
+                "existing cleanup application review",
+                "execution approval plan must reference an existing P11 cleanup application review",
+            ),
+            self._manual_evidence_check(
+                "cleanup_application_review_ready",
+                "passed"
+                if application.get("status") == "cleanup_application_review_ready"
+                and application_decision.get("cleanup_application_ready_for_future_plan") is True
+                else "blocked",
+                {
+                    "status": application.get("status"),
+                    "cleanup_application_ready_for_future_plan": application_decision.get(
+                        "cleanup_application_ready_for_future_plan"
+                    ),
+                },
+                "cleanup_application_review_ready",
+                "only a passed P11 cleanup application review can generate an approval plan",
+            ),
+            self._manual_evidence_check(
+                "application_blocked_checks_clear",
+                "passed" if blocked_check_count == 0 else "blocked",
+                blocked_check_count,
+                0,
+                "P11 cleanup application review checks must have no blocked items",
+            ),
+            self._manual_evidence_check(
+                "evidence_hash_pinned",
+                "passed" if bool(evidence_summary.get("evidence_package_hash")) else "blocked",
+                bool(evidence_summary.get("evidence_package_hash")),
+                True,
+                "execution approval plan must pin the evidence hash carried from P9-P11",
+            ),
+            self._manual_evidence_check(
+                "approval_steps_present",
+                "passed" if len(approval_steps) >= 5 else "blocked",
+                len(approval_steps),
+                ">=5 approval steps",
+                "future cleanup execution approval must enumerate deterministic review steps",
+            ),
+            self._manual_evidence_check(
+                "plan_contains_no_executable_payload",
+                "passed" if not contains_sql and not contains_executable_code and not can_execute_now else "blocked",
+                {
+                    "contains_sql": contains_sql,
+                    "contains_executable_code": contains_executable_code,
+                    "can_execute_now": can_execute_now,
+                },
+                "all false",
+                "P12 may prepare an approval plan but cannot include executable SQL or runnable code",
+            ),
+            self._manual_evidence_check(
+                "forbidden_actions_complete",
+                "passed" if required_forbidden.issubset(forbidden_actions) else "blocked",
+                sorted(forbidden_actions),
+                sorted(required_forbidden),
+                "approval plan must explicitly forbid SQL, staging mutation, learning-sample writes, and training",
+            ),
+            self._manual_evidence_check(
+                "planning_metadata_present",
+                "passed" if bool(planned_by) and plan_decision in allowed_decisions else "blocked",
+                {"planned_by_present": bool(planned_by), "plan_decision": plan_decision},
+                sorted(allowed_decisions),
+                "operator planning metadata must be explicit and constrained",
+            ),
+            self._manual_evidence_check(
+                "plan_decision_allows_manual_approval_path",
+                "passed" if plan_decision == "prepared_for_manual_approval" else "blocked",
+                plan_decision,
+                "prepared_for_manual_approval",
+                "needs_revision or rejected approval plans cannot advance",
+            ),
+            self._manual_evidence_check(
+                "source_application_kept_execution_blocked",
+                "passed"
+                if application_decision.get("cleanup_application_allowed_now") is False
+                and application_decision.get("cleanup_executed_now") is False
+                and application_decision.get("writes_learning_samples_now") is False
+                and application_decision.get("training_started_now") is False
+                else "blocked",
+                {
+                    "cleanup_application_allowed_now": application_decision.get("cleanup_application_allowed_now"),
+                    "cleanup_executed_now": application_decision.get("cleanup_executed_now"),
+                    "writes_learning_samples_now": application_decision.get("writes_learning_samples_now"),
+                    "training_started_now": application_decision.get("training_started_now"),
+                },
+                "all false",
+                "P11 cleanup application review must not have granted execution, learning-sample writes, or training",
+            ),
+            self._manual_evidence_check(
+                "cleanup_and_training_remain_blocked",
+                "passed",
+                {
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "writes_learning_samples_now": False,
+                    "training_started_now": False,
+                },
+                "all false",
+                "P12 approval plan is still evidence-only and cannot approve cleanup execution or training",
             ),
         ]
 

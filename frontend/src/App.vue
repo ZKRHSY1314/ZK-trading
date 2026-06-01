@@ -1536,6 +1536,21 @@
           </span>
           <small>{{ dataset2CleanupApplicationReview.decision.next_required_action }}</small>
         </div>
+        <div v-if="dataset2CleanupExecutionApprovalPlan" class="report">
+          <strong>Dataset2 Cleanup Execution Approval / {{ dataset2CleanupExecutionApprovalPlan.status }}</strong>
+          <span>
+            event {{ dataset2CleanupExecutionApprovalPlan.event_id }} /
+            source {{ dataset2CleanupExecutionApprovalPlan.cleanup_application_review_id }} /
+            steps {{ dataset2CleanupExecutionApprovalPlan.approval_plan.step_count }} /
+            blocked {{ dataset2CleanupExecutionApprovalPlan.summary.blocked_check_count }}
+          </span>
+          <span>
+            ready for approval {{ dataset2CleanupExecutionApprovalPlan.decision.cleanup_execution_plan_ready_for_manual_approval ? "yes" : "no" }} /
+            approved {{ dataset2CleanupExecutionApprovalPlan.decision.cleanup_execution_approved_now ? "yes" : "no" }} /
+            training {{ dataset2CleanupExecutionApprovalPlan.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2CleanupExecutionApprovalPlan.decision.next_required_action }}</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -1584,6 +1599,9 @@
           </button>
           <button data-testid="dataset2-cleanup-application-review-button" @click="reviewDataset2CleanupApplication" :disabled="dataset2Loading">
             Dataset2 cleanup application
+          </button>
+          <button data-testid="dataset2-cleanup-execution-approval-button" @click="planDataset2CleanupExecutionApproval" :disabled="dataset2Loading">
+            Dataset2 cleanup approval
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -2513,6 +2531,77 @@ type Dataset2CleanupApplicationReview = {
     cleanup_application_ready_for_future_plan: boolean;
     cleanup_application_allowed_now: boolean;
     cleanup_executed_now: boolean;
+    future_cleanup_execution_requires_separate_approval: boolean;
+    can_promote_to_learning_samples_now: boolean;
+    training_started_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2CleanupExecutionApprovalPlan = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  cleanup_application_review_id?: number | null;
+  acceptance_review_id?: number | null;
+  manual_evidence_verification_id?: number | null;
+  evidence_summary: Dataset2ManualEvidence["evidence_summary"];
+  source_cleanup_application_summary: {
+    check_count: number;
+    blocked_check_count: number;
+    warning_check_count: number;
+    record_bodies_included: boolean;
+  };
+  approval_plan: {
+    steps: Array<{
+      id: string;
+      name: string;
+      execution_mode: string;
+      approval_required: boolean;
+      contains_sql: boolean;
+      contains_executable_code: boolean;
+      can_execute_now: boolean;
+      forbidden_actions: string[];
+    }>;
+    step_count: number;
+    contains_sql: boolean;
+    contains_executable_code: boolean;
+    can_execute_now: boolean;
+    requires_manual_execution_approval: boolean;
+    future_execution_requires_separate_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    check_count: number;
+    blocked_check_count: number;
+    warning_check_count: number;
+    application_check_count: number;
+    application_blocked_check_count: number | null;
+    approval_step_count: number;
+    record_bodies_included: boolean;
+  };
+  planning: {
+    planned_by: string;
+    plan_decision: string;
+    note?: string | null;
+    record_bodies_included: boolean;
+    evidence_package_body_included: boolean;
+  };
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now: boolean;
+    writes_staging_records_now: boolean;
+    writes_learning_samples_now: boolean;
+    mutates_staging_records_now: boolean;
+    cleanup_execution_approval_plan_recorded: boolean;
+    cleanup_execution_plan_ready_for_manual_approval: boolean;
+    cleanup_execution_approved_now: boolean;
+    cleanup_application_allowed_now: boolean;
+    cleanup_executed_now: boolean;
+    can_execute_cleanup_now: boolean;
     future_cleanup_execution_requires_separate_approval: boolean;
     can_promote_to_learning_samples_now: boolean;
     training_started_now: boolean;
@@ -6074,6 +6163,8 @@ const dataset2ManualEvidenceAcceptance = ref<Dataset2ManualEvidenceAcceptance | 
 const dataset2ManualEvidenceAcceptanceHistory = ref<Dataset2ManualEvidenceAcceptance[]>([]);
 const dataset2CleanupApplicationReview = ref<Dataset2CleanupApplicationReview | null>(null);
 const dataset2CleanupApplicationReviews = ref<Dataset2CleanupApplicationReview[]>([]);
+const dataset2CleanupExecutionApprovalPlan = ref<Dataset2CleanupExecutionApprovalPlan | null>(null);
+const dataset2CleanupExecutionApprovalPlans = ref<Dataset2CleanupExecutionApprovalPlan[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -6650,7 +6741,7 @@ async function verifyDataset2ManualEvidence() {
         dry_run_verification_id: dataset2CleanupDryRun.value?.event_id ?? dataset2CleanupDryRun.value?.id,
         evidence_package: {},
         verified_by: "dashboard",
-        note: "V5.6-P11 empty evidence package verification only"
+        note: "V5.6-P12 empty evidence package verification only"
       })
     });
     await loadDataset2ManualEvidenceHistory();
@@ -6686,7 +6777,7 @@ async function reviewDataset2ManualEvidenceAcceptance() {
           manual_evidence_verification_id: dataset2ManualEvidence.value?.event_id ?? dataset2ManualEvidence.value?.id,
           accepted_by: "dashboard",
           acceptance_decision: "accepted_for_cleanup_review",
-          note: "V5.6-P11 metadata-only acceptance review"
+          note: "V5.6-P12 metadata-only acceptance review"
         })
       }
     );
@@ -6726,7 +6817,7 @@ async function reviewDataset2CleanupApplication() {
           acceptance_review_id: dataset2ManualEvidenceAcceptance.value?.event_id ?? dataset2ManualEvidenceAcceptance.value?.id,
           reviewed_by: "dashboard",
           review_decision: "ready_for_future_cleanup_application",
-          note: "V5.6-P11 metadata-only cleanup application review"
+          note: "V5.6-P12 metadata-only cleanup application review"
         })
       }
     );
@@ -6748,6 +6839,46 @@ async function loadDataset2CleanupApplicationReviews() {
       dataset2CleanupApplicationReviews.value[0] ?? dataset2CleanupApplicationReview.value;
   } catch {
     dataset2CleanupApplicationReviews.value = [];
+  }
+}
+
+async function planDataset2CleanupExecutionApproval() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2CleanupApplicationReview.value?.event_id && !dataset2CleanupApplicationReview.value?.id) {
+      await loadDataset2CleanupApplicationReviews();
+    }
+    dataset2CleanupExecutionApprovalPlan.value = await fetchJson<Dataset2CleanupExecutionApprovalPlan>(
+      "/api/learning/dataset2/staging/cleanup-execution-approval-plan",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          cleanup_application_review_id: dataset2CleanupApplicationReview.value?.event_id ?? dataset2CleanupApplicationReview.value?.id,
+          planned_by: "dashboard",
+          plan_decision: "prepared_for_manual_approval",
+          note: "V5.6-P12 metadata-only cleanup execution approval plan"
+        })
+      }
+    );
+    await loadDataset2CleanupExecutionApprovalPlans();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 cleanup execution approval plan failed";
+    dataset2CleanupExecutionApprovalPlan.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2CleanupExecutionApprovalPlans() {
+  try {
+    dataset2CleanupExecutionApprovalPlans.value = await fetchJson<Dataset2CleanupExecutionApprovalPlan[]>(
+      "/api/learning/dataset2/staging/cleanup-execution-approval-plans?limit=5"
+    );
+    dataset2CleanupExecutionApprovalPlan.value =
+      dataset2CleanupExecutionApprovalPlans.value[0] ?? dataset2CleanupExecutionApprovalPlan.value;
+  } catch {
+    dataset2CleanupExecutionApprovalPlans.value = [];
   }
 }
 
@@ -8746,6 +8877,7 @@ onMounted(async () => {
     loadDataset2ManualEvidenceHistory(),
     loadDataset2ManualEvidenceAcceptanceHistory(),
     loadDataset2CleanupApplicationReviews(),
+    loadDataset2CleanupExecutionApprovalPlans(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),
