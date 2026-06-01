@@ -60,7 +60,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P15"
+    stage = "V5.6-P16"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
@@ -76,6 +76,7 @@ class Dataset2TrainingReadinessService:
     staging_cleanup_execution_manual_approval_event_type = "dataset2_staging_cleanup_execution_manual_approval"
     staging_cleanup_execution_preflight_event_type = "dataset2_staging_cleanup_execution_preflight"
     staging_cleanup_execution_dry_run_event_type = "dataset2_staging_cleanup_execution_dry_run"
+    staging_cleanup_execution_dry_run_review_event_type = "dataset2_staging_cleanup_execution_dry_run_review"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -2768,6 +2769,259 @@ class Dataset2TrainingReadinessService:
             )
         return dry_runs
 
+    def staging_cleanup_execution_dry_run_review(
+        self,
+        dry_run_id: int | None = None,
+        reviewed_by: str = "operator",
+        review_decision: str = "approved_for_cleanup_execution_plan",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        dry_run = (
+            self._cleanup_execution_dry_run_by_id(store, dry_run_id)
+            if dry_run_id
+            else self._latest_cleanup_execution_dry_run(store)
+        )
+        if dry_run is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_execution_dry_run_review.v1",
+                "stage": self.stage,
+                "status": "cleanup_execution_dry_run_review_blocked_missing_dry_run",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "dry_run_id": dry_run_id,
+                "source_dry_run_status": None,
+                "evidence_summary": {
+                    "evidence_package_hash": None,
+                    "record_bodies_included": False,
+                    "evidence_package_body_included": False,
+                },
+                "source_dry_run_summary": {
+                    "check_count": 0,
+                    "blocked_check_count": None,
+                    "candidate_record_count": 0,
+                    "simulated_mutation_count": 0,
+                    "record_bodies_included": False,
+                },
+                "simulation_summary": {
+                    "candidate_record_count": 0,
+                    "simulated_mutation_count": 0,
+                    "contains_sql": False,
+                    "contains_executable_code": False,
+                    "can_execute_now": False,
+                    "record_bodies_included": False,
+                    "affected_rows_body_included": False,
+                    "learning_sample_count_before": 0,
+                    "expected_learning_sample_count_after": 0,
+                },
+                "checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "warning_check_count": 0,
+                    "source_dry_run_blocked_check_count": None,
+                    "candidate_record_count": 0,
+                    "simulated_mutation_count": 0,
+                    "record_bodies_included": False,
+                },
+                "review": {
+                    "reviewed_by": reviewed_by or "operator",
+                    "review_decision": review_decision,
+                    "note": note,
+                    "record_bodies_included": False,
+                    "evidence_package_body_included": False,
+                    "review_only": True,
+                    "simulation_only": True,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "cleanup_execution_dry_run_review_recorded": False,
+                    "cleanup_execution_dry_run_review_accepted": False,
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "future_cleanup_execution_plan_required": True,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "training_freeze_allowed": False,
+                    "can_start_training_now": False,
+                    "next_required_action": "run_dataset2_cleanup_execution_dry_run_before_manual_review",
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        simulation = dry_run.get("simulation") or {}
+        dry_run_summary = dry_run.get("summary") or {}
+        checks = self._cleanup_execution_dry_run_review_checks(
+            dry_run,
+            reviewed_by=reviewed_by,
+            review_decision=review_decision,
+        )
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        warning_count = sum(1 for check in checks if check.get("status") == "warning")
+        accepted = blocked_count == 0 and review_decision == "approved_for_cleanup_execution_plan"
+        evidence_summary = dry_run.get("evidence_summary") or {}
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_execution_dry_run_review.v1",
+            "stage": self.stage,
+            "status": (
+                "cleanup_execution_dry_run_review_accepted"
+                if accepted
+                else "cleanup_execution_dry_run_review_blocked"
+            ),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "dry_run_id": dry_run.get("id"),
+            "preflight_id": dry_run.get("preflight_id"),
+            "manual_approval_id": dry_run.get("manual_approval_id"),
+            "approval_plan_id": dry_run.get("approval_plan_id"),
+            "cleanup_application_review_id": dry_run.get("cleanup_application_review_id"),
+            "acceptance_review_id": dry_run.get("acceptance_review_id"),
+            "manual_evidence_verification_id": dry_run.get("manual_evidence_verification_id"),
+            "dry_run_verification_id": dry_run.get("dry_run_verification_id"),
+            "execution_spec_event_id": dry_run.get("execution_spec_event_id"),
+            "package_id": dry_run.get("package_id"),
+            "source_dry_run_status": dry_run.get("status"),
+            "evidence_summary": {
+                "provided_sections": sorted(evidence_summary.get("provided_sections") or []),
+                "provided_section_count": evidence_summary.get("provided_section_count", 0),
+                "evidence_package_hash": evidence_summary.get("evidence_package_hash"),
+                "record_bodies_included": bool(evidence_summary.get("record_bodies_included")),
+                "evidence_package_body_included": False,
+            },
+            "source_dry_run_summary": {
+                "check_count": dry_run_summary.get("check_count", 0),
+                "blocked_check_count": dry_run_summary.get("blocked_check_count", 0),
+                "warning_check_count": dry_run_summary.get("warning_check_count", 0),
+                "source_preflight_blocked_check_count": dry_run_summary.get("source_preflight_blocked_check_count"),
+                "candidate_record_count": dry_run_summary.get("candidate_record_count", 0),
+                "simulated_mutation_count": dry_run_summary.get("simulated_mutation_count", 0),
+                "learning_sample_count": dry_run_summary.get("learning_sample_count", 0),
+                "record_bodies_included": False,
+            },
+            "simulation_summary": {
+                "candidate_record_count": simulation.get("candidate_record_count", 0),
+                "records_with_operations": simulation.get("records_with_operations", 0),
+                "records_with_quality_flags": simulation.get("records_with_quality_flags", 0),
+                "simulated_mutation_count": simulation.get("simulated_mutation_count", 0),
+                "operation_counts": simulation.get("operation_counts", {}),
+                "field_counts": simulation.get("field_counts", {}),
+                "quality_flag_counts": simulation.get("quality_flag_counts", {}),
+                "learning_sample_count_before": simulation.get("learning_sample_count_before", 0),
+                "expected_learning_sample_count_after": simulation.get("expected_learning_sample_count_after", 0),
+                "contains_sql": bool(simulation.get("contains_sql")),
+                "contains_executable_code": bool(simulation.get("contains_executable_code")),
+                "can_execute_now": bool(simulation.get("can_execute_now")),
+                "record_bodies_included": bool(simulation.get("record_bodies_included")),
+                "affected_rows_body_included": bool(simulation.get("affected_rows_body_included")),
+            },
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "warning_check_count": warning_count,
+                "source_dry_run_check_count": dry_run_summary.get("check_count", 0),
+                "source_dry_run_blocked_check_count": dry_run_summary.get("blocked_check_count", 0),
+                "candidate_record_count": simulation.get("candidate_record_count", 0),
+                "simulated_mutation_count": simulation.get("simulated_mutation_count", 0),
+                "learning_sample_count": simulation.get("learning_sample_count_before", 0),
+                "record_bodies_included": False,
+            },
+            "review": {
+                "reviewed_by": reviewed_by or "operator",
+                "review_decision": review_decision,
+                "note": note,
+                "record_bodies_included": False,
+                "evidence_package_body_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "cleanup_execution_dry_run_review_recorded": True,
+                "cleanup_execution_dry_run_review_accepted": accepted,
+                "cleanup_execution_approved_now": False,
+                "cleanup_application_allowed_now": False,
+                "cleanup_executed_now": False,
+                "can_execute_cleanup_now": False,
+                "future_cleanup_execution_plan_required": True,
+                "future_cleanup_execution_requires_separate_run": True,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "resolve_cleanup_execution_dry_run_review_blocks_before_cleanup_plan"
+                    if blocked_count
+                    else "create_separate_cleanup_execution_plan_before_any_staging_mutation"
+                ),
+            },
+            "source_dry_run_decision": {
+                "cleanup_execution_dry_run_ready_for_review": (dry_run.get("decision") or {}).get(
+                    "cleanup_execution_dry_run_ready_for_review"
+                ),
+                "cleanup_execution_approved_now": (dry_run.get("decision") or {}).get("cleanup_execution_approved_now"),
+                "cleanup_application_allowed_now": (dry_run.get("decision") or {}).get(
+                    "cleanup_application_allowed_now"
+                ),
+                "cleanup_executed_now": (dry_run.get("decision") or {}).get("cleanup_executed_now"),
+                "can_execute_cleanup_now": (dry_run.get("decision") or {}).get("can_execute_cleanup_now"),
+                "writes_learning_samples_now": (dry_run.get("decision") or {}).get("writes_learning_samples_now"),
+                "training_started_now": (dry_run.get("decision") or {}).get("training_started_now"),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_execution_dry_run_review_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_execution_dry_run_reviews(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.staging_cleanup_execution_dry_run_review_event_type, max(1, min(limit, 100))),
+        )
+        reviews: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            reviews.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return reviews
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -3273,6 +3527,32 @@ class Dataset2TrainingReadinessService:
             LIMIT 1
             """,
             (self.staging_cleanup_execution_preflight_event_type,),
+        )
+        return self._event_payload(row) if row else None
+
+    def _cleanup_execution_dry_run_by_id(self, store: SQLiteStore, dry_run_id: int | None) -> dict[str, Any] | None:
+        if dry_run_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (self.staging_cleanup_execution_dry_run_event_type, dry_run_id),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_cleanup_execution_dry_run(self, store: SQLiteStore) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.staging_cleanup_execution_dry_run_event_type,),
         )
         return self._event_payload(row) if row else None
 
@@ -4662,6 +4942,147 @@ class Dataset2TrainingReadinessService:
                 },
                 "all false",
                 "P15 dry-run is aggregate simulation only; execution, learning-sample writes, and training stay blocked",
+            ),
+        ]
+
+    def _cleanup_execution_dry_run_review_checks(
+        self,
+        dry_run: dict[str, Any],
+        reviewed_by: str,
+        review_decision: str,
+    ) -> list[dict[str, Any]]:
+        summary = dry_run.get("summary") or {}
+        decision = dry_run.get("decision") or {}
+        simulation = dry_run.get("simulation") or {}
+        allowed_decisions = {"approved_for_cleanup_execution_plan", "needs_revision", "rejected"}
+        blocked_check_count = int(summary.get("blocked_check_count") or 0)
+        return [
+            self._manual_evidence_check(
+                "dry_run_available",
+                "passed" if dry_run.get("id") else "blocked",
+                dry_run.get("id"),
+                "existing cleanup execution dry-run",
+                "cleanup execution dry-run review must reference an existing P15 dry-run event",
+            ),
+            self._manual_evidence_check(
+                "dry_run_ready_for_manual_review",
+                "passed"
+                if dry_run.get("status") == "cleanup_execution_dry_run_ready_for_review"
+                and decision.get("cleanup_execution_dry_run_ready_for_review") is True
+                else "blocked",
+                {
+                    "status": dry_run.get("status"),
+                    "cleanup_execution_dry_run_ready_for_review": decision.get(
+                        "cleanup_execution_dry_run_ready_for_review"
+                    ),
+                },
+                "cleanup_execution_dry_run_ready_for_review",
+                "only a passed P15 dry-run can enter manual review for a future cleanup execution plan",
+            ),
+            self._manual_evidence_check(
+                "source_dry_run_blocked_checks_clear",
+                "passed" if blocked_check_count == 0 else "blocked",
+                blocked_check_count,
+                0,
+                "P15 dry-run checks must have no blocked items",
+            ),
+            self._manual_evidence_check(
+                "aggregate_simulation_present",
+                "passed" if int(simulation.get("candidate_record_count") or 0) > 0 else "blocked",
+                simulation.get("candidate_record_count"),
+                ">0",
+                "manual review needs aggregate candidate counts from the P15 dry-run",
+            ),
+            self._manual_evidence_check(
+                "simulation_contains_no_executable_payload",
+                "passed"
+                if not simulation.get("contains_sql")
+                and not simulation.get("contains_executable_code")
+                and not simulation.get("can_execute_now")
+                else "blocked",
+                {
+                    "contains_sql": bool(simulation.get("contains_sql")),
+                    "contains_executable_code": bool(simulation.get("contains_executable_code")),
+                    "can_execute_now": bool(simulation.get("can_execute_now")),
+                },
+                "all false",
+                "P16 review cannot approve or carry executable SQL, runnable code, or execution permission",
+            ),
+            self._manual_evidence_check(
+                "aggregate_only_no_record_bodies",
+                "passed"
+                if simulation.get("record_bodies_included") is False
+                and simulation.get("affected_rows_body_included") is False
+                and summary.get("record_bodies_included") is False
+                else "blocked",
+                {
+                    "simulation_record_bodies_included": simulation.get("record_bodies_included"),
+                    "affected_rows_body_included": simulation.get("affected_rows_body_included"),
+                    "summary_record_bodies_included": summary.get("record_bodies_included"),
+                },
+                "no record bodies",
+                "dry-run review may store aggregate counts and hashes only",
+            ),
+            self._manual_evidence_check(
+                "learning_samples_unchanged",
+                "passed"
+                if simulation.get("learning_sample_count_before") == simulation.get("expected_learning_sample_count_after")
+                else "blocked",
+                {
+                    "before": simulation.get("learning_sample_count_before"),
+                    "expected_after": simulation.get("expected_learning_sample_count_after"),
+                },
+                "unchanged",
+                "P16 review cannot write or project writes to learning_samples",
+            ),
+            self._manual_evidence_check(
+                "review_metadata_present",
+                "passed" if bool(reviewed_by) and review_decision in allowed_decisions else "blocked",
+                {"reviewed_by_present": bool(reviewed_by), "review_decision": review_decision},
+                sorted(allowed_decisions),
+                "operator review metadata must be explicit and constrained",
+            ),
+            self._manual_evidence_check(
+                "review_decision_allows_future_plan_only",
+                "passed" if review_decision == "approved_for_cleanup_execution_plan" else "blocked",
+                review_decision,
+                "approved_for_cleanup_execution_plan",
+                "needs_revision or rejected reviews cannot advance to a later cleanup execution plan",
+            ),
+            self._manual_evidence_check(
+                "source_dry_run_kept_execution_blocked",
+                "passed"
+                if decision.get("cleanup_execution_approved_now") is False
+                and decision.get("cleanup_application_allowed_now") is False
+                and decision.get("cleanup_executed_now") is False
+                and decision.get("can_execute_cleanup_now") is False
+                and decision.get("writes_learning_samples_now") is False
+                and decision.get("training_started_now") is False
+                else "blocked",
+                {
+                    "cleanup_execution_approved_now": decision.get("cleanup_execution_approved_now"),
+                    "cleanup_application_allowed_now": decision.get("cleanup_application_allowed_now"),
+                    "cleanup_executed_now": decision.get("cleanup_executed_now"),
+                    "can_execute_cleanup_now": decision.get("can_execute_cleanup_now"),
+                    "writes_learning_samples_now": decision.get("writes_learning_samples_now"),
+                    "training_started_now": decision.get("training_started_now"),
+                },
+                "all false",
+                "P15 dry-run must not have executed cleanup or training",
+            ),
+            self._manual_evidence_check(
+                "cleanup_and_training_remain_blocked",
+                "passed",
+                {
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "writes_learning_samples_now": False,
+                    "training_started_now": False,
+                },
+                "all false",
+                "P16 review only permits a future separate execution plan; cleanup and training stay blocked",
             ),
         ]
 
