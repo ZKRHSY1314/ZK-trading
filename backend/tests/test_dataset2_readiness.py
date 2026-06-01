@@ -1,4 +1,4 @@
-import json
+﻿import json
 
 from app.learning.dataset2_readiness import Dataset2TrainingReadinessService
 
@@ -186,7 +186,7 @@ def test_dataset2_readiness_blocks_unclean_training_data(tmp_path):
 
     data = Dataset2TrainingReadinessService().readiness(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P30"
+    assert data["stage"] == "V5.6-P31"
     assert data["status"] == "training_blocked_cleanup_required"
     assert data["quality"]["invalid_risk_level_count"] == 1
     assert data["quality"]["stringified_list_item_count"] == 1
@@ -237,7 +237,7 @@ def test_dataset2_cleanup_package_summarizes_review_actions_without_writes(tmp_p
 
     data = Dataset2TrainingReadinessService().cleanup_package(source_dir=str(pack))
 
-    assert data["stage"] == "V5.6-P30"
+    assert data["stage"] == "V5.6-P31"
     assert data["status"] == "cleanup_package_ready_for_review"
     assert len(data["package_id"]) == 64
     assert len(data["normalized_records_hash"]) == 64
@@ -280,7 +280,7 @@ def test_dataset2_import_queue_review_records_metadata_only(tmp_path, test_db):
         note="metadata only",
     )
 
-    assert data["stage"] == "V5.6-P30"
+    assert data["stage"] == "V5.6-P31"
     assert data["status"] == "import_queue_review_recorded"
     assert isinstance(data["event_id"], int)
     assert data["decision"]["writes_existing_event_now"] is True
@@ -328,7 +328,7 @@ def test_dataset2_staging_import_requires_review_and_avoids_training_tables(tmp_
         note="stage reviewed records only",
     )
 
-    assert imported["stage"] == "V5.6-P30"
+    assert imported["stage"] == "V5.6-P31"
     assert imported["status"] == "staging_import_recorded"
     assert imported["imported_count"] == 2
     assert imported["review_event_id"] == review["event_id"]
@@ -376,7 +376,7 @@ def test_dataset2_staging_quality_review_blocks_training_freeze(tmp_path, test_d
         note="freeze gate review",
     )
 
-    assert quality["stage"] == "V5.6-P30"
+    assert quality["stage"] == "V5.6-P31"
     assert quality["status"] == "training_freeze_blocked"
     assert isinstance(quality["event_id"], int)
     assert quality["record_count"] == 2
@@ -425,7 +425,7 @@ def test_dataset2_staging_fix_plan_uses_quality_review_without_mutation(tmp_path
         note="plan only",
     )
 
-    assert plan["stage"] == "V5.6-P30"
+    assert plan["stage"] == "V5.6-P31"
     assert plan["status"] == "fix_plan_ready_for_review"
     assert isinstance(plan["event_id"], int)
     assert plan["quality_review_id"] == quality["event_id"]
@@ -485,12 +485,12 @@ def test_dataset2_staging_fix_plan_approval_and_preflight_are_metadata_only(tmp_
         note="preflight only",
     )
 
-    assert approval["stage"] == "V5.6-P30"
+    assert approval["stage"] == "V5.6-P31"
     assert approval["status"] == "fix_plan_approved_for_preflight"
     assert approval["decision"]["approval_allows_fix_application_now"] is False
     assert approval["decision"]["can_generate_preflight_now"] is True
     assert approval["decision"]["writes_learning_samples_now"] is False
-    assert preflight["stage"] == "V5.6-P30"
+    assert preflight["stage"] == "V5.6-P31"
     assert preflight["status"] == "fix_preflight_ready_for_manual_execution"
     assert preflight["summary"]["check_count"] >= 1
     assert preflight["summary"]["record_mutation_count"] == 0
@@ -542,7 +542,7 @@ def test_dataset2_cleanup_execution_spec_is_review_only(tmp_path, test_db):
         note="spec only",
     )
 
-    assert spec["stage"] == "V5.6-P30"
+    assert spec["stage"] == "V5.6-P31"
     assert spec["status"] == "cleanup_execution_spec_ready_for_review"
     assert isinstance(spec["event_id"], int)
     assert spec["preflight_event_id"] == preflight["event_id"]
@@ -602,7 +602,7 @@ def test_dataset2_cleanup_dry_run_verification_blocks_application_without_mutati
         note="verify only",
     )
 
-    assert dry_run["stage"] == "V5.6-P30"
+    assert dry_run["stage"] == "V5.6-P31"
     assert dry_run["status"] == "dry_run_blocked_manual_evidence_required"
     assert isinstance(dry_run["event_id"], int)
     assert dry_run["execution_spec_event_id"] == spec["event_id"]
@@ -674,7 +674,7 @@ def test_dataset2_manual_evidence_verification_summarizes_package_without_record
         note="evidence summary only",
     )
 
-    assert verified["stage"] == "V5.6-P30"
+    assert verified["stage"] == "V5.6-P31"
     assert verified["status"] == "manual_evidence_package_verified_for_cleanup_review"
     assert isinstance(verified["event_id"], int)
     assert verified["dry_run_verification_id"] == dry_run["event_id"]
@@ -762,7 +762,7 @@ def test_dataset2_manual_evidence_acceptance_review_records_metadata_only(tmp_pa
         note="metadata-only acceptance for next review gate",
     )
 
-    assert accepted["stage"] == "V5.6-P30"
+    assert accepted["stage"] == "V5.6-P31"
     assert accepted["status"] == "manual_evidence_accepted_for_cleanup_review"
     assert isinstance(accepted["event_id"], int)
     assert accepted["manual_evidence_verification_id"] == verified["event_id"]
@@ -856,7 +856,7 @@ def test_dataset2_cleanup_application_review_keeps_execution_blocked(tmp_path, t
         note="metadata-only application gate",
     )
 
-    assert application["stage"] == "V5.6-P30"
+    assert application["stage"] == "V5.6-P31"
     assert application["status"] == "cleanup_application_review_ready"
     assert isinstance(application["event_id"], int)
     assert application["acceptance_review_id"] == accepted["event_id"]
@@ -966,7 +966,7 @@ def test_dataset2_cleanup_execution_approval_plan_is_metadata_only(tmp_path, tes
         note="approval plan only",
     )
 
-    assert approval_plan["stage"] == "V5.6-P30"
+    assert approval_plan["stage"] == "V5.6-P31"
     assert approval_plan["status"] == "cleanup_execution_approval_plan_ready"
     assert isinstance(approval_plan["event_id"], int)
     assert approval_plan["cleanup_application_review_id"] == application["event_id"]
@@ -1090,7 +1090,7 @@ def test_dataset2_cleanup_execution_manual_approval_is_metadata_only(tmp_path, t
         note="metadata approval only",
     )
 
-    assert manual_approval["stage"] == "V5.6-P30"
+    assert manual_approval["stage"] == "V5.6-P31"
     assert manual_approval["status"] == "cleanup_execution_manual_approval_ready_for_preflight"
     assert isinstance(manual_approval["event_id"], int)
     assert manual_approval["approval_plan_id"] == approval_plan["event_id"]
@@ -1225,7 +1225,7 @@ def test_dataset2_cleanup_execution_preflight_is_metadata_only(tmp_path, test_db
         note="preflight metadata only",
     )
 
-    assert cleanup_preflight["stage"] == "V5.6-P30"
+    assert cleanup_preflight["stage"] == "V5.6-P31"
     assert cleanup_preflight["status"] == "cleanup_execution_preflight_ready_for_dry_run"
     assert isinstance(cleanup_preflight["event_id"], int)
     assert cleanup_preflight["manual_approval_id"] == manual_approval["event_id"]
@@ -1370,7 +1370,7 @@ def test_dataset2_cleanup_execution_dry_run_is_aggregate_only(tmp_path, test_db)
         note="aggregate dry-run only",
     )
 
-    assert cleanup_dry_run["stage"] == "V5.6-P30"
+    assert cleanup_dry_run["stage"] == "V5.6-P31"
     assert cleanup_dry_run["status"] == "cleanup_execution_dry_run_ready_for_review"
     assert isinstance(cleanup_dry_run["event_id"], int)
     assert cleanup_dry_run["preflight_id"] == cleanup_preflight["event_id"]
@@ -1526,7 +1526,7 @@ def test_dataset2_cleanup_execution_dry_run_review_is_metadata_only(tmp_path, te
         note="review aggregate dry-run only",
     )
 
-    assert cleanup_review["stage"] == "V5.6-P30"
+    assert cleanup_review["stage"] == "V5.6-P31"
     assert cleanup_review["status"] == "cleanup_execution_dry_run_review_accepted"
     assert isinstance(cleanup_review["event_id"], int)
     assert cleanup_review["dry_run_id"] == cleanup_dry_run["event_id"]
@@ -1696,7 +1696,7 @@ def test_dataset2_cleanup_execution_plan_is_preflight_only(tmp_path, test_db):
         note="plan automated cleanup only",
     )
 
-    assert execution_plan["stage"] == "V5.6-P30"
+    assert execution_plan["stage"] == "V5.6-P31"
     assert execution_plan["status"] == "cleanup_execution_plan_ready_for_preflight"
     assert isinstance(execution_plan["event_id"], int)
     assert execution_plan["dry_run_review_id"] == cleanup_review["event_id"]
@@ -1875,7 +1875,7 @@ def test_dataset2_cleanup_execution_plan_preflight_is_metadata_only(tmp_path, te
         note="preflight controlled cleanup dry-run only",
     )
 
-    assert plan_preflight["stage"] == "V5.6-P30"
+    assert plan_preflight["stage"] == "V5.6-P31"
     assert plan_preflight["status"] == "cleanup_execution_plan_preflight_ready_for_dry_run"
     assert isinstance(plan_preflight["event_id"], int)
     assert plan_preflight["execution_plan_id"] == execution_plan["event_id"]
@@ -1966,7 +1966,7 @@ def test_dataset2_controlled_cleanup_dry_run_is_aggregate_only(tmp_path, test_db
         note="aggregate controlled dry-run only",
     )
 
-    assert controlled["stage"] == "V5.6-P30"
+    assert controlled["stage"] == "V5.6-P31"
     assert controlled["status"] == "controlled_cleanup_dry_run_ready_for_review"
     assert isinstance(controlled["event_id"], int)
     assert controlled["plan_preflight_id"] == plan_preflight["event_id"]
@@ -2068,7 +2068,7 @@ def test_dataset2_controlled_cleanup_dry_run_review_is_metadata_only(tmp_path, t
         note="metadata-only controlled cleanup review",
     )
 
-    assert review["stage"] == "V5.6-P30"
+    assert review["stage"] == "V5.6-P31"
     assert review["status"] == "controlled_cleanup_dry_run_review_accepted"
     assert isinstance(review["event_id"], int)
     assert review["controlled_dry_run_id"] == controlled["event_id"]
@@ -2172,7 +2172,7 @@ def test_dataset2_controlled_cleanup_execution_approval_is_metadata_only(tmp_pat
         note="metadata-only controlled cleanup approval",
     )
 
-    assert approval["stage"] == "V5.6-P30"
+    assert approval["stage"] == "V5.6-P31"
     assert approval["status"] == "controlled_cleanup_execution_approval_ready_for_preflight"
     assert isinstance(approval["event_id"], int)
     assert approval["controlled_review_id"] == review["event_id"]
@@ -2290,7 +2290,7 @@ def test_dataset2_controlled_cleanup_execution_preflight_is_metadata_only(tmp_pa
         note="metadata-only controlled preflight",
     )
 
-    assert preflight["stage"] == "V5.6-P30"
+    assert preflight["stage"] == "V5.6-P31"
     assert preflight["status"] == "controlled_cleanup_execution_preflight_ready_for_apply_dry_run"
     assert isinstance(preflight["event_id"], int)
     assert preflight["controlled_approval_id"] == approval["event_id"]
@@ -2424,7 +2424,7 @@ def test_dataset2_controlled_cleanup_apply_dry_run_is_aggregate_only(tmp_path, t
         note="aggregate-only controlled apply dry-run",
     )
 
-    assert apply_dry_run["stage"] == "V5.6-P30"
+    assert apply_dry_run["stage"] == "V5.6-P31"
     assert apply_dry_run["status"] == "controlled_cleanup_apply_dry_run_ready_for_review"
     assert isinstance(apply_dry_run["event_id"], int)
     assert apply_dry_run["controlled_preflight_id"] == preflight["event_id"]
@@ -2579,7 +2579,7 @@ def test_dataset2_controlled_cleanup_apply_dry_run_review_is_metadata_only(tmp_p
         note="metadata-only apply dry-run review",
     )
 
-    assert apply_review["stage"] == "V5.6-P30"
+    assert apply_review["stage"] == "V5.6-P31"
     assert apply_review["status"] == "controlled_cleanup_apply_dry_run_review_accepted"
     assert isinstance(apply_review["event_id"], int)
     assert apply_review["apply_dry_run_id"] == apply_dry_run["event_id"]
@@ -2729,7 +2729,7 @@ def test_dataset2_controlled_cleanup_apply_approval_is_metadata_only(tmp_path, t
         note="metadata-only apply execution approval",
     )
 
-    assert apply_approval["stage"] == "V5.6-P30"
+    assert apply_approval["stage"] == "V5.6-P31"
     assert apply_approval["status"] == "controlled_cleanup_apply_execution_approval_ready_for_preflight"
     assert isinstance(apply_approval["event_id"], int)
     assert apply_approval["apply_review_id"] == apply_review["event_id"]
@@ -2903,7 +2903,7 @@ def test_dataset2_controlled_cleanup_apply_preflight_is_metadata_only(tmp_path, 
         note="metadata-only apply execution preflight",
     )
 
-    assert apply_preflight["stage"] == "V5.6-P30"
+    assert apply_preflight["stage"] == "V5.6-P31"
     assert apply_preflight["status"] == "controlled_cleanup_apply_execution_preflight_ready_for_dry_run"
     assert isinstance(apply_preflight["event_id"], int)
     assert apply_preflight["apply_approval_id"] == apply_approval["event_id"]
@@ -3093,7 +3093,7 @@ def test_dataset2_controlled_cleanup_apply_execution_dry_run_is_aggregate_only(t
         note="aggregate-only apply execution dry-run",
     )
 
-    assert execution_dry_run["stage"] == "V5.6-P30"
+    assert execution_dry_run["stage"] == "V5.6-P31"
     assert execution_dry_run["status"] == "controlled_cleanup_apply_execution_dry_run_ready_for_review"
     assert isinstance(execution_dry_run["event_id"], int)
     assert execution_dry_run["apply_preflight_id"] == apply_preflight["event_id"]
@@ -3301,7 +3301,7 @@ def test_dataset2_controlled_cleanup_apply_execution_dry_run_review_is_metadata_
         note="metadata-only apply execution review",
     )
 
-    assert execution_review["stage"] == "V5.6-P30"
+    assert execution_review["stage"] == "V5.6-P31"
     assert execution_review["status"] == "controlled_cleanup_apply_execution_dry_run_review_accepted"
     assert isinstance(execution_review["event_id"], int)
     assert execution_review["apply_execution_dry_run_id"] == execution_dry_run["event_id"]
@@ -3510,7 +3510,7 @@ def test_dataset2_controlled_cleanup_apply_execution_plan_is_metadata_only(tmp_p
         note="metadata-only apply execution plan",
     )
 
-    assert execution_plan["stage"] == "V5.6-P30"
+    assert execution_plan["stage"] == "V5.6-P31"
     assert execution_plan["status"] == "controlled_cleanup_apply_execution_plan_ready_for_preflight"
     assert isinstance(execution_plan["event_id"], int)
     assert execution_plan["apply_execution_review_id"] == execution_review["event_id"]
@@ -3733,7 +3733,7 @@ def test_dataset2_controlled_cleanup_apply_execution_plan_preflight_is_metadata_
         note="metadata-only apply execution plan preflight",
     )
 
-    assert execution_preflight["stage"] == "V5.6-P30"
+    assert execution_preflight["stage"] == "V5.6-P31"
     assert execution_preflight["status"] == "controlled_cleanup_apply_execution_plan_preflight_ready_for_dry_run"
     assert isinstance(execution_preflight["event_id"], int)
     assert execution_preflight["apply_execution_plan_id"] == execution_plan["event_id"]
@@ -3791,6 +3791,244 @@ def test_dataset2_controlled_cleanup_apply_execution_plan_preflight_is_metadata_
     assert execution_preflights[0]["id"] == execution_preflight["event_id"]
     assert execution_preflights[0]["request"]["requested_by"] == "tester"
     assert "evidence_package" not in execution_preflights[0]
+
+
+def test_dataset2_controlled_cleanup_apply_execution_plan_dry_run_is_metadata_only(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(
+                pattern_id="CONTROLLED_APPLY_EXECUTION_PLAN_DRY_RUN_001",
+                risk_level="medium_high",
+                split_tag="train",
+                observable_features=["['big_yang']", "high_volume"],
+                evidence_summary="",
+            ),
+            _record(
+                pattern_id="CONTROLLED_APPLY_EXECUTION_PLAN_DRY_RUN_002",
+                action_label="RISK_ALERT",
+                risk_level="high",
+                split_tag="test",
+            ),
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+
+    before_missing = service.list_staging_cleanup_execution_controlled_apply_execution_plan_dry_runs(limit=5)
+    missing = service.staging_cleanup_execution_controlled_apply_execution_plan_dry_run(
+        apply_execution_plan_preflight_id=999999,
+        simulated_by="tester",
+    )
+    after_missing = service.list_staging_cleanup_execution_controlled_apply_execution_plan_dry_runs(limit=5)
+    assert missing["status"] == "controlled_cleanup_apply_execution_plan_dry_run_blocked_missing_preflight"
+    assert missing["decision"]["writes_existing_event_now"] is False
+    assert missing["decision"]["controlled_cleanup_apply_execution_plan_dry_run_ready_for_review"] is False
+    assert missing["decision"]["cleanup_executed_now"] is False
+    assert missing["decision"]["training_started_now"] is False
+    assert len(after_missing) == len(before_missing)
+
+    blocked_preflight_source = _cleanup_execution_plan_preflight_chain(
+        service,
+        pack,
+        {},
+        suffix="blocked-apply-execution-plan-dry-run",
+    )
+    blocked_controlled = service.staging_cleanup_execution_controlled_dry_run(
+        plan_preflight_id=blocked_preflight_source["event_id"],
+        simulated_by="tester",
+    )
+    blocked_review = service.staging_cleanup_execution_controlled_dry_run_review(
+        controlled_dry_run_id=blocked_controlled["event_id"],
+        reviewed_by="tester",
+    )
+    blocked_approval = service.staging_cleanup_execution_controlled_approval(
+        controlled_review_id=blocked_review["event_id"],
+        approved_by="tester",
+    )
+    blocked_preflight = service.staging_cleanup_execution_controlled_preflight(
+        controlled_approval_id=blocked_approval["event_id"],
+        requested_by="tester",
+    )
+    blocked_apply = service.staging_cleanup_execution_controlled_apply_dry_run(
+        controlled_preflight_id=blocked_preflight["event_id"],
+        simulated_by="tester",
+    )
+    blocked_apply_review = service.staging_cleanup_execution_controlled_apply_dry_run_review(
+        apply_dry_run_id=blocked_apply["event_id"],
+        reviewed_by="tester",
+    )
+    blocked_apply_approval = service.staging_cleanup_execution_controlled_apply_approval(
+        apply_review_id=blocked_apply_review["event_id"],
+        approved_by="tester",
+    )
+    blocked_apply_preflight = service.staging_cleanup_execution_controlled_apply_preflight(
+        apply_approval_id=blocked_apply_approval["event_id"],
+        requested_by="tester",
+    )
+    blocked_execution_dry_run = service.staging_cleanup_execution_controlled_apply_execution_dry_run(
+        apply_preflight_id=blocked_apply_preflight["event_id"],
+        simulated_by="tester",
+    )
+    blocked_execution_review = service.staging_cleanup_execution_controlled_apply_execution_dry_run_review(
+        apply_execution_dry_run_id=blocked_execution_dry_run["event_id"],
+        reviewed_by="tester",
+    )
+    blocked_execution_plan = service.staging_cleanup_execution_controlled_apply_execution_plan(
+        apply_execution_review_id=blocked_execution_review["event_id"],
+        planned_by="tester",
+    )
+    blocked_plan_preflight = service.staging_cleanup_execution_controlled_apply_execution_plan_preflight(
+        apply_execution_plan_id=blocked_execution_plan["event_id"],
+        requested_by="tester",
+    )
+    blocked_plan_dry_run = service.staging_cleanup_execution_controlled_apply_execution_plan_dry_run(
+        apply_execution_plan_preflight_id=blocked_plan_preflight["event_id"],
+        simulated_by="tester",
+    )
+    assert blocked_plan_dry_run["status"] == "controlled_cleanup_apply_execution_plan_dry_run_blocked"
+    assert blocked_plan_dry_run["decision"]["controlled_cleanup_apply_execution_plan_dry_run_recorded"] is True
+    assert blocked_plan_dry_run["decision"]["controlled_cleanup_apply_execution_plan_dry_run_ready_for_review"] is False
+    assert blocked_plan_dry_run["decision"]["can_execute_cleanup_now"] is False
+    assert blocked_plan_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert blocked_plan_dry_run["dry_run"]["contains_sql"] is False
+    assert blocked_plan_dry_run["dry_run"]["record_bodies_included"] is False
+
+    plan_preflight = _cleanup_execution_plan_preflight_chain(
+        service,
+        pack,
+        _manual_evidence_package(),
+        suffix="ready-apply-execution-plan-dry-run",
+    )
+    controlled = service.staging_cleanup_execution_controlled_dry_run(
+        plan_preflight_id=plan_preflight["event_id"],
+        simulated_by="tester",
+        dry_run_decision="simulated_for_controlled_cleanup_review",
+    )
+    review = service.staging_cleanup_execution_controlled_dry_run_review(
+        controlled_dry_run_id=controlled["event_id"],
+        reviewed_by="tester",
+        review_decision="approved_for_controlled_cleanup_execution_review",
+    )
+    approval = service.staging_cleanup_execution_controlled_approval(
+        controlled_review_id=review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_cleanup_execution_preflight",
+    )
+    preflight = service.staging_cleanup_execution_controlled_preflight(
+        controlled_approval_id=approval["event_id"],
+        requested_by="tester",
+        preflight_decision="prepared_for_controlled_cleanup_execution_apply_dry_run",
+    )
+    apply_dry_run = service.staging_cleanup_execution_controlled_apply_dry_run(
+        controlled_preflight_id=preflight["event_id"],
+        simulated_by="tester",
+        dry_run_decision="simulated_for_controlled_cleanup_apply_review",
+    )
+    apply_review = service.staging_cleanup_execution_controlled_apply_dry_run_review(
+        apply_dry_run_id=apply_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="approved_for_controlled_cleanup_apply_execution_review",
+    )
+    apply_approval = service.staging_cleanup_execution_controlled_apply_approval(
+        apply_review_id=apply_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_cleanup_apply_execution_preflight",
+    )
+    apply_preflight = service.staging_cleanup_execution_controlled_apply_preflight(
+        apply_approval_id=apply_approval["event_id"],
+        requested_by="tester",
+        preflight_decision="prepared_for_controlled_cleanup_apply_execution_dry_run",
+    )
+    execution_dry_run = service.staging_cleanup_execution_controlled_apply_execution_dry_run(
+        apply_preflight_id=apply_preflight["event_id"],
+        simulated_by="tester",
+        dry_run_decision="simulated_for_controlled_cleanup_apply_execution_review",
+    )
+    execution_review = service.staging_cleanup_execution_controlled_apply_execution_dry_run_review(
+        apply_execution_dry_run_id=execution_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="approved_for_controlled_cleanup_apply_execution_plan",
+    )
+    execution_plan = service.staging_cleanup_execution_controlled_apply_execution_plan(
+        apply_execution_review_id=execution_review["event_id"],
+        planned_by="tester",
+        plan_decision="prepared_for_controlled_cleanup_apply_execution_plan_preflight",
+    )
+    execution_preflight = service.staging_cleanup_execution_controlled_apply_execution_plan_preflight(
+        apply_execution_plan_id=execution_plan["event_id"],
+        requested_by="tester",
+        preflight_decision="prepared_for_controlled_cleanup_apply_execution_plan_dry_run",
+    )
+    staging_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+    execution_plan_dry_run = service.staging_cleanup_execution_controlled_apply_execution_plan_dry_run(
+        apply_execution_plan_preflight_id=execution_preflight["event_id"],
+        simulated_by="tester",
+        dry_run_decision="simulated_for_controlled_cleanup_apply_execution_plan_review",
+        note="metadata-only apply execution plan dry-run",
+    )
+    staging_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    assert execution_plan_dry_run["stage"] == "V5.6-P31"
+    assert execution_plan_dry_run["status"] == "controlled_cleanup_apply_execution_plan_dry_run_ready_for_review"
+    assert isinstance(execution_plan_dry_run["event_id"], int)
+    assert execution_plan_dry_run["apply_execution_plan_preflight_id"] == execution_preflight["event_id"]
+    assert execution_plan_dry_run["apply_execution_plan_id"] == execution_plan["event_id"]
+    assert execution_plan_dry_run["apply_execution_review_id"] == execution_review["event_id"]
+    assert execution_plan_dry_run["apply_execution_dry_run_id"] == execution_dry_run["event_id"]
+    assert execution_plan_dry_run["dry_run"]["lock_key"] == execution_preflight["preflight"]["lock_key"]
+    assert execution_plan_dry_run["dry_run"]["staging_record_count_before"] == 2
+    assert execution_plan_dry_run["dry_run"]["preflight_staging_record_count"] == 2
+    assert execution_plan_dry_run["dry_run"]["expected_staging_record_count_after"] == 2
+    assert execution_plan_dry_run["dry_run"]["staging_count_still_matches"] is True
+    assert execution_plan_dry_run["dry_run"]["learning_sample_count_before"] == 0
+    assert execution_plan_dry_run["dry_run"]["expected_learning_sample_count_after"] == 0
+    assert execution_plan_dry_run["dry_run"]["automated_operation_count"] >= 1
+    assert execution_plan_dry_run["dry_run"]["manual_operation_count"] >= 1
+    assert execution_plan_dry_run["dry_run"]["planned_operation_count"] >= 1
+    assert execution_plan_dry_run["dry_run"]["execution_batch_count"] >= 1
+    assert execution_plan_dry_run["dry_run"]["manual_backfill_batch_count"] >= 1
+    assert execution_plan_dry_run["dry_run"]["simulated_mutation_count"] >= 1
+    assert execution_plan_dry_run["dry_run"]["transaction_required"] is True
+    assert execution_plan_dry_run["dry_run"]["rollback_required"] is True
+    assert execution_plan_dry_run["dry_run"]["allowed_next_stage"] == "controlled_cleanup_apply_execution_plan_review"
+    assert execution_plan_dry_run["dry_run"]["allowed_tables"] == ["dataset2_staging_records"]
+    assert "learning_samples" in execution_plan_dry_run["dry_run"]["forbidden_tables"]
+    assert execution_plan_dry_run["dry_run"]["contains_sql"] is False
+    assert execution_plan_dry_run["dry_run"]["contains_executable_code"] is False
+    assert execution_plan_dry_run["dry_run"]["can_execute_now"] is False
+    assert execution_plan_dry_run["dry_run"]["record_bodies_included"] is False
+    assert execution_plan_dry_run["dry_run"]["affected_rows_body_included"] is False
+    assert execution_plan_dry_run["dry_run"]["writes_staging_records_now"] is False
+    assert execution_plan_dry_run["dry_run"]["writes_learning_samples_now"] is False
+    assert execution_plan_dry_run["dry_run"]["mutates_staging_records_now"] is False
+    assert execution_plan_dry_run["decision"]["controlled_cleanup_apply_execution_plan_dry_run_recorded"] is True
+    assert execution_plan_dry_run["decision"]["controlled_cleanup_apply_execution_plan_dry_run_ready_for_review"] is True
+    assert execution_plan_dry_run["decision"]["cleanup_execution_approved_now"] is False
+    assert execution_plan_dry_run["decision"]["cleanup_application_allowed_now"] is False
+    assert execution_plan_dry_run["decision"]["cleanup_executed_now"] is False
+    assert execution_plan_dry_run["decision"]["can_execute_cleanup_now"] is False
+    assert execution_plan_dry_run["decision"]["writes_staging_records_now"] is False
+    assert execution_plan_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert execution_plan_dry_run["decision"]["mutates_staging_records_now"] is False
+    assert execution_plan_dry_run["decision"]["training_started_now"] is False
+    assert execution_plan_dry_run["decision"]["can_start_training_now"] is False
+    assert staging_after == staging_before
+    assert learning_after == learning_before
+    assert "evidence_package" not in execution_plan_dry_run
+    assert "records" not in execution_plan_dry_run["dry_run"]
+    check_status = {check["name"]: check["status"] for check in execution_plan_dry_run["checks"]}
+    assert check_status["apply_execution_plan_preflight_ready_for_dry_run"] == "passed"
+    assert check_status["staging_count_still_matches_preflight"] == "passed"
+    assert check_status["aggregate_apply_execution_plan_simulation_present"] == "passed"
+    assert check_status["manual_backfill_separated"] == "warning"
+    assert check_status["cleanup_and_training_remain_blocked"] == "passed"
+
+    dry_runs = service.list_staging_cleanup_execution_controlled_apply_execution_plan_dry_runs(limit=5)
+    assert dry_runs[0]["id"] == execution_plan_dry_run["event_id"]
+    assert dry_runs[0]["request"]["simulated_by"] == "tester"
+    assert "evidence_package" not in dry_runs[0]
 
 
 def test_dataset2_readiness_api_smoke(client, tmp_path):
@@ -4044,6 +4282,17 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
         "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-preflights",
         params={"limit": 3},
     )
+    cleanup_execution_controlled_apply_execution_plan_dry_run = client.post(
+        "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-dry-run",
+        json={
+            "apply_execution_plan_preflight_id": cleanup_execution_controlled_apply_execution_plan_preflight.json().get("event_id"),
+            "simulated_by": "api-test",
+        },
+    )
+    cleanup_execution_controlled_apply_execution_plan_dry_runs = client.get(
+        "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-dry-runs",
+        params={"limit": 3},
+    )
 
     assert readiness.status_code == 200
     assert preview.status_code == 200
@@ -4109,6 +4358,8 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert cleanup_execution_controlled_apply_execution_plans.status_code == 200
     assert cleanup_execution_controlled_apply_execution_plan_preflight.status_code == 200
     assert cleanup_execution_controlled_apply_execution_plan_preflights.status_code == 200
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.status_code == 200
+    assert cleanup_execution_controlled_apply_execution_plan_dry_runs.status_code == 200
     assert readiness.json()["decision"]["can_start_training_now"] is False
     assert preview.json()["preview_count"] == 1
     assert preview.json()["safety_summary"]["allow_live_order"] is False
@@ -4349,3 +4600,14 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert cleanup_execution_controlled_apply_execution_plan_preflight.json()["decision"]["writes_learning_samples_now"] is False
     assert cleanup_execution_controlled_apply_execution_plan_preflight.json()["decision"]["training_started_now"] is False
     assert cleanup_execution_controlled_apply_execution_plan_preflights.json()[0]["request"]["requested_by"] == "api-test"
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.json()["dry_run"]["can_execute_now"] is False
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.json()["dry_run"]["contains_sql"] is False
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.json()["dry_run"]["record_bodies_included"] is False
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.json()["decision"]["controlled_cleanup_apply_execution_plan_dry_run_recorded"] is True
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.json()["decision"]["cleanup_execution_approved_now"] is False
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.json()["decision"]["cleanup_application_allowed_now"] is False
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.json()["decision"]["cleanup_executed_now"] is False
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.json()["decision"]["can_execute_cleanup_now"] is False
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.json()["decision"]["writes_learning_samples_now"] is False
+    assert cleanup_execution_controlled_apply_execution_plan_dry_run.json()["decision"]["training_started_now"] is False
+    assert cleanup_execution_controlled_apply_execution_plan_dry_runs.json()[0]["request"]["simulated_by"] == "api-test"
