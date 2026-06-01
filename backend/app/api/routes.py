@@ -281,6 +281,13 @@ class Dataset2StagingCleanupExecutionControlledDryRunInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingCleanupExecutionControlledDryRunReviewInput(BaseModel):
+    controlled_dry_run_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "approved_for_controlled_cleanup_execution_review"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -1212,6 +1219,24 @@ def dataset2_staging_cleanup_execution_controlled_dry_run(
 @router.get("/learning/dataset2/staging/cleanup-execution-controlled-dry-runs")
 def dataset2_staging_cleanup_execution_controlled_dry_runs(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-controlled-dry-run-review")
+def dataset2_staging_cleanup_execution_controlled_dry_run_review(
+    payload: Dataset2StagingCleanupExecutionControlledDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupExecutionControlledDryRunReviewInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_execution_controlled_dry_run_review(
+        controlled_dry_run_id=payload.controlled_dry_run_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-controlled-dry-run-reviews")
+def dataset2_staging_cleanup_execution_controlled_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_dry_run_reviews(limit=limit)
 
 
 @router.get("/learning/samples", response_model=list[LearningSample])
