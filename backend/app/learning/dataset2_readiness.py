@@ -60,7 +60,7 @@ LOW_SUPPORT_ACTION_THRESHOLD = 5
 class Dataset2TrainingReadinessService:
     """Read-only quality gate before dataset2 can be used for training."""
 
-    stage = "V5.6-P53"
+    stage = "V5.6-P54"
     import_queue_event_type = "dataset2_import_queue_review"
     staging_import_event_type = "dataset2_staging_import"
     staging_quality_review_event_type = "dataset2_staging_quality_review"
@@ -181,6 +181,9 @@ class Dataset2TrainingReadinessService:
     )
     staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_event_type = (
         "dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval"
+    )
+    staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_event_type = (
+        "dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight"
     )
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
@@ -12732,6 +12735,325 @@ class Dataset2TrainingReadinessService:
             )
         return approvals
 
+    def staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight(
+        self,
+        apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id: int | None = None,
+        requested_by: str = "operator",
+        preflight_decision: str = "prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        final_execution_execution_execution_execution_approval = (
+            self._cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_by_id(
+                store,
+                apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id,
+            )
+            if apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id
+            else self._latest_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval(
+                store
+            )
+        )
+        if final_execution_execution_execution_execution_approval is None:
+            return {
+                "schema_version": "dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight.v1",
+                "stage": self.stage,
+                "status": "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_blocked_missing_approval",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id": (
+                    apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id
+                ),
+                "source_final_execution_execution_execution_execution_approval_status": None,
+                "source_final_execution_execution_execution_execution_approval_summary": {
+                    "check_count": 0,
+                    "blocked_check_count": None,
+                    "warning_check_count": 0,
+                    "simulated_mutation_count": 0,
+                    "record_bodies_included": False,
+                },
+                "preflight": self._empty_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight(),
+                "checks": [],
+                "summary": {
+                    "check_count": 0,
+                    "blocked_check_count": 1,
+                    "warning_check_count": 0,
+                    "source_final_execution_execution_execution_execution_approval_blocked_check_count": None,
+                    "staging_record_count": 0,
+                    "approval_staging_record_count": 0,
+                    "learning_sample_count": 0,
+                    "approval_learning_sample_count": 0,
+                    "simulated_mutation_count": 0,
+                    "record_bodies_included": False,
+                },
+                "request": {
+                    "requested_by": requested_by or "operator",
+                    "preflight_decision": preflight_decision,
+                    "note": note,
+                    "record_bodies_included": False,
+                    "evidence_package_body_included": False,
+                    "review_only": True,
+                    "simulation_only": True,
+                },
+                "decision": {
+                    "writes_database_now": False,
+                    "writes_existing_event_now": False,
+                    "writes_staging_records_now": False,
+                    "writes_learning_samples_now": False,
+                    "mutates_staging_records_now": False,
+                    "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_recorded": False,
+                    "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_ready_for_dry_run": False,
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "future_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run_required": True,
+                    "future_cleanup_execution_requires_separate_run": True,
+                    "can_promote_to_learning_samples_now": False,
+                    "training_started_now": False,
+                    "training_freeze_allowed": False,
+                    "can_start_training_now": False,
+                    "next_required_action": (
+                        "record_dataset2_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_before_preflight"
+                    ),
+                },
+                "safety_summary": self._safety_summary(),
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        preflight = self._controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_snapshot(
+            store,
+            final_execution_execution_execution_execution_approval,
+        )
+        checks = self._controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_checks(
+            final_execution_execution_execution_execution_approval,
+            preflight=preflight,
+            requested_by=requested_by,
+            preflight_decision=preflight_decision,
+        )
+        blocked_count = sum(1 for check in checks if check.get("status") == "blocked")
+        warning_count = sum(1 for check in checks if check.get("status") == "warning")
+        ready_for_dry_run = (
+            blocked_count == 0
+            and preflight_decision
+            == "prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run"
+        )
+        source_summary = final_execution_execution_execution_execution_approval.get("summary") or {}
+        payload = {
+            "schema_version": "dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight.v1",
+            "stage": self.stage,
+            "status": (
+                "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_ready_for_dry_run"
+                if ready_for_dry_run
+                else "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_blocked"
+            ),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id": final_execution_execution_execution_execution_approval.get(
+                "id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_execution_dry_run_review_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_execution_dry_run_review_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_execution_dry_run_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_execution_dry_run_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_execution_preflight_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_execution_preflight_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_execution_approval_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_execution_approval_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_dry_run_review_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_dry_run_review_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_dry_run_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_dry_run_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_preflight_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_preflight_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_approval_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_approval_id"
+            ),
+            "apply_execution_plan_execution_final_dry_run_review_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_dry_run_review_id"
+            ),
+            "apply_execution_plan_execution_final_dry_run_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_dry_run_id"
+            ),
+            "apply_execution_plan_execution_final_preflight_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_preflight_id"
+            ),
+            "apply_execution_plan_execution_final_approval_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_approval_id"
+            ),
+            "apply_execution_plan_execution_dry_run_review_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_dry_run_review_id"
+            ),
+            "apply_execution_plan_execution_dry_run_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_dry_run_id"
+            ),
+            "apply_execution_plan_execution_preflight_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_preflight_id"
+            ),
+            "apply_execution_plan_execution_approval_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_approval_id"
+            ),
+            "apply_execution_plan_dry_run_review_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_dry_run_review_id"
+            ),
+            "apply_execution_plan_dry_run_id": final_execution_execution_execution_execution_approval.get("apply_execution_plan_dry_run_id"),
+            "apply_execution_plan_preflight_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_preflight_id"
+            ),
+            "apply_execution_plan_id": final_execution_execution_execution_execution_approval.get("apply_execution_plan_id"),
+            "package_id": final_execution_execution_execution_execution_approval.get("package_id"),
+            "source_final_execution_execution_execution_execution_approval_status": final_execution_execution_execution_execution_approval.get("status"),
+            "source_final_execution_execution_execution_execution_approval_summary": {
+                "check_count": source_summary.get("check_count", 0),
+                "blocked_check_count": source_summary.get("blocked_check_count", 0),
+                "warning_check_count": source_summary.get("warning_check_count", 0),
+                "source_review_blocked_check_count": source_summary.get("source_review_blocked_check_count"),
+                "automated_operation_count": source_summary.get("automated_operation_count", 0),
+                "manual_operation_count": source_summary.get("manual_operation_count", 0),
+                "planned_operation_count": source_summary.get("planned_operation_count", 0),
+                "simulated_mutation_count": source_summary.get("simulated_mutation_count", 0),
+                "record_bodies_included": False,
+            },
+            "preflight": preflight,
+            "checks": checks,
+            "summary": {
+                "check_count": len(checks),
+                "blocked_check_count": blocked_count,
+                "warning_check_count": warning_count,
+                "source_final_execution_execution_execution_execution_approval_check_count": source_summary.get("check_count", 0),
+                "source_final_execution_execution_execution_execution_approval_blocked_check_count": source_summary.get(
+                    "blocked_check_count",
+                    0,
+                ),
+                "staging_record_count": preflight.get("staging_record_count", 0),
+                "approval_staging_record_count": preflight.get("approval_staging_record_count", 0),
+                "learning_sample_count": preflight.get("learning_sample_count", 0),
+                "approval_learning_sample_count": preflight.get("approval_learning_sample_count", 0),
+                "automated_operation_count": preflight.get("automated_operation_count", 0),
+                "manual_operation_count": preflight.get("manual_operation_count", 0),
+                "planned_operation_count": preflight.get("planned_operation_count", 0),
+                "simulated_mutation_count": preflight.get("simulated_mutation_count", 0),
+                "record_bodies_included": False,
+            },
+            "request": {
+                "requested_by": requested_by or "operator",
+                "preflight_decision": preflight_decision,
+                "note": note,
+                "record_bodies_included": False,
+                "evidence_package_body_included": False,
+                "review_only": True,
+                "simulation_only": True,
+            },
+            "decision": {
+                "writes_database_now": False,
+                "writes_existing_event_now": True,
+                "writes_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "mutates_staging_records_now": False,
+                "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_recorded": True,
+                "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_ready_for_dry_run": ready_for_dry_run,
+                "cleanup_execution_approved_now": False,
+                "cleanup_application_allowed_now": False,
+                "cleanup_executed_now": False,
+                "can_execute_cleanup_now": False,
+                "future_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run_required": True,
+                "future_cleanup_execution_requires_separate_run": True,
+                "can_promote_to_learning_samples_now": False,
+                "training_started_now": False,
+                "training_freeze_allowed": False,
+                "can_start_training_now": False,
+                "next_required_action": (
+                    "resolve_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_blocks_before_dry_run"
+                    if blocked_count
+                    else "run_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run_before_any_cleanup_execution"
+                ),
+            },
+            "source_final_execution_execution_execution_execution_approval_decision": {
+                "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_recorded": (
+                    final_execution_execution_execution_execution_approval.get("decision") or {}
+                ).get("controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_recorded"),
+                "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_accepted": (
+                    final_execution_execution_execution_execution_approval.get("decision") or {}
+                ).get("controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_accepted"),
+                "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_ready_for_preflight": (
+                    final_execution_execution_execution_execution_approval.get("decision") or {}
+                ).get(
+                    "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_ready_for_preflight"
+                ),
+                "cleanup_execution_approved_now": (final_execution_execution_execution_execution_approval.get("decision") or {}).get(
+                    "cleanup_execution_approved_now"
+                ),
+                "cleanup_application_allowed_now": (final_execution_execution_execution_execution_approval.get("decision") or {}).get(
+                    "cleanup_application_allowed_now"
+                ),
+                "cleanup_executed_now": (final_execution_execution_execution_execution_approval.get("decision") or {}).get(
+                    "cleanup_executed_now"
+                ),
+                "can_execute_cleanup_now": (final_execution_execution_execution_execution_approval.get("decision") or {}).get(
+                    "can_execute_cleanup_now"
+                ),
+                "writes_learning_samples_now": (final_execution_execution_execution_execution_approval.get("decision") or {}).get(
+                    "writes_learning_samples_now"
+                ),
+                "training_started_now": (final_execution_execution_execution_execution_approval.get("decision") or {}).get(
+                    "training_started_now"
+                ),
+            },
+            "safety_summary": self._safety_summary(writes_existing_event_now=True),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {**payload, "event_id": event_id}
+
+    def list_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflights(
+        self,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (
+                self.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_event_type,
+                max(1, min(limit, 100)),
+            ),
+        )
+        preflights: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row.pop("payload_json") or "{}")
+            preflights.append(
+                {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    **payload,
+                }
+            )
+        return preflights
+
     def _locate_pack(self, source_dir: str | None) -> Path | None:
         candidates: list[Path] = []
         if source_dir:
@@ -14416,6 +14738,44 @@ class Dataset2TrainingReadinessService:
         )
         return self._event_payload(row) if row else None
 
+    def _cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_by_id(
+        self,
+        store: SQLiteStore,
+        approval_id: int | None,
+    ) -> dict[str, Any] | None:
+        if approval_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (
+                self.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_event_type,
+                approval_id,
+            ),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval(
+        self,
+        store: SQLiteStore,
+    ) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (
+                self.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_event_type,
+            ),
+        )
+        return self._event_payload(row) if row else None
+
     def _cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_preflight_by_id(
         self,
         store: SQLiteStore,
@@ -14450,6 +14810,44 @@ class Dataset2TrainingReadinessService:
             """,
             (
                 self.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_preflight_event_type,
+            ),
+        )
+        return self._event_payload(row) if row else None
+
+    def _cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_by_id(
+        self,
+        store: SQLiteStore,
+        preflight_id: int | None,
+    ) -> dict[str, Any] | None:
+        if preflight_id is None:
+            return None
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ? AND id = ?
+            """,
+            (
+                self.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_event_type,
+                preflight_id,
+            ),
+        )
+        return self._event_payload(row) if row else None
+
+    def _latest_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight(
+        self,
+        store: SQLiteStore,
+    ) -> dict[str, Any] | None:
+        row = store.fetch_one(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (
+                self.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_event_type,
             ),
         )
         return self._event_payload(row) if row else None
@@ -26277,6 +26675,356 @@ class Dataset2TrainingReadinessService:
                 },
                 "all false",
                 "P53 records approval metadata only; cleanup execution and training stay blocked",
+            ),
+        ]
+
+    def _empty_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight(
+        self,
+    ) -> dict[str, Any]:
+        return {
+            "package_id": None,
+            "lock_key": None,
+            "apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id": None,
+            "apply_execution_plan_execution_final_execution_execution_execution_dry_run_review_id": None,
+            "apply_execution_plan_execution_final_execution_execution_execution_dry_run_id": None,
+            "apply_execution_plan_execution_final_execution_execution_execution_preflight_id": None,
+            "apply_execution_plan_execution_final_execution_execution_execution_approval_id": None,
+            "apply_execution_plan_execution_final_execution_execution_dry_run_review_id": None,
+            "apply_execution_plan_execution_final_execution_execution_dry_run_id": None,
+            "apply_execution_plan_execution_final_execution_execution_preflight_id": None,
+            "apply_execution_plan_execution_final_execution_execution_approval_id": None,
+            "apply_execution_plan_execution_final_dry_run_review_id": None,
+            "apply_execution_plan_execution_final_dry_run_id": None,
+            "apply_execution_plan_execution_final_preflight_id": None,
+            "apply_execution_plan_execution_final_approval_id": None,
+            "apply_execution_plan_execution_dry_run_review_id": None,
+            "apply_execution_plan_execution_dry_run_id": None,
+            "apply_execution_plan_execution_preflight_id": None,
+            "apply_execution_plan_execution_approval_id": None,
+            "staging_record_count": 0,
+            "approval_staging_record_count": 0,
+            "expected_staging_record_count_after": 0,
+            "staging_count_still_matches": False,
+            "learning_sample_count": 0,
+            "approval_learning_sample_count": 0,
+            "expected_learning_sample_count_after": 0,
+            "learning_sample_count_still_matches": False,
+            "automated_operation_count": 0,
+            "manual_operation_count": 0,
+            "planned_operation_count": 0,
+            "simulated_mutation_count": 0,
+            "transaction_required": True,
+            "rollback_required": True,
+            "allowed_next_stage": "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run",
+            "allowed_tables": ["dataset2_staging_records"],
+            "forbidden_tables": ["learning_samples"],
+            "contains_sql": False,
+            "contains_executable_code": False,
+            "can_execute_now": False,
+            "record_bodies_included": False,
+            "affected_rows_body_included": False,
+            "writes_staging_records_now": False,
+            "writes_learning_samples_now": False,
+            "mutates_staging_records_now": False,
+            "review_only": True,
+            "simulation_only": True,
+        }
+
+    def _controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_snapshot(
+        self,
+        store: SQLiteStore,
+        final_execution_execution_execution_execution_approval: dict[str, Any],
+    ) -> dict[str, Any]:
+        approval_scope = final_execution_execution_execution_execution_approval.get("approval_scope") or {}
+        package_id = approval_scope.get("package_id") or final_execution_execution_execution_execution_approval.get("package_id")
+        current_staging_count = self._staging_record_count(store, package_id)
+        current_learning_count = self._learning_sample_count(store)
+        approval_staging_count = int(approval_scope.get("staging_record_count_before") or 0)
+        approval_learning_count = int(approval_scope.get("learning_sample_count_before") or 0)
+        return {
+            "package_id": package_id,
+            "lock_key": approval_scope.get("lock_key"),
+            "apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id": final_execution_execution_execution_execution_approval.get(
+                "id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_execution_dry_run_review_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_execution_dry_run_review_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_execution_dry_run_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_execution_dry_run_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_execution_preflight_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_execution_preflight_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_execution_approval_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_execution_approval_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_dry_run_review_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_dry_run_review_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_dry_run_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_dry_run_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_preflight_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_preflight_id"
+            ),
+            "apply_execution_plan_execution_final_execution_execution_approval_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_execution_execution_approval_id"
+            ),
+            "apply_execution_plan_execution_final_dry_run_review_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_dry_run_review_id"
+            ),
+            "apply_execution_plan_execution_final_dry_run_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_dry_run_id"
+            ),
+            "apply_execution_plan_execution_final_preflight_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_preflight_id"
+            ),
+            "apply_execution_plan_execution_final_approval_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_final_approval_id"
+            ),
+            "apply_execution_plan_execution_dry_run_review_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_dry_run_review_id"
+            ),
+            "apply_execution_plan_execution_dry_run_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_dry_run_id"
+            ),
+            "apply_execution_plan_execution_preflight_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_preflight_id"
+            ),
+            "apply_execution_plan_execution_approval_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_execution_approval_id"
+            ),
+            "apply_execution_plan_dry_run_review_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_dry_run_review_id"
+            ),
+            "apply_execution_plan_dry_run_id": final_execution_execution_execution_execution_approval.get("apply_execution_plan_dry_run_id"),
+            "apply_execution_plan_preflight_id": final_execution_execution_execution_execution_approval.get(
+                "apply_execution_plan_preflight_id"
+            ),
+            "apply_execution_plan_id": final_execution_execution_execution_execution_approval.get("apply_execution_plan_id"),
+            "staging_record_count": current_staging_count,
+            "approval_staging_record_count": approval_staging_count,
+            "expected_staging_record_count_after": int(
+                approval_scope.get("expected_staging_record_count_after") or 0
+            ),
+            "staging_count_still_matches": current_staging_count == approval_staging_count
+            and current_staging_count > 0,
+            "learning_sample_count": current_learning_count,
+            "approval_learning_sample_count": approval_learning_count,
+            "expected_learning_sample_count_after": int(
+                approval_scope.get("expected_learning_sample_count_after") or 0
+            ),
+            "learning_sample_count_still_matches": current_learning_count == approval_learning_count,
+            "automated_operation_count": int(approval_scope.get("automated_operation_count") or 0),
+            "manual_operation_count": int(approval_scope.get("manual_operation_count") or 0),
+            "planned_operation_count": int(approval_scope.get("planned_operation_count") or 0),
+            "simulated_mutation_count": int(approval_scope.get("simulated_mutation_count") or 0),
+            "transaction_required": bool(approval_scope.get("requires_transaction")),
+            "rollback_required": bool(approval_scope.get("requires_rollback")),
+            "allowed_next_stage": "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run",
+            "allowed_tables": approval_scope.get("allowed_tables") or ["dataset2_staging_records"],
+            "forbidden_tables": approval_scope.get("forbidden_tables") or ["learning_samples"],
+            "contains_sql": False,
+            "contains_executable_code": False,
+            "can_execute_now": False,
+            "record_bodies_included": False,
+            "affected_rows_body_included": False,
+            "writes_staging_records_now": False,
+            "writes_learning_samples_now": False,
+            "mutates_staging_records_now": False,
+            "review_only": True,
+            "simulation_only": True,
+        }
+
+    def _controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_checks(
+        self,
+        final_execution_execution_execution_execution_approval: dict[str, Any],
+        preflight: dict[str, Any],
+        requested_by: str,
+        preflight_decision: str,
+    ) -> list[dict[str, Any]]:
+        summary = final_execution_execution_execution_execution_approval.get("summary") or {}
+        decision = final_execution_execution_execution_execution_approval.get("decision") or {}
+        approval_scope = final_execution_execution_execution_execution_approval.get("approval_scope") or {}
+        blocked_check_count = int(summary.get("blocked_check_count") or 0)
+        allowed_decisions = {
+            "prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run",
+            "needs_revision",
+            "rejected",
+        }
+        return [
+            self._manual_evidence_check(
+                "apply_execution_plan_execution_final_execution_execution_execution_execution_approval_available",
+                "passed" if final_execution_execution_execution_execution_approval.get("id") else "blocked",
+                final_execution_execution_execution_execution_approval.get("id"),
+                "existing controlled cleanup apply execution plan execution final execution execution execution approval",
+                "P54 final execution execution execution preflight must reference an existing P53 approval event",
+            ),
+            self._manual_evidence_check(
+                "apply_execution_plan_execution_final_execution_execution_execution_execution_approval_accepted",
+                "passed"
+                if final_execution_execution_execution_execution_approval.get("status")
+                == "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_accepted"
+                and decision.get(
+                    "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_accepted"
+                )
+                is True
+                and decision.get(
+                    "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_ready_for_preflight"
+                )
+                is True
+                else "blocked",
+                {
+                    "status": final_execution_execution_execution_execution_approval.get("status"),
+                    "accepted": decision.get(
+                        "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_accepted"
+                    ),
+                    "ready_for_preflight": decision.get(
+                        "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_ready_for_preflight"
+                    ),
+                },
+                "accepted and ready_for_preflight",
+                "only an accepted P53 approval can enter final execution execution execution preflight",
+            ),
+            self._manual_evidence_check(
+                "source_final_execution_execution_execution_execution_approval_blocked_checks_clear",
+                "passed" if blocked_check_count == 0 else "blocked",
+                blocked_check_count,
+                0,
+                "P53 approval checks must have no blocked items",
+            ),
+            self._manual_evidence_check(
+                "preflight_has_lock_key",
+                "passed" if bool(preflight.get("lock_key")) else "blocked",
+                preflight.get("lock_key"),
+                "non-empty lock key",
+                "P54 preflight must retain the P53 approval scope lock key",
+            ),
+            self._manual_evidence_check(
+                "staging_count_still_matches_approval",
+                "passed" if preflight.get("staging_count_still_matches") is True else "blocked",
+                {
+                    "current": preflight.get("staging_record_count"),
+                    "approved": preflight.get("approval_staging_record_count"),
+                },
+                "matching nonzero counts",
+                "current staging count must still match the P53 approval scope",
+            ),
+            self._manual_evidence_check(
+                "learning_samples_unchanged",
+                "passed" if preflight.get("learning_sample_count_still_matches") is True else "blocked",
+                {
+                    "current": preflight.get("learning_sample_count"),
+                    "approved": preflight.get("approval_learning_sample_count"),
+                },
+                "matching counts",
+                "learning_samples count must still match the P53 approval scope",
+            ),
+            self._manual_evidence_check(
+                "transaction_and_rollback_required",
+                "passed"
+                if preflight.get("transaction_required") and preflight.get("rollback_required")
+                else "blocked",
+                {
+                    "transaction_required": preflight.get("transaction_required"),
+                    "rollback_required": preflight.get("rollback_required"),
+                },
+                "transaction and rollback required",
+                "future final execution execution execution dry-run cannot proceed without transaction and rollback gates",
+            ),
+            self._manual_evidence_check(
+                "table_scope_limited",
+                "passed"
+                if preflight.get("allowed_tables") == ["dataset2_staging_records"]
+                and "learning_samples" in (preflight.get("forbidden_tables") or [])
+                else "blocked",
+                {
+                    "allowed_tables": preflight.get("allowed_tables"),
+                    "forbidden_tables": preflight.get("forbidden_tables"),
+                },
+                "dataset2_staging_records only; learning_samples forbidden",
+                "P54 preflight can only scope future work to staging records",
+            ),
+            self._manual_evidence_check(
+                "preflight_contains_no_executable_payload",
+                "passed"
+                if not preflight.get("contains_sql")
+                and not preflight.get("contains_executable_code")
+                and not preflight.get("can_execute_now")
+                else "blocked",
+                {
+                    "contains_sql": bool(preflight.get("contains_sql")),
+                    "contains_executable_code": bool(preflight.get("contains_executable_code")),
+                    "can_execute_now": bool(preflight.get("can_execute_now")),
+                },
+                "all false",
+                "P54 preflight cannot include SQL, runnable code, or execution permission",
+            ),
+            self._manual_evidence_check(
+                "aggregate_only_no_record_bodies",
+                "passed"
+                if preflight.get("record_bodies_included") is False
+                and preflight.get("affected_rows_body_included") is False
+                else "blocked",
+                {
+                    "record_bodies_included": preflight.get("record_bodies_included"),
+                    "affected_rows_body_included": preflight.get("affected_rows_body_included"),
+                },
+                "no record bodies",
+                "controlled final execution execution execution preflight may store aggregate metadata only",
+            ),
+            self._manual_evidence_check(
+                "preflight_metadata_present",
+                "passed" if bool(requested_by) and preflight_decision in allowed_decisions else "blocked",
+                {"requested_by_present": bool(requested_by), "preflight_decision": preflight_decision},
+                sorted(allowed_decisions),
+                "operator final execution execution execution preflight metadata must be explicit and constrained",
+            ),
+            self._manual_evidence_check(
+                "preflight_decision_allows_final_execution_execution_execution_execution_dry_run_only",
+                "passed"
+                if preflight_decision
+                == "prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run"
+                else "blocked",
+                preflight_decision,
+                "prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run",
+                "needs_revision or rejected preflights cannot advance to later dry-run",
+            ),
+            self._manual_evidence_check(
+                "source_final_execution_execution_execution_execution_approval_kept_execution_blocked",
+                "passed"
+                if decision.get("cleanup_execution_approved_now") is False
+                and decision.get("cleanup_application_allowed_now") is False
+                and decision.get("cleanup_executed_now") is False
+                and decision.get("can_execute_cleanup_now") is False
+                and decision.get("writes_learning_samples_now") is False
+                and decision.get("training_started_now") is False
+                else "blocked",
+                {
+                    "cleanup_execution_approved_now": decision.get("cleanup_execution_approved_now"),
+                    "cleanup_application_allowed_now": decision.get("cleanup_application_allowed_now"),
+                    "cleanup_executed_now": decision.get("cleanup_executed_now"),
+                    "can_execute_cleanup_now": decision.get("can_execute_cleanup_now"),
+                    "writes_learning_samples_now": decision.get("writes_learning_samples_now"),
+                    "training_started_now": decision.get("training_started_now"),
+                },
+                "all false",
+                "P53 approval must not have executed cleanup or training",
+            ),
+            self._manual_evidence_check(
+                "cleanup_and_training_remain_blocked",
+                "passed",
+                {
+                    "cleanup_execution_approved_now": False,
+                    "cleanup_application_allowed_now": False,
+                    "cleanup_executed_now": False,
+                    "can_execute_cleanup_now": False,
+                    "writes_learning_samples_now": False,
+                    "training_started_now": False,
+                },
+                "all false",
+                "P54 records final execution execution execution preflight metadata only; cleanup execution and training stay blocked",
             ),
         ]
 

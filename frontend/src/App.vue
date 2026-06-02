@@ -2220,6 +2220,24 @@
           </span>
           <small>{{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionApproval.decision.next_required_action }}</small>
         </div>
+        <div v-if="dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight" class="report">
+          <strong>Dataset2 Apply Execution Plan Execution Final Execution Execution Execution Execution Preflight / {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.event_id }} /
+            source {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id }} /
+            staging {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.summary.staging_record_count }}
+            -> {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.preflight.expected_staging_record_count_after }}
+          </span>
+          <span>
+            dry-run {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.decision.controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight_ready_for_dry_run ? "ready" : "blocked" }} /
+            lock {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.preflight.lock_key ?? "missing" }}
+          </span>
+          <span>
+            execute now {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.decision.can_execute_cleanup_now ? "yes" : "no" }} /
+            training {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.decision.next_required_action }}</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -2394,6 +2412,9 @@
           </button>
           <button data-testid="dataset2-controlled-cleanup-apply-execution-plan-execution-final-execution-execution-execution-execution-approval-button" @click="approveDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecution" :disabled="dataset2Loading">
             Dataset2 final execution execution approval
+          </button>
+          <button data-testid="dataset2-controlled-cleanup-apply-execution-plan-execution-final-execution-execution-execution-execution-preflight-button" @click="preflightDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecution" :disabled="dataset2Loading">
+            Dataset2 final execution execution preflight
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -6483,6 +6504,21 @@ type Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecution
   safety_summary: Record<string, boolean>;
 };
 
+type Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id?: number | null;
+  package_id?: string | null;
+  preflight: Record<string, any>;
+  checks: Dataset2ManualEvidence["checks"];
+  summary: Record<string, any>;
+  request: Record<string, any>;
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+};
+
 
 type MonitoringEvent = {
   id?: number;
@@ -10170,6 +10206,10 @@ const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutio
   ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionApproval | null>(null);
 const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionApprovals =
   ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionApproval[]>([]);
+const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight =
+  ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight | null>(null);
+const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflights =
+  ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -12816,6 +12856,58 @@ async function loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExec
   }
 }
 
+async function preflightDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionApproval.value?.event_id &&
+      !dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionApproval.value?.id
+    ) {
+      await loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionApprovals();
+    }
+    dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.value =
+      await fetchJson<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight>(
+        "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-execution-execution-preflight",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id:
+              dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionApproval.value?.event_id ??
+              dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionApproval.value?.id,
+            requested_by: "dashboard",
+            preflight_decision:
+              "prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run",
+            note: "V5.6-P54 metadata-only controlled cleanup apply execution plan execution final execution execution execution execution preflight"
+          })
+        }
+      );
+    await loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflights();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled cleanup apply execution plan execution final execution execution execution execution preflight failed";
+    dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflights() {
+  try {
+    dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflights.value =
+      await fetchJson<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight[]>(
+        "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-execution-execution-preflights?limit=5"
+      );
+    dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.value =
+      dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflights.value[0] ??
+      dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflight.value;
+  } catch {
+    dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflights.value = [];
+  }
+}
+
 async function loadMonitoring() {
   try {
     const session = await fetchJson<{ summary?: MonitoringRun }>("/api/monitoring/sessions/latest");
@@ -14853,6 +14945,7 @@ onMounted(async () => {
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionDryRuns(),
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionDryRunReviews(),
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionApprovals(),
+    loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflights(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),

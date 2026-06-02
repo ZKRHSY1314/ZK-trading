@@ -501,6 +501,12 @@ class Dataset2StagingCleanupExecutionControlledApplyExecutionPlanExecutionFinalE
     approval_decision: str = "approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight"
     note: str | None = None
 
+class Dataset2StagingCleanupExecutionControlledApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflightInput(BaseModel):
+    apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id: int | None = None
+    requested_by: str = "operator"
+    preflight_decision: str = "prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run"
+    note: str | None = None
+
 
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
@@ -2090,6 +2096,26 @@ def dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution
 @router.get("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-execution-execution-approvals")
 def dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approvals(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approvals(
+        limit=limit
+    )
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-execution-execution-preflight")
+def dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight(
+    payload: Dataset2StagingCleanupExecutionControlledApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupExecutionControlledApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionPreflightInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight(
+        apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id=payload.apply_execution_plan_execution_final_execution_execution_execution_execution_approval_id,
+        requested_by=payload.requested_by,
+        preflight_decision=payload.preflight_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-execution-execution-preflights")
+def dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflights(
         limit=limit
     )
 
