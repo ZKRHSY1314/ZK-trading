@@ -1,4 +1,4 @@
-# V1/V2 Release Checklist
+﻿# V1/V2 Release Checklist
 
 ## 1. Backend Compile & Test
 - [ ] Backend compiles successfully (`python -m compileall app scripts`)
@@ -518,3 +518,7 @@ The following automation schedule is recommended during active trading days:
 - [ ] V5.6-P47 accepts only a passed P46 final execution execution preflight plus `simulated_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_review`; blocked, missing, rejected, or needs-revision inputs must not become ready for review.
 - [ ] V5.6-P47 simulates aggregate final execution execution impact only, preserving lock key, staging count, learning-sample count, transaction/rollback, table scope, no record bodies, no SQL, and no executable payload.
 - [ ] V5.6-P47 must keep `cleanup_execution_approved_now=false`, `cleanup_application_allowed_now=false`, `cleanup_executed_now=false`, `can_execute_cleanup_now=false`, `mutates_staging_records_now=false`, `writes_staging_records_now=false`, `writes_learning_samples_now=false`, `can_promote_to_learning_samples_now=false`, `training_started_now=false`, `writes_source_dataset=false`, `writes_file=false`, and `live_trading_enabled=false`.
+- [ ] V5.6-P48 exposes `POST /api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-dry-run-review` and `GET /api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-dry-run-reviews` as metadata-only final execution execution dry-run review APIs.
+- [ ] V5.6-P48 accepts only a passed P47 final execution execution dry-run plus `approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_approval`; blocked, missing, rejected, or needs-revision inputs must not become accepted.
+- [ ] V5.6-P48 reviews aggregate P47 dry-run evidence only, including simulated mutation counts, manual backfill warning, transaction/rollback, table scope, no record bodies, no SQL, and no executable payload.
+- [ ] V5.6-P48 must keep `cleanup_execution_approved_now=false`, `cleanup_application_allowed_now=false`, `cleanup_executed_now=false`, `can_execute_cleanup_now=false`, `mutates_staging_records_now=false`, `writes_staging_records_now=false`, `writes_learning_samples_now=false`, `can_promote_to_learning_samples_now=false`, `training_started_now=false`, `writes_source_dataset=false`, `writes_file=false`, and `live_trading_enabled=false`.
