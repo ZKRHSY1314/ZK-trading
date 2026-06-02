@@ -2064,6 +2064,23 @@
           </span>
           <small>{{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunReview.decision.next_required_action }}</small>
         </div>
+        <div v-if="dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval" class="report">
+          <strong>Dataset2 Apply Execution Plan Execution Final Execution Execution Approval / {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.event_id }} /
+            source {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.apply_execution_plan_execution_final_execution_dry_run_review_id }} /
+            simulated {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.summary.simulated_mutation_count }}
+          </span>
+          <span>
+            accepted {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.decision.controlled_cleanup_apply_execution_plan_execution_final_execution_execution_approval_accepted ? "yes" : "no" }} /
+            preflight {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.decision.controlled_cleanup_apply_execution_plan_execution_final_execution_execution_approval_ready_for_preflight ? "ready" : "blocked" }}
+          </span>
+          <span>
+            execute now {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.decision.can_execute_cleanup_now ? "yes" : "no" }} /
+            training {{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.decision.next_required_action }}</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -2211,6 +2228,9 @@
           </button>
           <button data-testid="dataset2-controlled-cleanup-apply-execution-plan-execution-final-execution-dry-run-review-button" @click="reviewDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRun" :disabled="dataset2Loading">
             Dataset2 final execution review
+          </button>
+          <button data-testid="dataset2-controlled-cleanup-apply-execution-plan-execution-final-execution-execution-approval-button" @click="approveDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecution" :disabled="dataset2Loading">
+            Dataset2 final execution execution approval
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -5765,6 +5785,98 @@ type Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunRev
     cleanup_executed_now: boolean;
     can_execute_cleanup_now: boolean;
     future_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_approval_required: boolean;
+    future_cleanup_execution_requires_separate_run: boolean;
+    can_promote_to_learning_samples_now: boolean;
+    training_started_now: boolean;
+    can_start_training_now: boolean;
+    next_required_action: string;
+  };
+  safety_summary: Record<string, boolean>;
+};
+
+type Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  apply_execution_plan_execution_final_execution_dry_run_review_id?: number | null;
+  apply_execution_plan_execution_final_execution_dry_run_id?: number | null;
+  apply_execution_plan_execution_final_execution_preflight_id?: number | null;
+  apply_execution_plan_execution_final_execution_approval_id?: number | null;
+  apply_execution_plan_execution_final_dry_run_review_id?: number | null;
+  apply_execution_plan_execution_final_dry_run_id?: number | null;
+  apply_execution_plan_execution_final_preflight_id?: number | null;
+  apply_execution_plan_execution_final_approval_id?: number | null;
+  package_id?: string | null;
+  source_review_status?: string | null;
+  source_review_summary: {
+    check_count: number;
+    blocked_check_count: number | null;
+    warning_check_count?: number | null;
+    automated_operation_count: number;
+    manual_operation_count: number;
+    planned_operation_count: number;
+    simulated_mutation_count: number;
+    record_bodies_included: boolean;
+  };
+  approval_scope: {
+    package_id?: string | null;
+    lock_key?: string | null;
+    approval_scope: string;
+    allowed_next_stage: string;
+    requires_preflight: boolean;
+    requires_transaction: boolean;
+    requires_rollback: boolean;
+    automated_operation_count: number;
+    manual_operation_count: number;
+    planned_operation_count: number;
+    simulated_mutation_count: number;
+    staging_record_count_before: number;
+    expected_staging_record_count_after: number;
+    learning_sample_count_before: number;
+    expected_learning_sample_count_after: number;
+    allowed_tables: string[];
+    forbidden_tables: string[];
+    contains_sql: boolean;
+    contains_executable_code: boolean;
+    can_execute_now: boolean;
+    record_bodies_included: boolean;
+    affected_rows_body_included: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    check_count: number;
+    blocked_check_count: number;
+    warning_check_count: number;
+    source_review_check_count: number | null;
+    source_review_blocked_check_count: number | null;
+    automated_operation_count: number;
+    manual_operation_count: number;
+    planned_operation_count: number;
+    simulated_mutation_count: number;
+    record_bodies_included: boolean;
+  };
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    note?: string | null;
+    record_bodies_included: boolean;
+    evidence_package_body_included: boolean;
+  };
+  decision: {
+    writes_database_now: boolean;
+    writes_existing_event_now: boolean;
+    writes_staging_records_now: boolean;
+    writes_learning_samples_now: boolean;
+    mutates_staging_records_now: boolean;
+    controlled_cleanup_apply_execution_plan_execution_final_execution_execution_approval_recorded: boolean;
+    controlled_cleanup_apply_execution_plan_execution_final_execution_execution_approval_accepted: boolean;
+    controlled_cleanup_apply_execution_plan_execution_final_execution_execution_approval_ready_for_preflight: boolean;
+    cleanup_execution_approved_now: boolean;
+    cleanup_application_allowed_now: boolean;
+    cleanup_executed_now: boolean;
+    can_execute_cleanup_now: boolean;
+    future_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_preflight_required: boolean;
     future_cleanup_execution_requires_separate_run: boolean;
     can_promote_to_learning_samples_now: boolean;
     training_started_now: boolean;
@@ -9424,6 +9536,10 @@ const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunRe
   ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunReview | null>(null);
 const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunReviews =
   ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunReview[]>([]);
+const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval =
+  ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval | null>(null);
+const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApprovals =
+  ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -11605,6 +11721,58 @@ async function loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExec
   }
 }
 
+async function approveDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunReview.value?.event_id &&
+      !dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunReview.value?.id
+    ) {
+      await loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunReviews();
+    }
+    dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.value =
+      await fetchJson<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval>(
+        "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-approval",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            apply_execution_plan_execution_final_execution_dry_run_review_id:
+              dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunReview.value?.event_id ??
+              dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunReview.value?.id,
+            approved_by: "dashboard",
+            approval_decision:
+              "approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_preflight",
+            note: "V5.6-P45 metadata-only controlled cleanup apply execution plan execution final execution execution approval"
+          })
+        }
+      );
+    await loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApprovals();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled cleanup apply execution plan execution final execution execution approval failed";
+    dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApprovals() {
+  try {
+    dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApprovals.value =
+      await fetchJson<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval[]>(
+        "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-approvals?limit=5"
+      );
+    dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.value =
+      dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApprovals.value[0] ??
+      dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApproval.value;
+  } catch {
+    dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApprovals.value = [];
+  }
+}
+
 async function loadMonitoring() {
   try {
     const session = await fetchJson<{ summary?: MonitoringRun }>("/api/monitoring/sessions/latest");
@@ -13633,6 +13801,7 @@ onMounted(async () => {
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionPreflights(),
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRuns(),
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionDryRunReviews(),
+    loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionApprovals(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),
