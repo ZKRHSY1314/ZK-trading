@@ -415,6 +415,13 @@ class Dataset2StagingCleanupExecutionControlledApplyExecutionPlanExecutionFinalD
     note: str | None = None
 
 
+class Dataset2StagingCleanupExecutionControlledApplyExecutionPlanExecutionFinalExecutionApprovalInput(BaseModel):
+    apply_execution_plan_execution_final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_preflight"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -1746,6 +1753,26 @@ def dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution
 @router.get("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-dry-run-reviews")
 def dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_dry_run_reviews(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_dry_run_reviews(
+        limit=limit
+    )
+
+
+@router.post("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-approval")
+def dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_approval(
+    payload: Dataset2StagingCleanupExecutionControlledApplyExecutionPlanExecutionFinalExecutionApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2StagingCleanupExecutionControlledApplyExecutionPlanExecutionFinalExecutionApprovalInput()
+    return Dataset2TrainingReadinessService().staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_approval(
+        apply_execution_plan_execution_final_dry_run_review_id=payload.apply_execution_plan_execution_final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-approvals")
+def dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_approvals(
         limit=limit
     )
 
