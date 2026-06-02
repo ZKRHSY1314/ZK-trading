@@ -194,6 +194,7 @@ class Dataset2TrainingReadinessService:
     staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_execution_approval_event_type = (
         "dataset2_staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_execution_approval"
     )
+    training_convergence_review_event_type = "dataset2_training_convergence_review"
 
     def readiness(self, source_dir: str | None = None, limit: int = 500) -> dict[str, Any]:
         pack = self._locate_pack(source_dir)
@@ -689,6 +690,207 @@ class Dataset2TrainingReadinessService:
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
         }
+
+    def training_convergence_review(
+        self,
+        source_dir: str | None = None,
+        reviewed_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """Summarize Dataset2 readiness before any cleanup execution or training is allowed."""
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        readiness = self.readiness(source_dir=source_dir, limit=1000)
+        staging = self.staging_summary()
+        latest_quality = self._latest_quality_review(store)
+        latest_p57_approval = self._latest_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval(
+            store
+        )
+        staging_count = self._staging_record_count(store)
+        learning_count = self._learning_sample_count(store)
+        quality_decision = (latest_quality or {}).get("decision") or {}
+        p57_decision = (latest_p57_approval or {}).get("decision") or {}
+        safety_summary = self._safety_summary(writes_existing_event_now=True)
+
+        checks = [
+            self._manual_evidence_check(
+                "dataset2_source_available",
+                "passed" if readiness.get("record_count", 0) > 0 else "blocked",
+                readiness.get("record_count", 0),
+                ">0",
+                "Dataset2 source records must be readable before any training path can converge",
+            ),
+            self._manual_evidence_check(
+                "source_readiness_does_not_allow_training_now",
+                "passed" if (readiness.get("decision") or {}).get("can_start_training_now") is False else "blocked",
+                (readiness.get("decision") or {}).get("can_start_training_now"),
+                False,
+                "P58 can only review readiness; source readiness must not start training",
+            ),
+            self._manual_evidence_check(
+                "staging_records_available",
+                "passed" if staging_count > 0 else "blocked",
+                staging_count,
+                ">0",
+                "Dataset2 staged records must exist before convergence can consider cleanup execution",
+            ),
+            self._manual_evidence_check(
+                "learning_samples_still_isolated",
+                "passed" if learning_count == 0 else "warning",
+                learning_count,
+                0,
+                "Dataset2 convergence expects no Dataset2 records promoted to learning_samples yet",
+            ),
+            self._manual_evidence_check(
+                "quality_review_available",
+                "passed" if latest_quality else "blocked",
+                (latest_quality or {}).get("id"),
+                "latest quality review event",
+                "A staging quality review must exist before convergence is meaningful",
+            ),
+            self._manual_evidence_check(
+                "quality_review_training_still_blocked",
+                "passed" if quality_decision.get("can_start_training_now") is False else "blocked",
+                quality_decision.get("can_start_training_now"),
+                False,
+                "Quality review evidence must keep training disabled until a later controlled training gate",
+            ),
+            self._manual_evidence_check(
+                "latest_p57_approval_available",
+                "passed" if latest_p57_approval else "blocked",
+                (latest_p57_approval or {}).get("id"),
+                "latest P57 approval event",
+                "P58 should summarize the latest P57 approval chain instead of adding another duplicate approval loop",
+            ),
+            self._manual_evidence_check(
+                "latest_p57_approval_ready_for_preflight_only",
+                "passed"
+                if p57_decision.get(
+                    "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_ready_for_preflight"
+                )
+                is True
+                else "blocked",
+                p57_decision.get(
+                    "controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval_ready_for_preflight"
+                ),
+                True,
+                "P57 must only allow a later preflight gate, not cleanup execution or training",
+            ),
+            self._manual_evidence_check(
+                "p57_kept_cleanup_and_training_blocked",
+                "passed"
+                if p57_decision.get("cleanup_execution_approved_now") is False
+                and p57_decision.get("cleanup_application_allowed_now") is False
+                and p57_decision.get("cleanup_executed_now") is False
+                and p57_decision.get("can_execute_cleanup_now") is False
+                and p57_decision.get("writes_learning_samples_now") is False
+                and p57_decision.get("training_started_now") is False
+                else "blocked",
+                {
+                    "cleanup_execution_approved_now": p57_decision.get("cleanup_execution_approved_now"),
+                    "cleanup_application_allowed_now": p57_decision.get("cleanup_application_allowed_now"),
+                    "cleanup_executed_now": p57_decision.get("cleanup_executed_now"),
+                    "can_execute_cleanup_now": p57_decision.get("can_execute_cleanup_now"),
+                    "writes_learning_samples_now": p57_decision.get("writes_learning_samples_now"),
+                    "training_started_now": p57_decision.get("training_started_now"),
+                },
+                "all false",
+                "The latest approval chain must not have mutated staging data or started training",
+            ),
+            self._manual_evidence_check(
+                "live_trading_disabled",
+                "passed" if settings.enable_live_trading is False else "blocked",
+                settings.enable_live_trading,
+                False,
+                "Dataset2 convergence cannot proceed while live trading is enabled",
+            ),
+        ]
+        blocked = [check for check in checks if check["status"] == "blocked"]
+        warnings = [check for check in checks if check["status"] == "warning"]
+        status = "dataset2_training_convergence_blocked" if blocked else "dataset2_training_convergence_review_passed"
+        now = datetime.now().isoformat(timespec="seconds")
+        payload = {
+            "schema_version": "dataset2_training_convergence_review.v1",
+            "stage": "V5.6-P58",
+            "status": status,
+            "generated_at": now,
+            "review": {
+                "reviewed_by": reviewed_by or "operator",
+                "note": note,
+            },
+            "evidence": {
+                "source_readiness_status": readiness.get("status"),
+                "source_record_count": readiness.get("record_count", 0),
+                "source_data_hash": readiness.get("data_hash"),
+                "staging_status": staging.get("status"),
+                "staging_record_count": staging_count,
+                "learning_sample_count": learning_count,
+                "latest_quality_review_id": (latest_quality or {}).get("id"),
+                "latest_quality_status": (latest_quality or {}).get("status"),
+                "latest_p57_approval_id": (latest_p57_approval or {}).get("id"),
+                "latest_p57_approval_status": (latest_p57_approval or {}).get("status"),
+            },
+            "checks": checks,
+            "summary": {
+                "passed_check_count": len([check for check in checks if check["status"] == "passed"]),
+                "warning_check_count": len(warnings),
+                "blocked_check_count": len(blocked),
+                "next_required_action": (
+                    "resolve_dataset2_convergence_blocks_before_cleanup_or_training"
+                    if blocked
+                    else "prepare_controlled_cleanup_execution_or_training_freeze_release_review"
+                ),
+            },
+            "decision": {
+                "training_convergence_review_recorded": True,
+                "training_convergence_review_passed": not blocked,
+                "can_execute_cleanup_now": False,
+                "cleanup_execution_approved_now": False,
+                "cleanup_application_allowed_now": False,
+                "cleanup_executed_now": False,
+                "writes_staging_records_now": False,
+                "mutates_staging_records_now": False,
+                "writes_learning_samples_now": False,
+                "can_promote_to_learning_samples_now": False,
+                "can_start_training_now": False,
+                "training_started_now": False,
+                "future_controlled_cleanup_or_training_gate_required": True,
+                "next_required_action": (
+                    "resolve_dataset2_convergence_blocks_before_cleanup_or_training"
+                    if blocked
+                    else "prepare_controlled_cleanup_execution_or_training_freeze_release_review"
+                ),
+            },
+            "safety_summary": safety_summary,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        with store.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO events (event_type, payload_json) VALUES (?, ?)",
+                (
+                    self.training_convergence_review_event_type,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+        return {"event_id": event_id, **payload}
+
+    def list_training_convergence_reviews(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = SQLiteStore(settings.database_path)
+        store.init()
+        rows = store.fetch_all(
+            """
+            SELECT id, event_type, payload_json, created_at
+            FROM events
+            WHERE event_type = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.training_convergence_review_event_type, max(1, min(limit, 100))),
+        )
+        return [self._event_payload(row) for row in rows]
 
     def staging_quality_review(
         self,

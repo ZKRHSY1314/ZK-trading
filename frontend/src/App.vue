@@ -2290,6 +2290,23 @@
           </span>
           <small>{{ dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionExecutionApproval.decision.next_required_action }}</small>
         </div>
+        <div v-if="dataset2TrainingConvergenceReview" class="report">
+          <strong>Dataset2 Training Convergence / {{ dataset2TrainingConvergenceReview.status }}</strong>
+          <span>
+            event {{ dataset2TrainingConvergenceReview.event_id }} /
+            staging {{ dataset2TrainingConvergenceReview.evidence.staging_record_count }} /
+            learning {{ dataset2TrainingConvergenceReview.evidence.learning_sample_count }}
+          </span>
+          <span>
+            passed {{ dataset2TrainingConvergenceReview.decision.training_convergence_review_passed ? "yes" : "no" }} /
+            train now {{ dataset2TrainingConvergenceReview.decision.can_start_training_now ? "yes" : "no" }}
+          </span>
+          <span>
+            cleanup now {{ dataset2TrainingConvergenceReview.decision.can_execute_cleanup_now ? "yes" : "no" }} /
+            blocked checks {{ dataset2TrainingConvergenceReview.summary.blocked_check_count }}
+          </span>
+          <small>{{ dataset2TrainingConvergenceReview.decision.next_required_action }}</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -2476,6 +2493,9 @@
           </button>
           <button data-testid="dataset2-controlled-cleanup-apply-execution-plan-execution-final-execution-execution-execution-execution-execution-approval-button" @click="approveDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionExecution" :disabled="dataset2Loading">
             Dataset2 final execution execution approval
+          </button>
+          <button data-testid="dataset2-training-convergence-review-button" @click="reviewDataset2TrainingConvergence" :disabled="dataset2Loading">
+            Dataset2 convergence review
           </button>
         </div>
         <div v-if="monitoring" class="report">
@@ -6632,6 +6652,38 @@ type Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecution
   safety_summary: Record<string, boolean>;
 };
 
+type Dataset2TrainingConvergenceReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  evidence: {
+    source_readiness_status?: string;
+    source_record_count: number;
+    source_data_hash?: string;
+    staging_status?: string;
+    staging_record_count: number;
+    learning_sample_count: number;
+    latest_quality_review_id?: number | null;
+    latest_quality_status?: string | null;
+    latest_p57_approval_id?: number | null;
+    latest_p57_approval_status?: string | null;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  review: Record<string, any>;
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type MonitoringEvent = {
   id?: number;
   symbol: string;
@@ -10334,6 +10386,8 @@ const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutio
   ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionExecutionApproval | null>(null);
 const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionExecutionApprovals =
   ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionExecutionApproval[]>([]);
+const dataset2TrainingConvergenceReview = ref<Dataset2TrainingConvergenceReview | null>(null);
+const dataset2TrainingConvergenceReviews = ref<Dataset2TrainingConvergenceReview[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
@@ -13188,6 +13242,41 @@ async function loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExec
   }
 }
 
+async function reviewDataset2TrainingConvergence() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2TrainingConvergenceReview.value = await fetchJson<Dataset2TrainingConvergenceReview>(
+      "/api/learning/dataset2/training-convergence-review",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          reviewed_by: "dashboard",
+          note: "V5.6-P58 metadata-only Dataset2 training convergence review"
+        })
+      }
+    );
+    await loadDataset2TrainingConvergenceReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 training convergence review failed";
+    dataset2TrainingConvergenceReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2TrainingConvergenceReviews() {
+  try {
+    dataset2TrainingConvergenceReviews.value = await fetchJson<Dataset2TrainingConvergenceReview[]>(
+      "/api/learning/dataset2/training-convergence-reviews?limit=5"
+    );
+    dataset2TrainingConvergenceReview.value =
+      dataset2TrainingConvergenceReviews.value[0] ?? dataset2TrainingConvergenceReview.value;
+  } catch {
+    dataset2TrainingConvergenceReviews.value = [];
+  }
+}
+
 async function loadMonitoring() {
   try {
     const session = await fetchJson<{ summary?: MonitoringRun }>("/api/monitoring/sessions/latest");
@@ -15229,6 +15318,7 @@ onMounted(async () => {
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionDryRuns(),
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionDryRunReviews(),
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionExecutionApprovals(),
+    loadDataset2TrainingConvergenceReviews(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),

@@ -9269,6 +9269,112 @@ def test_dataset2_controlled_cleanup_apply_execution_plan_execution_final_execut
     assert approvals[1]["id"] == approval["event_id"]
     assert approvals[1]["approval"]["approved_by"] == "tester"
     assert "evidence_package" not in approvals[1]
+
+
+def test_dataset2_training_convergence_review_summarizes_without_execution(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(
+                pattern_id="TRAINING_CONVERGENCE_001",
+                risk_level="medium_high",
+                split_tag="train",
+                observable_features=["['big_yang']", "high_volume"],
+                evidence_summary="",
+            ),
+            _record(
+                pattern_id="TRAINING_CONVERGENCE_002",
+                action_label="RISK_ALERT",
+                risk_level="high",
+                split_tag="test",
+            ),
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+    chain = _controlled_final_execution_execution_dry_run_chain(
+        service,
+        pack,
+        _manual_evidence_package(),
+        suffix="training-convergence",
+    )
+    source_review = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_dry_run_review(
+        apply_execution_plan_execution_final_execution_execution_dry_run_id=chain[
+            "final_execution_execution_dry_run"
+        ]["event_id"],
+        reviewed_by="tester",
+        review_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_approval",
+    )
+    source_approval = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_approval(
+        apply_execution_plan_execution_final_execution_execution_dry_run_review_id=source_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_preflight",
+    )
+    source_preflight = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_preflight(
+        apply_execution_plan_execution_final_execution_execution_execution_approval_id=source_approval["event_id"],
+        requested_by="tester",
+        preflight_decision="prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_dry_run",
+    )
+    source_dry_run = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_dry_run(
+        apply_execution_plan_execution_final_execution_execution_execution_preflight_id=source_preflight["event_id"],
+        simulated_by="tester",
+        dry_run_decision="simulated_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_review",
+    )
+    source_dry_run_review = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_dry_run_review(
+        apply_execution_plan_execution_final_execution_execution_execution_dry_run_id=source_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval",
+    )
+    p57_approval = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval(
+        apply_execution_plan_execution_final_execution_execution_execution_dry_run_review_id=source_dry_run_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight",
+    )
+    staging_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    review = service.training_convergence_review(
+        source_dir=str(pack),
+        reviewed_by="tester",
+        note="convergence evidence only",
+    )
+    staging_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    assert review["stage"] == "V5.6-P58"
+    assert review["status"] == "dataset2_training_convergence_review_passed"
+    assert review["evidence"]["latest_p57_approval_id"] == p57_approval["event_id"]
+    assert review["evidence"]["staging_record_count"] == staging_before
+    assert review["decision"]["training_convergence_review_recorded"] is True
+    assert review["decision"]["training_convergence_review_passed"] is True
+    assert review["decision"]["can_execute_cleanup_now"] is False
+    assert review["decision"]["cleanup_execution_approved_now"] is False
+    assert review["decision"]["cleanup_application_allowed_now"] is False
+    assert review["decision"]["cleanup_executed_now"] is False
+    assert review["decision"]["writes_staging_records_now"] is False
+    assert review["decision"]["mutates_staging_records_now"] is False
+    assert review["decision"]["writes_learning_samples_now"] is False
+    assert review["decision"]["can_promote_to_learning_samples_now"] is False
+    assert review["decision"]["can_start_training_now"] is False
+    assert review["decision"]["training_started_now"] is False
+    assert staging_after == staging_before
+    assert learning_after == learning_before
+    check_status = {check["name"]: check["status"] for check in review["checks"]}
+    assert check_status["dataset2_source_available"] == "passed"
+    assert check_status["staging_records_available"] == "passed"
+    assert check_status["quality_review_available"] == "passed"
+    assert check_status["latest_p57_approval_available"] == "passed"
+    assert check_status["latest_p57_approval_ready_for_preflight_only"] == "passed"
+    assert check_status["p57_kept_cleanup_and_training_blocked"] == "passed"
+    assert check_status["live_trading_disabled"] == "passed"
+
+    reviews = service.list_training_convergence_reviews(limit=3)
+    assert reviews[0]["id"] == review["event_id"]
+    assert reviews[0]["review"]["reviewed_by"] == "tester"
+    assert reviews[0]["decision"]["can_start_training_now"] is False
+
+
 def test_dataset2_readiness_api_smoke(client, tmp_path):
     pack = _write_dataset2_pack(tmp_path, [_record()])
 
@@ -9818,6 +9924,14 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
         "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-execution-execution-execution-approvals",
         params={"limit": 3},
     )
+    training_convergence_review = client.post(
+        "/api/learning/dataset2/training-convergence-review",
+        json={"source_dir": str(pack), "reviewed_by": "api-test"},
+    )
+    training_convergence_reviews = client.get(
+        "/api/learning/dataset2/training-convergence-reviews",
+        params={"limit": 3},
+    )
 
     assert readiness.status_code == 200
     assert preview.status_code == 200
@@ -9931,6 +10045,12 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approvals.status_code == 200
     assert cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_execution_approval.status_code == 200
     assert cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_execution_approvals.status_code == 200
+    assert training_convergence_review.status_code == 200
+    assert training_convergence_reviews.status_code == 200
+    assert training_convergence_review.json()["stage"] == "V5.6-P58"
+    assert training_convergence_review.json()["decision"]["can_start_training_now"] is False
+    assert training_convergence_review.json()["decision"]["writes_learning_samples_now"] is False
+    assert training_convergence_reviews.json()[0]["review"]["reviewed_by"] == "api-test"
     assert cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight.status_code == 200
     assert cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflights.status_code == 200
     assert readiness.json()["decision"]["can_start_training_now"] is False

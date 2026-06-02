@@ -528,6 +528,12 @@ class Dataset2StagingCleanupExecutionControlledApplyExecutionPlanExecutionFinalE
     note: str | None = None
 
 
+class Dataset2TrainingConvergenceReviewInput(BaseModel):
+    source_dir: str | None = None
+    reviewed_by: str = "operator"
+    note: str | None = None
+
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -1187,6 +1193,21 @@ def dataset2_staging_quality_review(payload: Dataset2StagingQualityReviewInput |
 @router.get("/learning/dataset2/staging/quality-reviews")
 def dataset2_staging_quality_reviews(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_staging_quality_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/training-convergence-review")
+def dataset2_training_convergence_review(payload: Dataset2TrainingConvergenceReviewInput | None = None) -> dict:
+    payload = payload or Dataset2TrainingConvergenceReviewInput()
+    return Dataset2TrainingReadinessService().training_convergence_review(
+        source_dir=payload.source_dir,
+        reviewed_by=payload.reviewed_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/training-convergence-reviews")
+def dataset2_training_convergence_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_training_convergence_reviews(limit=limit)
 
 
 @router.post("/learning/dataset2/staging/fix-plan")
