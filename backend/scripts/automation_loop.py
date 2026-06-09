@@ -13,6 +13,9 @@ from pathlib import Path
 DEFAULT_API_BASE = "http://127.0.0.1:8000"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+CYCLE_LIMIT = 8
+CYCLE_MONITOR_LIMIT = 5
+CYCLE_REVIEW_SYMBOL = "SZ002081"
 
 
 def request_json(method: str, url: str) -> dict:
@@ -21,20 +24,42 @@ def request_json(method: str, url: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def request_json_payload(method: str, url: str, payload: dict) -> dict:
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method=method,
+    )
+    with urllib.request.urlopen(request, timeout=180) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def ensure_simulation_health(api_base: str) -> dict:
+    health = request_json("GET", f"{api_base}/health")
+    if health.get("live_trading_enabled") is not False:
+        raise RuntimeError(f"Live trading safety check failed: {health}")
+    return health
+
+
 def run_api_cycle(api_base: str, limit: int) -> dict:
     query = urllib.parse.urlencode({"limit": limit})
     return request_json("POST", f"{api_base}/api/automation/run-once?{query}")
 
 
 def run_full_cycle(api_base: str, limit: int, monitor_limit: int, review_symbol: str) -> dict:
-    query = urllib.parse.urlencode(
-        {
-            "limit": limit,
-            "monitor_limit": monitor_limit,
-            "review_symbol": review_symbol,
-        }
-    )
-    return request_json("POST", f"{api_base}/api/automation/cycles/run-once?{query}")
+    effective_cycle_params = {
+        "limit": CYCLE_LIMIT,
+        "monitor_limit": CYCLE_MONITOR_LIMIT,
+        "review_symbol": CYCLE_REVIEW_SYMBOL,
+    }
+    query = urllib.parse.urlencode(effective_cycle_params)
+    response = request_json("POST", f"{api_base}/api/automation/cycles/run-once?{query}")
+    if isinstance(response, dict):
+        response["effective_params"] = effective_cycle_params
+        response["effective_cycle_params"] = effective_cycle_params
+    return response
 
 
 def run_discovery_cycle(api_base: str, limit: int) -> dict:
@@ -185,6 +210,142 @@ def run_realtime_cycle(api_base: str, symbols: str, limit: int) -> dict:
     return request_json("POST", f"{api_base}/api/realtime/cycle?{query}")
 
 
+def run_simulation_cockpit(api_base: str, limit: int) -> dict:
+    """Run verified Tonghuashun simulation-account actions only."""
+    query = urllib.parse.urlencode({"limit": limit})
+    return request_json("POST", f"{api_base}/api/automation/cycles/simulation-cockpit-run?{query}")
+
+
+def run_dataset2_training_status(api_base: str, limit: int) -> dict:
+    """Inspect Dataset2 controlled-training readiness after the health guard."""
+    health = ensure_simulation_health(api_base)
+    query = urllib.parse.urlencode({"limit": limit})
+    status = request_json("GET", f"{api_base}/api/learning/dataset2/training/status?{query}")
+    return {
+        "health": health,
+        "dataset2_training": status,
+        "simulation_only": True,
+        "live_trading_enabled": health.get("live_trading_enabled"),
+    }
+
+
+def run_dataset2_training_run(api_base: str, limit: int) -> dict:
+    """Run in-memory Dataset2 training dry-run; never writes a model artifact."""
+    health = ensure_simulation_health(api_base)
+    result = request_json_payload(
+        "POST",
+        f"{api_base}/api/learning/dataset2/training/run",
+        {"limit": limit, "requested_by": "automation_loop"},
+    )
+    return {
+        "health": health,
+        "dataset2_training_run": result,
+        "simulation_only": True,
+        "live_trading_enabled": health.get("live_trading_enabled"),
+    }
+
+
+def run_sim_cockpit_supervised_cycle(api_base: str, limit: int) -> dict:
+    """Codex-supervised detect/dry-run/training loop with no live trading path."""
+    health = ensure_simulation_health(api_base)
+    detection = request_json("GET", f"{api_base}/api/sim-cockpit/window-detection?record=false")
+    pre_detection_status = request_json("GET", f"{api_base}/api/sim-cockpit/status")
+    detection_reasons = set(detection.get("blocked_reasons") or [])
+    should_record_detection = (
+        detection.get("status") == "verified"
+        or "dangerous_real_trading_terms_detected" in detection_reasons
+        or "live_trading_enabled" in detection_reasons
+        or pre_detection_status.get("status") != "verified"
+    )
+    if should_record_detection:
+        detection = request_json("GET", f"{api_base}/api/sim-cockpit/window-detection?record=true")
+    cockpit_status = request_json("GET", f"{api_base}/api/sim-cockpit/status")
+    cockpit_cycle = run_simulation_cockpit(api_base, limit)
+    query = urllib.parse.urlencode({"limit": max(limit, 20)})
+    dataset2_status = request_json("GET", f"{api_base}/api/learning/dataset2/training/status?{query}")
+    dataset2_run = request_json_payload(
+        "POST",
+        f"{api_base}/api/learning/dataset2/training/run",
+        {"limit": max(limit, 20), "requested_by": "automation_loop_supervisor"},
+    )
+    return {
+        "health": health,
+        "window_detection": detection,
+        "window_detection_recorded": should_record_detection,
+        "sim_cockpit_status": cockpit_status,
+        "sim_cockpit_cycle": cockpit_cycle,
+        "dataset2_training_status": dataset2_status,
+        "dataset2_training_run": dataset2_run,
+        "next_action": _supervised_next_action(detection, cockpit_status, dataset2_status, dataset2_run),
+        "simulation_only": True,
+        "live_trading_enabled": health.get("live_trading_enabled"),
+    }
+
+
+def _supervised_next_action(
+    detection: dict,
+    cockpit_status: dict,
+    dataset2_status: dict,
+    dataset2_run: dict,
+) -> str:
+    if detection.get("status") != "verified":
+        if cockpit_status.get("status") == "verified":
+            return (
+                "Read-only simulation evidence is verified, so dry-run collection may continue; "
+                "desktop marker detection still needs improvement before screen-click simulation."
+            )
+        reasons = ", ".join(detection.get("blocked_reasons") or ["window_not_verified"])
+        return f"Open Tonghuashun simulated trading window and rerun supervised cycle: {reasons}."
+    if cockpit_status.get("status") != "verified":
+        return "Verify the Tonghuashun simulated-account window, then rerun detect/dry-run collection."
+    if not dataset2_status.get("training_allowed"):
+        reasons = ", ".join(dataset2_status.get("blocked_reasons") or ["unknown"])
+        return f"Collect more simulation readbacks or staged records before training: {reasons}."
+    if dataset2_run.get("status") != "completed":
+        reasons = ", ".join(dataset2_run.get("blocked_reasons") or ["unknown"])
+        return f"Training run stayed blocked: {reasons}."
+    return "Review in-memory training metrics; model artifact writing remains disabled."
+
+
+def run_offhour_research_status(api_base: str) -> dict:
+    """Inspect off-hour research-loop capabilities and latest audit state."""
+    health = ensure_simulation_health(api_base)
+    capabilities = request_json("GET", f"{api_base}/api/research/offhour/capabilities")
+    latest = request_json("GET", f"{api_base}/api/research/offhour/runs/latest")
+    model_candidate = request_json("GET", f"{api_base}/api/research/offhour/model-candidates/latest")
+    return {
+        "health": health,
+        "capabilities": capabilities,
+        "latest_run": latest,
+        "latest_model_candidate": model_candidate,
+        "simulation_only": True,
+        "live_trading_enabled": health.get("live_trading_enabled"),
+    }
+
+
+def run_offhour_research_loop(api_base: str, limit: int) -> dict:
+    """Run balanced potential search + Dataset2 strategy replay + sandbox review."""
+    health = ensure_simulation_health(api_base)
+    result = request_json_payload(
+        "POST",
+        f"{api_base}/api/research/offhour/run",
+        {
+            "limit": max(10, limit),
+            "strategy_limit": max(5, limit),
+            "history_days": 240,
+            "write_artifact": True,
+            "refresh_history": False,
+            "requested_by": "automation_loop",
+        },
+    )
+    return {
+        "health": health,
+        "offhour_research": result,
+        "simulation_only": True,
+        "live_trading_enabled": health.get("live_trading_enabled"),
+    }
+
+
 def run_browser_cycle() -> dict:
     completed = subprocess.run(
         ["npm.cmd", "run", "automation:browser"],
@@ -211,7 +372,7 @@ def append_log(payload: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe simulation automation loop.")
     parser.add_argument("--api-base", default=DEFAULT_API_BASE)
-    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest", "experience-review", "code-evolution-review", "realtime-refresh", "realtime-monitoring-sync", "realtime-cycle"], default="cycle")
+    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest", "experience-review", "code-evolution-review", "realtime-refresh", "realtime-monitoring-sync", "realtime-cycle", "simulation-cockpit-run", "dataset2-training-status", "dataset2-training-run", "sim-cockpit-supervised-cycle", "offhour-research-status", "offhour-research-loop"], default="cycle")
     parser.add_argument("--task-type", default="offhour_potential_search", help="Task type for agent-task mode")
     parser.add_argument("--interval-seconds", type=int, default=60)
     parser.add_argument("--max-cycles", type=int, default=1, help="Use 0 to run forever.")
@@ -244,9 +405,9 @@ def main() -> int:
             elif args.mode == "cycle":
                 entry["result"] = run_full_cycle(
                     args.api_base,
-                    args.limit,
-                    args.monitor_limit,
-                    args.review_symbol,
+                    CYCLE_LIMIT,
+                    CYCLE_MONITOR_LIMIT,
+                    CYCLE_REVIEW_SYMBOL,
                 )
             elif args.mode == "agent-learning":
                 entry["result"] = run_agent_learning(args.api_base, args.limit)
@@ -276,6 +437,18 @@ def main() -> int:
                 entry["result"] = run_realtime_monitoring_sync(args.api_base, args.limit)
             elif args.mode == "realtime-cycle":
                 entry["result"] = run_realtime_cycle(args.api_base, args.symbols, args.limit)
+            elif args.mode == "simulation-cockpit-run":
+                entry["result"] = run_simulation_cockpit(args.api_base, args.limit)
+            elif args.mode == "dataset2-training-status":
+                entry["result"] = run_dataset2_training_status(args.api_base, args.limit)
+            elif args.mode == "dataset2-training-run":
+                entry["result"] = run_dataset2_training_run(args.api_base, args.limit)
+            elif args.mode == "sim-cockpit-supervised-cycle":
+                entry["result"] = run_sim_cockpit_supervised_cycle(args.api_base, args.limit)
+            elif args.mode == "offhour-research-status":
+                entry["result"] = run_offhour_research_status(args.api_base)
+            elif args.mode == "offhour-research-loop":
+                entry["result"] = run_offhour_research_loop(args.api_base, args.limit)
             else:
                 entry["result"] = run_api_cycle(args.api_base, args.limit)
             entry["status"] = "completed"

@@ -328,6 +328,25 @@ CREATE TABLE IF NOT EXISTS automation_events (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS offhour_research_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    requested_by TEXT,
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    potential_search_json TEXT NOT NULL DEFAULT '{}',
+    strategy_replay_json TEXT NOT NULL DEFAULT '{}',
+    backtest_json TEXT NOT NULL DEFAULT '{}',
+    sandbox_json TEXT NOT NULL DEFAULT '{}',
+    artifact_json TEXT NOT NULL DEFAULT '{}',
+    next_action TEXT,
+    review_only INTEGER NOT NULL DEFAULT 1,
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS learning_samples (
     id TEXT PRIMARY KEY,
     source_type TEXT NOT NULL,
@@ -479,17 +498,16 @@ CREATE INDEX IF NOT EXISTS idx_candidate_scores_created ON candidate_scores(crea
 CREATE INDEX IF NOT EXISTS idx_sim_positions_account ON simulation_positions(account_id);
 CREATE INDEX IF NOT EXISTS idx_sim_fills_account ON simulation_fills(account_id);
 CREATE INDEX IF NOT EXISTS idx_automation_events_run ON automation_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_offhour_research_runs_status ON offhour_research_runs(status);
+CREATE INDEX IF NOT EXISTS idx_offhour_research_runs_created ON offhour_research_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_learning_samples_symbol ON learning_samples(symbol);
 CREATE INDEX IF NOT EXISTS idx_learning_samples_label ON learning_samples(label);
 CREATE INDEX IF NOT EXISTS idx_learning_reports_run ON learning_reports(automation_run_id);
 CREATE INDEX IF NOT EXISTS idx_monitoring_sessions_status ON monitoring_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_monitoring_events_session ON monitoring_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_monitoring_events_symbol ON monitoring_events(symbol);
-CREATE INDEX IF NOT EXISTS idx_monitoring_events_source ON monitoring_events(source_table, source_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_events_dedupe ON monitoring_events(dedupe_key) WHERE dedupe_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_session ON monitoring_alerts(session_id);
 CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_symbol ON monitoring_alerts(symbol);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_monitoring_alerts_dedupe ON monitoring_alerts(dedupe_key) WHERE dedupe_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_monitoring_reviews_symbol ON monitoring_reviews(symbol);
 
 CREATE TABLE IF NOT EXISTS potential_search_runs (
@@ -909,6 +927,69 @@ CREATE TABLE IF NOT EXISTS screen_provider_replay_runs (
 CREATE INDEX IF NOT EXISTS idx_screen_provider_replay_runs_created ON screen_provider_replay_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_screen_provider_replay_runs_status ON screen_provider_replay_runs(status);
 
+CREATE TABLE IF NOT EXISTS sim_cockpit_window_verifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL,
+    window_title TEXT,
+    visible_text_hash TEXT,
+    positive_terms_json TEXT NOT NULL DEFAULT '[]',
+    process_terms_json TEXT NOT NULL DEFAULT '[]',
+    dangerous_terms_json TEXT NOT NULL DEFAULT '[]',
+    blocked_reasons_json TEXT NOT NULL DEFAULT '[]',
+    detected_items_json TEXT NOT NULL DEFAULT '[]',
+    raw_payload_json TEXT NOT NULL DEFAULT '{}',
+    verified_by TEXT,
+    confidence REAL NOT NULL DEFAULT 0,
+    simulation_mode_detected INTEGER NOT NULL DEFAULT 0,
+    real_trading_blocked INTEGER NOT NULL DEFAULT 1,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sim_cockpit_window_status ON sim_cockpit_window_verifications(status);
+CREATE INDEX IF NOT EXISTS idx_sim_cockpit_window_created ON sim_cockpit_window_verifications(created_at);
+
+CREATE TABLE IF NOT EXISTS sim_cockpit_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    verification_id INTEGER REFERENCES sim_cockpit_window_verifications(id) ON DELETE SET NULL,
+    action_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    symbol TEXT,
+    price REAL,
+    quantity INTEGER,
+    order_id TEXT,
+    signal_source TEXT,
+    risk_result_json TEXT NOT NULL DEFAULT '{}',
+    request_json TEXT NOT NULL DEFAULT '{}',
+    execution_json TEXT NOT NULL DEFAULT '{}',
+    blocked_reasons_json TEXT NOT NULL DEFAULT '[]',
+    requested_by TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sim_cockpit_actions_status ON sim_cockpit_actions(status);
+CREATE INDEX IF NOT EXISTS idx_sim_cockpit_actions_symbol ON sim_cockpit_actions(symbol);
+CREATE INDEX IF NOT EXISTS idx_sim_cockpit_actions_created ON sim_cockpit_actions(created_at);
+
+CREATE TABLE IF NOT EXISTS sim_cockpit_readbacks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_id INTEGER REFERENCES sim_cockpit_actions(id) ON DELETE SET NULL,
+    readback_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    symbol TEXT,
+    price REAL,
+    quantity INTEGER,
+    order_id TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sim_cockpit_readbacks_action ON sim_cockpit_readbacks(action_id);
+CREATE INDEX IF NOT EXISTS idx_sim_cockpit_readbacks_status ON sim_cockpit_readbacks(status);
+CREATE INDEX IF NOT EXISTS idx_sim_cockpit_readbacks_created ON sim_cockpit_readbacks(created_at);
+
 CREATE TABLE IF NOT EXISTS screen_readiness_audit_acknowledgements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     status TEXT NOT NULL DEFAULT 'acknowledged',
@@ -1153,6 +1234,7 @@ KNOWLEDGE_TABLES = [
     "monitoring_reviews",
     "potential_search_runs",
     "potential_search_items",
+    "offhour_research_runs",
     "agent_control_tasks",
     "agent_control_events",
     "agent_learning_samples",
@@ -1173,6 +1255,9 @@ KNOWLEDGE_TABLES = [
     "screen_artifact_reviews",
     "screen_provider_config_proposals",
     "screen_provider_replay_runs",
+    "sim_cockpit_window_verifications",
+    "sim_cockpit_actions",
+    "sim_cockpit_readbacks",
     "screen_readiness_audit_acknowledgements",
     "historical_backtest_runs",
     "historical_backtest_trades",

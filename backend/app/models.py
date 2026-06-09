@@ -42,6 +42,24 @@ class RuleHit(BaseModel):
     score_delta: float = 0
     hard_block: bool = False
     reason: str
+    threshold: dict[str, Any] | None = None
+    evidence: Any = None
+    evidence_snippet: str | None = None
+    layer: str = "rules"
+    trigger_level: str = "soft"
+    source: str = "rules"
+
+
+class RiskBlockCause(BaseModel):
+    rule_id: str
+    rule_name: str
+    layer: str = "rules"
+    trigger_level: str = "hard"
+    reason: str
+    threshold: dict[str, Any] | None = None
+    evidence: Any = None
+    evidence_snippet: str | None = None
+    source: str = "rules"
 
 
 class CandidateDecision(BaseModel):
@@ -66,6 +84,7 @@ class Explanation(BaseModel):
     signal_summary: str
     matched_rules: list[str] = Field(default_factory=list)
     risk_blockers: list[str] = Field(default_factory=list)
+    risk_blocked: list[RiskBlockCause] = Field(default_factory=list)
     data_quality: str
     similar_cases: list[dict[str, Any]] = Field(default_factory=list)
     uncertainty_notes: list[str] = Field(default_factory=list)
@@ -78,6 +97,7 @@ class DecisionAnalysis(BaseModel):
     decision: CandidateDecision
     knowledge: KnowledgeContext
     risk_notes: list[str] = Field(default_factory=list)
+    risk_blocked: list[RiskBlockCause] = Field(default_factory=list)
     suggested_next_actions: list[str] = Field(default_factory=list)
     explanation: Explanation | None = None
 
@@ -127,6 +147,8 @@ class SimulationPlan(BaseModel):
     estimated_amount: float
     stop_loss: float | None = None
     target_price: float | None = None
+    risk_blocked: list[RiskBlockCause] = Field(default_factory=list)
+    blocked_reason: str | None = None
     reasons: list[str] = Field(default_factory=list)
     risk_notes: list[str] = Field(default_factory=list)
     live_trading_enabled: bool = False
@@ -396,5 +418,3 @@ class DailyBarCache(BaseModel):
     quality_status: str
     created_at: str | None = None
     updated_at: str | None = None
-
-

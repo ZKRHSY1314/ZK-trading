@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from app.agent_control.service import AgentControlService
@@ -47,6 +47,11 @@ from app.trade_execution.gateway import TradeExecutionGatewayService
 
 router = APIRouter(prefix="/api")
 
+CYCLE_LIMIT = 5
+CYCLE_MONITOR_LIMIT = 5
+CYCLE_REVIEW_SYMBOL = "SZ002081"
+
+
 
 class CodeEvolutionValidationInput(BaseModel):
     validation: dict = Field(default_factory=dict)
@@ -75,6 +80,74 @@ class ScreenObservationInput(BaseModel):
     raw_payload: dict = Field(default_factory=dict)
     artifact_ref: str | None = None
     observed_at: str | None = None
+
+
+class TonghuashunSimulationObservationInput(BaseModel):
+    session_id: int | None = None
+    window_title: str | None = "????????5.0 - mncg simulation window"
+    confidence: float = 0.85
+    detected_items: list[dict] = Field(default_factory=list)
+    raw_payload: dict = Field(default_factory=dict)
+    artifact_ref: str | None = None
+    observed_at: str | None = None
+    observed_by: str = "operator"
+    note: str | None = None
+
+
+class SimCockpitVerifyWindowInput(BaseModel):
+    window_title: str | None = None
+    visible_text: str | None = None
+    confidence: float = 0.0
+    detected_items: list[dict] = Field(default_factory=list)
+    raw_payload: dict = Field(default_factory=dict)
+    verified_by: str = "operator"
+
+
+class SimCockpitActionInput(BaseModel):
+    symbol: str | None = None
+    price: float | None = None
+    quantity: int | None = None
+    order_id: str | None = None
+    signal_source: str = "manual_or_system"
+    risk_result: dict = Field(default_factory=dict)
+    window_verification_id: int | None = None
+    requested_by: str = "operator"
+    note: str | None = None
+    dry_run: bool = False
+    execution_mode: str = "audit_fixture"
+    screen_confirmation: str | None = None
+    screen_coordinates: dict = Field(default_factory=dict)
+
+
+class SimCockpitReadbackInput(BaseModel):
+    action_id: int | None = None
+    readback_type: str = "manual_readback"
+    status: str = "observed"
+    symbol: str | None = None
+    price: float | None = None
+    quantity: int | None = None
+    order_id: str | None = None
+    payload: dict = Field(default_factory=dict)
+    recorded_by: str = "operator"
+
+
+class Dataset2SimpleTrainingDryRunInput(BaseModel):
+    limit: int = 200
+    requested_by: str = "operator"
+
+class Dataset2TrainingRunInput(BaseModel):
+    limit: int = 200
+    requested_by: str = "operator"
+    min_samples: int = 4
+
+
+class OffhourResearchRunInput(BaseModel):
+    limit: int = 100
+    strategy_limit: int = 50
+    history_days: int = 240
+    write_artifact: bool = True
+    refresh_history: bool = False
+    requested_by: str = "codex"
 
 
 class ScreenFixtureReplayInput(BaseModel):
@@ -534,6 +607,626 @@ class Dataset2TrainingConvergenceReviewInput(BaseModel):
     note: str | None = None
 
 
+class Dataset2StagingAutomatedCleanupApplyInput(BaseModel):
+    package_id: str | None = None
+    applied_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2PostCleanupTrainingFreezeReviewInput(BaseModel):
+    package_id: str | None = None
+    reviewed_by: str = "operator"
+    note: str | None = None
+
+
+class Dataset2LearningSamplePromotionPreflightInput(BaseModel):
+    package_id: str | None = None
+    planned_by: str = "operator"
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2LearningSamplePromotionApplyInput(BaseModel):
+    package_id: str | None = None
+    preflight_event_id: int | None = None
+    promoted_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2PostPromotionTrainingFreezeReviewInput(BaseModel):
+    package_id: str | None = None
+    reviewed_by: str = "operator"
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2TrainingRunPlanInput(BaseModel):
+    package_id: str | None = None
+    planned_by: str = "operator"
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2TrainingExecutionApprovalInput(BaseModel):
+    training_plan_id: str | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_dataset2_training_dry_run"
+    confirmation_token: str | None = None
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2TrainingDryRunInput(BaseModel):
+    training_plan_id: str | None = None
+    approval_event_id: int | None = None
+    run_by: str = "operator"
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2TrainingDryRunReviewInput(BaseModel):
+    dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_training_execution_plan"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingExecutionPlanInput(BaseModel):
+    dry_run_review_id: int | None = None
+    planned_by: str = "operator"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingExecutionPreflightInput(BaseModel):
+    execution_plan_id: str | None = None
+    execution_plan_event_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2ControlledTrainingExecutionDryRunInput(BaseModel):
+    preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2ControlledTrainingExecutionDryRunReviewInput(BaseModel):
+    dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_execution_release_plan"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingExecutionReleasePlanInput(BaseModel):
+    dry_run_review_id: int | None = None
+    planned_by: str = "operator"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingExecutionReleasePreflightInput(BaseModel):
+    release_plan_id: str | None = None
+    release_plan_event_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2ControlledTrainingExecutionReleaseDryRunInput(BaseModel):
+    release_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2ControlledTrainingExecutionReleaseDryRunReviewInput(BaseModel):
+    release_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_execution_final_approval"
+    note: str | None = None
+
+class Dataset2ControlledTrainingExecutionFinalApprovalInput(BaseModel):
+    release_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_execution_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingExecutionFinalPreflightInput(BaseModel):
+    final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2ControlledTrainingExecutionFinalDryRunInput(BaseModel):
+    final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2ControlledTrainingExecutionFinalDryRunReviewInput(BaseModel):
+    final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_execution_run_approval"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingExecutionRunApprovalInput(BaseModel):
+    final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_execution_run_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingExecutionRunPreflightInput(BaseModel):
+    run_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+    limit: int = 1000
+class Dataset2ControlledTrainingExecutionRunInput(BaseModel):
+    run_preflight_event_id: int | None = None
+    run_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+    limit: int = 1000
+
+
+class Dataset2ControlledTrainingExecutionRunReviewInput(BaseModel):
+    run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_plan"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactPlanInput(BaseModel):
+    run_review_id: int | None = None
+    planned_by: str = "operator"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactPlanApprovalInput(BaseModel):
+    artifact_plan_event_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_plan_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactPreflightInput(BaseModel):
+    artifact_plan_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactDryRunInput(BaseModel):
+    artifact_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactDryRunReviewInput(BaseModel):
+    artifact_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_release_approval"
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactReleaseApprovalInput(BaseModel):
+    artifact_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_release_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactReleasePreflightInput(BaseModel):
+    artifact_release_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactReleaseDryRunInput(BaseModel):
+    artifact_release_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactReleaseDryRunReviewInput(BaseModel):
+    artifact_release_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_final_approval"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactFinalApprovalInput(BaseModel):
+    artifact_release_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactFinalPreflightInput(BaseModel):
+    artifact_final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactFinalDryRunInput(BaseModel):
+    artifact_final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactFinalDryRunReviewInput(BaseModel):
+    artifact_final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_preflight"
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWritePreflightInput(BaseModel):
+    artifact_final_dry_run_review_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteDryRunInput(BaseModel):
+    artifact_write_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteDryRunReviewInput(BaseModel):
+    artifact_write_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_approval"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteApprovalInput(BaseModel):
+    artifact_write_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionPreflightInput(BaseModel):
+    artifact_write_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionDryRunInput(BaseModel):
+    artifact_write_execution_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionDryRunReviewInput(BaseModel):
+    artifact_write_execution_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_approval"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalApprovalInput(BaseModel):
+    artifact_write_execution_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalPreflightInput(BaseModel):
+    artifact_write_execution_final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunInput(BaseModel):
+    artifact_write_execution_final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_approval"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovalInput(BaseModel):
+    artifact_write_execution_final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflightInput(BaseModel):
+    artifact_write_execution_final_write_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunInput(BaseModel):
+    artifact_write_execution_final_write_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_write_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovalInput(BaseModel):
+    artifact_write_execution_final_write_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflightInput(BaseModel):
+    artifact_write_execution_final_write_execution_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunInput(BaseModel):
+    artifact_write_execution_final_write_execution_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_write_execution_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovalInput(BaseModel):
+    artifact_write_execution_final_write_execution_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflightInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval"
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovalInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflightInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval"
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalApprovalInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalPreflightInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalDryRunInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval"
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalApprovalInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalPreflightInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalDryRunInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval"
+    note: str | None = None
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalApprovalInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalPreflightInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalDryRunInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval"
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalApprovalInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalPreflightInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalDryRunInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval"
+    note: str | None = None
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalApprovalInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalPreflightInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalDryRunInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval"
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalApprovalInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalPreflightInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_id: int | None = None
+    requested_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalDryRunInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_event_id: int | None = None
+    simulated_by: str = "operator"
+    confirmation_token: str | None = None
+    note: str | None = None
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalDryRunReviewInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_event_id: int | None = None
+    reviewed_by: str = "operator"
+    review_decision: str = "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval"
+    note: str | None = None
+
+class Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalFinalApprovalInput(BaseModel):
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_id: int | None = None
+    approved_by: str = "operator"
+    approval_decision: str = "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_preflight"
+    confirmation_token: str | None = None
+    note: str | None = None
+
 @router.get("/system/capabilities")
 def capabilities() -> dict[str, object]:
     return {
@@ -951,22 +1644,55 @@ def automation_capabilities() -> dict:
     return AutomationSupervisor().capabilities()
 
 
+@router.get("/automation/preflight")
+def automation_preflight() -> dict:
+    return AutomationSupervisor().run_preflight()
+
+
 @router.post("/automation/run-once")
-def automation_run_once(limit: int = 30) -> dict:
-    return AutomationSupervisor().run_once(limit)
+def automation_run_once(response: Response, limit: int = 30) -> dict:
+    supervisor = AutomationSupervisor()
+    preflight = supervisor.run_preflight()
+    if preflight["status"] != "pass":
+        response.status_code = 409
+        return preflight
+
+    result = supervisor.run_once(limit)
+    result["preflight_id"] = preflight["preflight_id"]
+    result["preflight_required"] = preflight["preflight_required"]
+    result["preflight_status"] = preflight["status"]
+    return result
 
 
 @router.post("/automation/cycles/run-once")
 def automation_cycle_run_once(
+    response: Response,
     limit: int = 5,
     monitor_limit: int = 5,
     review_symbol: str = "SZ002081",
 ) -> dict:
-    return AutomationSupervisor().run_cycle(
-        limit=limit,
-        monitor_limit=monitor_limit,
-        review_symbol=review_symbol,
+    supervisor = AutomationSupervisor()
+    preflight = supervisor.run_preflight()
+    if preflight["status"] != "pass":
+        response.status_code = 409
+        return preflight
+
+    effective_cycle_params = {
+        "limit": CYCLE_LIMIT,
+        "monitor_limit": CYCLE_MONITOR_LIMIT,
+        "review_symbol": CYCLE_REVIEW_SYMBOL,
+    }
+    cycle = supervisor.run_cycle(
+        limit=effective_cycle_params["limit"],
+        monitor_limit=effective_cycle_params["monitor_limit"],
+        review_symbol=effective_cycle_params["review_symbol"],
     )
+    cycle["effective_params"] = effective_cycle_params
+    cycle["effective_cycle_params"] = effective_cycle_params
+    cycle["preflight_id"] = preflight["preflight_id"]
+    cycle["preflight_required"] = preflight["preflight_required"]
+    cycle["preflight_status"] = preflight["status"]
+    return cycle
 
 
 @router.get("/automation/latest")
@@ -1208,6 +1934,1599 @@ def dataset2_training_convergence_review(payload: Dataset2TrainingConvergenceRev
 @router.get("/learning/dataset2/training-convergence-reviews")
 def dataset2_training_convergence_reviews(limit: int = 20) -> list[dict]:
     return Dataset2TrainingReadinessService().list_training_convergence_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/apply-automated-cleanup")
+def dataset2_staging_apply_automated_cleanup(payload: Dataset2StagingAutomatedCleanupApplyInput | None = None) -> dict:
+    payload = payload or Dataset2StagingAutomatedCleanupApplyInput()
+    return Dataset2TrainingReadinessService().apply_staging_automated_cleanup(
+        package_id=payload.package_id,
+        applied_by=payload.applied_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/staging/automated-cleanup-applications")
+def dataset2_staging_automated_cleanup_applications(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_staging_automated_cleanup_applications(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/post-cleanup-training-freeze-review")
+def dataset2_post_cleanup_training_freeze_review(payload: Dataset2PostCleanupTrainingFreezeReviewInput | None = None) -> dict:
+    payload = payload or Dataset2PostCleanupTrainingFreezeReviewInput()
+    return Dataset2TrainingReadinessService().post_cleanup_training_freeze_review(
+        package_id=payload.package_id,
+        reviewed_by=payload.reviewed_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/staging/post-cleanup-training-freeze-reviews")
+def dataset2_post_cleanup_training_freeze_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_post_cleanup_training_freeze_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/learning-sample-promotion-preflight")
+def dataset2_learning_sample_promotion_preflight(payload: Dataset2LearningSamplePromotionPreflightInput | None = None) -> dict:
+    payload = payload or Dataset2LearningSamplePromotionPreflightInput()
+    return Dataset2TrainingReadinessService().learning_sample_promotion_preflight(
+        package_id=payload.package_id,
+        planned_by=payload.planned_by,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/staging/learning-sample-promotion-preflights")
+def dataset2_learning_sample_promotion_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_learning_sample_promotion_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/apply-learning-sample-promotion")
+def dataset2_apply_learning_sample_promotion(payload: Dataset2LearningSamplePromotionApplyInput | None = None) -> dict:
+    payload = payload or Dataset2LearningSamplePromotionApplyInput()
+    return Dataset2TrainingReadinessService().apply_learning_sample_promotion(
+        package_id=payload.package_id,
+        preflight_event_id=payload.preflight_event_id,
+        promoted_by=payload.promoted_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/staging/learning-sample-promotion-applications")
+def dataset2_learning_sample_promotion_applications(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_learning_sample_promotion_applications(limit=limit)
+
+
+@router.post("/learning/dataset2/staging/post-promotion-training-freeze-review")
+def dataset2_post_promotion_training_freeze_review(payload: Dataset2PostPromotionTrainingFreezeReviewInput | None = None) -> dict:
+    payload = payload or Dataset2PostPromotionTrainingFreezeReviewInput()
+    return Dataset2TrainingReadinessService().post_promotion_training_freeze_review(
+        package_id=payload.package_id,
+        reviewed_by=payload.reviewed_by,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/staging/post-promotion-training-freeze-reviews")
+def dataset2_post_promotion_training_freeze_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_post_promotion_training_freeze_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/training-run-plan")
+def dataset2_training_run_plan(payload: Dataset2TrainingRunPlanInput | None = None) -> dict:
+    payload = payload or Dataset2TrainingRunPlanInput()
+    return Dataset2TrainingReadinessService().dataset2_training_run_plan(
+        package_id=payload.package_id,
+        planned_by=payload.planned_by,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/training-run-plans")
+def dataset2_training_run_plans(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_training_run_plans(limit=limit)
+
+
+@router.post("/learning/dataset2/training-execution-approval")
+def dataset2_training_execution_approval(payload: Dataset2TrainingExecutionApprovalInput | None = None) -> dict:
+    payload = payload or Dataset2TrainingExecutionApprovalInput()
+    return Dataset2TrainingReadinessService().approve_dataset2_training_execution(
+        training_plan_id=payload.training_plan_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/training-execution-approvals")
+def dataset2_training_execution_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_training_execution_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/training-dry-run")
+def dataset2_training_dry_run(payload: Dataset2TrainingDryRunInput | None = None) -> dict:
+    payload = payload or Dataset2TrainingDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_training_dry_run(
+        training_plan_id=payload.training_plan_id,
+        approval_event_id=payload.approval_event_id,
+        run_by=payload.run_by,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/training-dry-runs")
+def dataset2_training_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_training_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/training-dry-run-review")
+def dataset2_training_dry_run_review(payload: Dataset2TrainingDryRunReviewInput | None = None) -> dict:
+    payload = payload or Dataset2TrainingDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_training_dry_run_review(
+        dry_run_event_id=payload.dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/training-dry-run-reviews")
+def dataset2_training_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_training_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-plan")
+def dataset2_controlled_training_execution_plan(payload: Dataset2ControlledTrainingExecutionPlanInput | None = None) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionPlanInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_plan(
+        dry_run_review_id=payload.dry_run_review_id,
+        planned_by=payload.planned_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-plans")
+def dataset2_controlled_training_execution_plans(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_plans(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-preflight")
+def dataset2_controlled_training_execution_preflight(payload: Dataset2ControlledTrainingExecutionPreflightInput | None = None) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_preflight(
+        execution_plan_id=payload.execution_plan_id,
+        execution_plan_event_id=payload.execution_plan_event_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-preflights")
+def dataset2_controlled_training_execution_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-dry-run")
+def dataset2_controlled_training_execution_dry_run(payload: Dataset2ControlledTrainingExecutionDryRunInput | None = None) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_dry_run(
+        preflight_event_id=payload.preflight_event_id,
+        simulated_by=payload.simulated_by,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-dry-runs")
+def dataset2_controlled_training_execution_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-dry-run-review")
+def dataset2_controlled_training_execution_dry_run_review(
+    payload: Dataset2ControlledTrainingExecutionDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_dry_run_review(
+        dry_run_event_id=payload.dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-dry-run-reviews")
+def dataset2_controlled_training_execution_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-release-plan")
+def dataset2_controlled_training_execution_release_plan(
+    payload: Dataset2ControlledTrainingExecutionReleasePlanInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionReleasePlanInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_release_plan(
+        dry_run_review_id=payload.dry_run_review_id,
+        planned_by=payload.planned_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-release-plans")
+def dataset2_controlled_training_execution_release_plans(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_release_plans(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-release-preflight")
+def dataset2_controlled_training_execution_release_preflight(
+    payload: Dataset2ControlledTrainingExecutionReleasePreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionReleasePreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_release_preflight(
+        release_plan_id=payload.release_plan_id,
+        release_plan_event_id=payload.release_plan_event_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-release-preflights")
+def dataset2_controlled_training_execution_release_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_release_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-release-dry-run")
+def dataset2_controlled_training_execution_release_dry_run(
+    payload: Dataset2ControlledTrainingExecutionReleaseDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionReleaseDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_release_dry_run(
+        release_preflight_event_id=payload.release_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-release-dry-runs")
+def dataset2_controlled_training_execution_release_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_release_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-release-dry-run-review")
+def dataset2_controlled_training_execution_release_dry_run_review(
+    payload: Dataset2ControlledTrainingExecutionReleaseDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionReleaseDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_release_dry_run_review(
+        release_dry_run_event_id=payload.release_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-release-dry-run-reviews")
+def dataset2_controlled_training_execution_release_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_release_dry_run_reviews(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-execution-final-approval")
+def dataset2_controlled_training_execution_final_approval(
+    payload: Dataset2ControlledTrainingExecutionFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_final_approval(
+        release_dry_run_review_id=payload.release_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-final-approvals")
+def dataset2_controlled_training_execution_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_final_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-final-preflight")
+def dataset2_controlled_training_execution_final_preflight(
+    payload: Dataset2ControlledTrainingExecutionFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_final_preflight(
+        final_approval_id=payload.final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-final-preflights")
+def dataset2_controlled_training_execution_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_final_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-final-dry-run")
+def dataset2_controlled_training_execution_final_dry_run(
+    payload: Dataset2ControlledTrainingExecutionFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_final_dry_run(
+        final_preflight_event_id=payload.final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-final-dry-runs")
+def dataset2_controlled_training_execution_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_final_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-final-dry-run-review")
+def dataset2_controlled_training_execution_final_dry_run_review(
+    payload: Dataset2ControlledTrainingExecutionFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_final_dry_run_review(
+        final_dry_run_event_id=payload.final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-final-dry-run-reviews")
+def dataset2_controlled_training_execution_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_final_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-run-approval")
+def dataset2_controlled_training_execution_run_approval(
+    payload: Dataset2ControlledTrainingExecutionRunApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionRunApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_run_approval(
+        final_dry_run_review_id=payload.final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-run-approvals")
+def dataset2_controlled_training_execution_run_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_run_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-run-preflight")
+def dataset2_controlled_training_execution_run_preflight(
+    payload: Dataset2ControlledTrainingExecutionRunPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionRunPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_run_preflight(
+        run_approval_id=payload.run_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-run-preflights")
+def dataset2_controlled_training_execution_run_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_run_preflights(limit=limit)
+@router.post("/learning/dataset2/controlled-training-execution-run")
+def dataset2_controlled_training_execution_run(
+    payload: Dataset2ControlledTrainingExecutionRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_run(
+        run_preflight_event_id=payload.run_preflight_event_id,
+        run_by=payload.run_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+        limit=payload.limit,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-runs")
+def dataset2_controlled_training_execution_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-execution-run-review")
+def dataset2_controlled_training_execution_run_review(
+    payload: Dataset2ControlledTrainingExecutionRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingExecutionRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_execution_run_review(
+        run_event_id=payload.run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-execution-run-reviews")
+def dataset2_controlled_training_execution_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_execution_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-plan")
+def dataset2_controlled_training_artifact_plan(
+    payload: Dataset2ControlledTrainingArtifactPlanInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactPlanInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_plan(
+        run_review_id=payload.run_review_id,
+        planned_by=payload.planned_by,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-plans")
+def dataset2_controlled_training_artifact_plans(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_plans(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-plan-approval")
+def dataset2_controlled_training_artifact_plan_approval(
+    payload: Dataset2ControlledTrainingArtifactPlanApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactPlanApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_plan_approval(
+        artifact_plan_event_id=payload.artifact_plan_event_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-plan-approvals")
+def dataset2_controlled_training_artifact_plan_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_plan_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-preflight")
+def dataset2_controlled_training_artifact_preflight(
+    payload: Dataset2ControlledTrainingArtifactPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_preflight(
+        artifact_plan_approval_id=payload.artifact_plan_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-preflights")
+def dataset2_controlled_training_artifact_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_preflights(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-dry-run")
+def dataset2_controlled_training_artifact_dry_run(
+    payload: Dataset2ControlledTrainingArtifactDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_dry_run(
+        artifact_preflight_event_id=payload.artifact_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-dry-runs")
+def dataset2_controlled_training_artifact_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_dry_runs(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-dry-run-review")
+def dataset2_controlled_training_artifact_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_dry_run_review(
+        artifact_dry_run_event_id=payload.artifact_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-dry-run-reviews")
+def dataset2_controlled_training_artifact_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_dry_run_reviews(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-release-approval")
+def dataset2_controlled_training_artifact_release_approval(
+    payload: Dataset2ControlledTrainingArtifactReleaseApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactReleaseApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_release_approval(
+        artifact_dry_run_review_id=payload.artifact_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-release-approvals")
+def dataset2_controlled_training_artifact_release_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_release_approvals(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-release-preflight")
+def dataset2_controlled_training_artifact_release_preflight(
+    payload: Dataset2ControlledTrainingArtifactReleasePreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactReleasePreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_release_preflight(
+        artifact_release_approval_id=payload.artifact_release_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-release-preflights")
+def dataset2_controlled_training_artifact_release_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_release_preflights(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-release-dry-run")
+def dataset2_controlled_training_artifact_release_dry_run(
+    payload: Dataset2ControlledTrainingArtifactReleaseDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactReleaseDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_release_dry_run(
+        artifact_release_preflight_event_id=payload.artifact_release_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-release-dry-runs")
+def dataset2_controlled_training_artifact_release_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_release_dry_runs(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-release-dry-run-review")
+def dataset2_controlled_training_artifact_release_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactReleaseDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactReleaseDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_release_dry_run_review(
+        artifact_release_dry_run_event_id=payload.artifact_release_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-release-dry-run-reviews")
+def dataset2_controlled_training_artifact_release_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_release_dry_run_reviews(limit=limit)
+
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-final-approval")
+def dataset2_controlled_training_artifact_final_approval(
+    payload: Dataset2ControlledTrainingArtifactFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_final_approval(
+        artifact_release_dry_run_review_id=payload.artifact_release_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-final-approvals")
+def dataset2_controlled_training_artifact_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_final_approvals(limit=limit)
+
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-final-preflight")
+def dataset2_controlled_training_artifact_final_preflight(
+    payload: Dataset2ControlledTrainingArtifactFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_final_preflight(
+        artifact_final_approval_id=payload.artifact_final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-final-preflights")
+def dataset2_controlled_training_artifact_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_final_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-final-dry-run")
+def dataset2_controlled_training_artifact_final_dry_run(
+    payload: Dataset2ControlledTrainingArtifactFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_final_dry_run(
+        artifact_final_preflight_event_id=payload.artifact_final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-final-dry-runs")
+def dataset2_controlled_training_artifact_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_final_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-final-dry-run-review")
+def dataset2_controlled_training_artifact_final_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_final_dry_run_review(
+        artifact_final_dry_run_event_id=payload.artifact_final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-final-dry-run-reviews")
+def dataset2_controlled_training_artifact_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_final_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-preflight")
+def dataset2_controlled_training_artifact_write_preflight(
+    payload: Dataset2ControlledTrainingArtifactWritePreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWritePreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_preflight(
+        artifact_final_dry_run_review_id=payload.artifact_final_dry_run_review_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-preflights")
+def dataset2_controlled_training_artifact_write_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-dry-run")
+def dataset2_controlled_training_artifact_write_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_dry_run(
+        artifact_write_preflight_event_id=payload.artifact_write_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-dry-runs")
+def dataset2_controlled_training_artifact_write_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-dry-run-review")
+def dataset2_controlled_training_artifact_write_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_dry_run_review(
+        artifact_write_dry_run_event_id=payload.artifact_write_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-approval")
+def dataset2_controlled_training_artifact_write_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_approval(
+        artifact_write_dry_run_review_id=payload.artifact_write_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-approvals")
+def dataset2_controlled_training_artifact_write_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-preflight")
+def dataset2_controlled_training_artifact_write_execution_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_preflight(
+        artifact_write_approval_id=payload.artifact_write_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-preflights")
+def dataset2_controlled_training_artifact_write_execution_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-dry-run")
+def dataset2_controlled_training_artifact_write_execution_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_dry_run(
+        artifact_write_execution_preflight_event_id=payload.artifact_write_execution_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_dry_run_review(
+        artifact_write_execution_dry_run_event_id=payload.artifact_write_execution_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-approval")
+def dataset2_controlled_training_artifact_write_execution_final_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_approval(
+        artifact_write_execution_dry_run_review_id=payload.artifact_write_execution_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_preflight(
+        artifact_write_execution_final_approval_id=payload.artifact_write_execution_final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_dry_run(
+        artifact_write_execution_final_preflight_event_id=payload.artifact_write_execution_final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_dry_run_review(
+        artifact_write_execution_final_dry_run_event_id=payload.artifact_write_execution_final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_approval(
+        artifact_write_execution_final_dry_run_review_id=payload.artifact_write_execution_final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_write_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_preflight(
+        artifact_write_execution_final_write_approval_id=payload.artifact_write_execution_final_write_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_write_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_write_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_dry_run(
+        artifact_write_execution_final_write_preflight_event_id=payload.artifact_write_execution_final_write_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_write_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review(
+        artifact_write_execution_final_write_dry_run_event_id=payload.artifact_write_execution_final_write_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_write_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_approval(
+        artifact_write_execution_final_write_dry_run_review_id=payload.artifact_write_execution_final_write_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight(
+        artifact_write_execution_final_write_execution_approval_id=payload.artifact_write_execution_final_write_execution_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run(
+        artifact_write_execution_final_write_execution_preflight_event_id=payload.artifact_write_execution_final_write_execution_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review(
+        artifact_write_execution_final_write_execution_dry_run_event_id=payload.artifact_write_execution_final_write_execution_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval(
+        artifact_write_execution_final_write_execution_dry_run_review_id=payload.artifact_write_execution_final_write_execution_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight(
+        artifact_write_execution_final_write_execution_final_approval_id=payload.artifact_write_execution_final_write_execution_final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run(
+        artifact_write_execution_final_write_execution_final_preflight_event_id=payload.artifact_write_execution_final_write_execution_final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_dry_run_event_id=payload.artifact_write_execution_final_write_execution_final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval(
+        artifact_write_execution_final_write_execution_final_dry_run_review_id=payload.artifact_write_execution_final_write_execution_final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_approval_id=payload.artifact_write_execution_final_write_execution_final_final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_preflight_event_id=payload.artifact_write_execution_final_write_execution_final_final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_dry_run_event_id=payload.artifact_write_execution_final_write_execution_final_final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_dry_run_review_id=payload.artifact_write_execution_final_write_execution_final_final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_approval_id=payload.artifact_write_execution_final_write_execution_final_final_final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_preflight_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_runs(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_reviews(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review_id=payload.artifact_write_execution_final_write_execution_final_final_final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approvals(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_approval_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_runs(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_reviews(limit=limit)
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approvals(limit=limit)
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflights(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_runs(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_reviews(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approvals(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflights(limit=limit)
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_runs(limit=limit)
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_reviews(limit=limit)
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approvals(limit=limit)
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflights(limit=limit)
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_runs(limit=limit)
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approvals(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-preflight")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalPreflightInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalPreflightInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_id,
+        requested_by=payload.requested_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-preflights")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflights(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflights(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-dry-run")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalDryRunInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalDryRunInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_event_id,
+        simulated_by=payload.simulated_by,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-dry-runs")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_runs(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_runs(limit=limit)
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-dry-run-review")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalDryRunReviewInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalDryRunReviewInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_event_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_event_id,
+        reviewed_by=payload.reviewed_by,
+        review_decision=payload.review_decision,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-dry-run-reviews")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_reviews(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_reviews(limit=limit)
+
+
+@router.post("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-final-approval")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval(
+    payload: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalFinalApprovalInput | None = None,
+) -> dict:
+    payload = payload or Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalFinalFinalFinalFinalFinalFinalFinalApprovalInput()
+    return Dataset2TrainingReadinessService().dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_id=payload.artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_id,
+        approved_by=payload.approved_by,
+        approval_decision=payload.approval_decision,
+        confirmation_token=payload.confirmation_token,
+        note=payload.note,
+    )
+
+
+@router.get("/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-final-approvals")
+def dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approvals(limit: int = 20) -> list[dict]:
+    return Dataset2TrainingReadinessService().list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approvals(limit=limit)
 
 
 @router.post("/learning/dataset2/staging/fix-plan")
@@ -2415,7 +4734,7 @@ def latest_monitoring_session() -> dict:
             "summary": None,
             "events": [],
             "alerts": [],
-            "message": "尚未创建监控会话",
+            "message": "灏氭湭鍒涘缓鐩戞帶浼氳瘽",
         }
     return session
 
@@ -2963,6 +5282,256 @@ def record_mock_screen_observation(input_data: ScreenObservationInput | None = N
     )
 
 
+@router.post("/screen-monitoring/observations/tonghuashun-simulation")
+def record_tonghuashun_simulation_observation(input_data: TonghuashunSimulationObservationInput | None = None) -> dict:
+    from app.screen_monitoring.service import ScreenMonitoringService
+
+    payload = input_data or TonghuashunSimulationObservationInput()
+    return ScreenMonitoringService().record_tonghuashun_simulation_observation(
+        session_id=payload.session_id,
+        window_title=payload.window_title,
+        confidence=payload.confidence,
+        detected_items=payload.detected_items,
+        raw_payload=payload.raw_payload,
+        artifact_ref=payload.artifact_ref,
+        observed_at=payload.observed_at,
+        observed_by=payload.observed_by,
+        note=payload.note,
+    )
+
+@router.get("/sim-cockpit/status")
+def sim_cockpit_status() -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    return SimCockpitService().status()
+
+
+@router.get("/sim-cockpit/window-detection")
+def sim_cockpit_window_detection(target_title: str | None = None, record: bool = True) -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    return SimCockpitService().detect_desktop_window(target_title=target_title, record=record)
+
+
+@router.post("/sim-cockpit/verify-window")
+def sim_cockpit_verify_window(input_data: SimCockpitVerifyWindowInput | None = None) -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    payload = input_data or SimCockpitVerifyWindowInput()
+    return SimCockpitService().verify_window(
+        window_title=payload.window_title,
+        visible_text=payload.visible_text,
+        detected_items=payload.detected_items,
+        raw_payload=payload.raw_payload,
+        verified_by=payload.verified_by,
+        confidence=payload.confidence,
+    )
+
+
+@router.post("/sim-cockpit/actions/buy")
+def sim_cockpit_buy(input_data: SimCockpitActionInput | None = None) -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    payload = input_data or SimCockpitActionInput()
+    return SimCockpitService().record_action(
+        "buy",
+        symbol=payload.symbol,
+        price=payload.price,
+        quantity=payload.quantity,
+        signal_source=payload.signal_source,
+        risk_result=payload.risk_result,
+        window_verification_id=payload.window_verification_id,
+        requested_by=payload.requested_by,
+        note=payload.note,
+        dry_run=payload.dry_run,
+        execution_mode=payload.execution_mode,
+        screen_confirmation=payload.screen_confirmation,
+        screen_coordinates=payload.screen_coordinates,
+    )
+
+
+@router.post("/sim-cockpit/actions/sell")
+def sim_cockpit_sell(input_data: SimCockpitActionInput | None = None) -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    payload = input_data or SimCockpitActionInput()
+    return SimCockpitService().record_action(
+        "sell",
+        symbol=payload.symbol,
+        price=payload.price,
+        quantity=payload.quantity,
+        signal_source=payload.signal_source,
+        risk_result=payload.risk_result,
+        window_verification_id=payload.window_verification_id,
+        requested_by=payload.requested_by,
+        note=payload.note,
+        dry_run=payload.dry_run,
+        execution_mode=payload.execution_mode,
+        screen_confirmation=payload.screen_confirmation,
+        screen_coordinates=payload.screen_coordinates,
+    )
+
+
+@router.post("/sim-cockpit/actions/cancel")
+def sim_cockpit_cancel(input_data: SimCockpitActionInput | None = None) -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    payload = input_data or SimCockpitActionInput()
+    return SimCockpitService().record_action(
+        "cancel",
+        symbol=payload.symbol,
+        price=payload.price,
+        quantity=payload.quantity,
+        order_id=payload.order_id,
+        signal_source=payload.signal_source,
+        risk_result=payload.risk_result,
+        window_verification_id=payload.window_verification_id,
+        requested_by=payload.requested_by,
+        note=payload.note,
+        dry_run=payload.dry_run,
+        execution_mode=payload.execution_mode,
+        screen_confirmation=payload.screen_confirmation,
+        screen_coordinates=payload.screen_coordinates,
+    )
+
+
+@router.get("/sim-cockpit/actions/latest")
+def sim_cockpit_latest_actions(limit: int = 20) -> list[dict]:
+    from app.sim_cockpit.service import SimCockpitService
+
+    return SimCockpitService().latest_actions(limit=limit)
+
+
+@router.get("/sim-cockpit/readbacks/latest")
+def sim_cockpit_latest_readbacks(limit: int = 20) -> list[dict]:
+    from app.sim_cockpit.service import SimCockpitService
+
+    return SimCockpitService().latest_readbacks(limit=limit)
+
+
+@router.post("/sim-cockpit/readback")
+def sim_cockpit_record_readback(input_data: SimCockpitReadbackInput | None = None) -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    payload = input_data or SimCockpitReadbackInput()
+    return SimCockpitService().record_readback(
+        action_id=payload.action_id,
+        readback_type=payload.readback_type,
+        status=payload.status,
+        symbol=payload.symbol,
+        price=payload.price,
+        quantity=payload.quantity,
+        order_id=payload.order_id,
+        payload=payload.payload,
+        recorded_by=payload.recorded_by,
+    )
+
+
+@router.post("/automation/cycles/simulation-cockpit-run")
+def automation_simulation_cockpit_run(limit: int = 5) -> dict:
+    return AutomationSupervisor().simulation_cockpit_run(limit=limit)
+
+
+@router.get("/learning/dataset2/stage-summary")
+def dataset2_stage_summary(limit: int = 20) -> dict:
+    from app.learning.dataset2_stage import Dataset2StageService
+
+    return Dataset2StageService().stage_summary(limit=limit)
+
+
+
+@router.get("/learning/dataset2/training/status")
+def dataset2_controlled_training_status(limit: int = 200, min_samples: int = 4) -> dict:
+    from app.learning.dataset2_stage import Dataset2StageService
+
+    return Dataset2StageService().training_status(limit=limit, min_samples=min_samples)
+
+
+@router.post("/learning/dataset2/training/run")
+def dataset2_controlled_training_run(input_data: Dataset2TrainingRunInput | None = None) -> dict:
+    from app.learning.dataset2_stage import Dataset2StageService
+
+    payload = input_data or Dataset2TrainingRunInput()
+    return Dataset2StageService().training_run(
+        limit=payload.limit,
+        requested_by=payload.requested_by,
+        min_samples=payload.min_samples,
+    )
+
+
+@router.get("/learning/dataset2/training/runs/latest")
+def dataset2_controlled_training_latest_run() -> dict:
+    from app.learning.dataset2_stage import Dataset2StageService
+
+    return Dataset2StageService().latest_training_run() or {
+        "status": "empty",
+        "simulation_only": True,
+        "live_trading_enabled": settings.enable_live_trading,
+    }
+
+@router.post("/learning/dataset2/training/dry-run")
+def dataset2_simple_training_dry_run(input_data: Dataset2SimpleTrainingDryRunInput | None = None) -> dict:
+    from app.learning.dataset2_stage import Dataset2StageService
+
+    payload = input_data or Dataset2SimpleTrainingDryRunInput()
+    return Dataset2StageService().training_dry_run(
+        limit=payload.limit,
+        requested_by=payload.requested_by,
+    )
+
+
+@router.get("/research/offhour/capabilities")
+def offhour_research_capabilities() -> dict:
+    from app.research.offhour import OffhourResearchLoopService
+
+    return OffhourResearchLoopService().capabilities()
+
+
+@router.post("/research/offhour/run")
+def run_offhour_research(input_data: OffhourResearchRunInput | None = None) -> dict:
+    from app.research.offhour import OffhourResearchLoopService
+
+    payload = input_data or OffhourResearchRunInput()
+    return OffhourResearchLoopService().run(
+        limit=payload.limit,
+        strategy_limit=payload.strategy_limit,
+        history_days=payload.history_days,
+        write_artifact=payload.write_artifact,
+        refresh_history=payload.refresh_history,
+        requested_by=payload.requested_by,
+    )
+
+
+@router.get("/research/offhour/runs/latest")
+def latest_offhour_research_run() -> dict:
+    from app.research.offhour import OffhourResearchLoopService
+
+    latest = OffhourResearchLoopService().latest_run()
+    if latest is None:
+        return {
+            "status": "empty",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+    return latest
+
+
+@router.get("/research/offhour/runs/{run_id}")
+def get_offhour_research_run(run_id: int) -> dict:
+    from app.research.offhour import OffhourResearchLoopService
+
+    item = OffhourResearchLoopService().get_run(run_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Offhour research run not found")
+    return item
+
+
+@router.get("/research/offhour/model-candidates/latest")
+def latest_offhour_model_candidate() -> dict:
+    from app.research.offhour import OffhourResearchLoopService
+
+    return OffhourResearchLoopService().latest_model_candidate()
 @router.post("/screen-monitoring/observations/fixture-replay")
 def replay_screen_monitoring_fixture(input_data: ScreenFixtureReplayInput | None = None) -> dict:
     from app.screen_monitoring.service import ScreenMonitoringService
@@ -3075,7 +5644,7 @@ def latest_potential_search() -> dict:
             "scored_count": 0,
             "items": [],
             "errors": [],
-            "message": "尚未产生潜力搜索记录",
+            "message": "灏氭湭浜х敓娼滃姏鎼滅储璁板綍",
         }
     return latest
 
@@ -3341,7 +5910,7 @@ def reject_calibration_proposal(proposal_id: int, input_data: CalibrationReviewI
 
 
 # ------------------------------------------------------------------
-# Sandbox Experiments (approved proposals �?what-if simulation)
+# Sandbox Experiments (approved proposals 鈫?what-if simulation)
 # ------------------------------------------------------------------
 
 @router.post("/learning/sandbox-experiments/run/{proposal_id}")
@@ -3523,7 +6092,6 @@ def portfolio_risk_state() -> dict:
 # ------------------------------------------------------------------
 # Event-Driven Historical Backtesting
 # ------------------------------------------------------------------
-
 class BacktestRunInput(BaseModel):
     start_date: str
     end_date: str

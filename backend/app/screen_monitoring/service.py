@@ -67,6 +67,7 @@ class ScreenMonitoringService:
                 "screen_readiness_digest_history_release_readiness",
                 "screen_readiness_digest_history_approval_review",
                 "screen_readiness_digest_history_release_package",
+                "tonghuashun_simulation_observation",
                 "status_reconciliation",
                 "audit_evidence",
             ],
@@ -2716,6 +2717,104 @@ class ScreenMonitoringService:
         row = self.store.fetch_one("SELECT * FROM screen_observations WHERE dedupe_key = ?", (dedupe_key,))
         observation = self._observation_model(row) if row else {}
         observation["inserted"] = inserted
+        return observation
+
+    def record_tonghuashun_simulation_observation(
+        self,
+        session_id: int | None = None,
+        window_title: str | None = None,
+        confidence: float = 0.85,
+        detected_items: list[dict[str, Any]] | None = None,
+        raw_payload: dict[str, Any] | None = None,
+        artifact_ref: str | None = None,
+        observed_at: str | None = None,
+        observed_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """Record Tonghuashun simulated委托 evidence without clicking or OCR."""
+        title = (window_title or "").strip()
+        marker_text = f"{title} {json.dumps(raw_payload or {}, ensure_ascii=False, default=str)}".lower()
+        simulation_markers = ["mncg", "模拟", "模拟炒股", "模拟委托"]
+        simulation_mode_detected = any(marker.lower() in marker_text for marker in simulation_markers)
+        safe_detected = list(detected_items or [])
+        safe_detected.extend(
+            [
+                {
+                    "type": "simulation_mode_marker",
+                    "value": "mncg_or_simulation_text_present" if simulation_mode_detected else "missing",
+                    "confidence": 0.9 if simulation_mode_detected else 0.25,
+                },
+                {
+                    "type": "visible_control_boundary",
+                    "value": "buy_sell_cancel_submit_controls_are_observation_only",
+                    "automation_allowed": False,
+                },
+            ]
+        )
+        warnings = [
+            "tonghuashun_simulation_observation_is_read_only",
+            "interactive_trading_controls_visible_but_not_actionable_by_automation",
+        ]
+        if not simulation_mode_detected:
+            warnings.append("simulation_mode_marker_missing_or_uncertain")
+        payload = {
+            **(raw_payload or {}),
+            "schema_version": "tonghuashun_simulation_observation.v1",
+            "stage": "V4.5-P22",
+            "observed_by": observed_by or "operator",
+            "note": note,
+            "simulation_mode_detected": simulation_mode_detected,
+            "allowed_use": [
+                "read_only_screen_observation",
+                "manual_simulation_review",
+                "training_label_metadata",
+                "experience_memory_evidence",
+            ],
+            "forbidden_actions": [
+                "screen_click",
+                "keyboard_type",
+                "buy",
+                "sell",
+                "cancel_order",
+                "submit_order",
+                "broker_action",
+                "credential_access",
+                "funds_or_position_read_for_live_trading",
+                "live_auto_trading",
+            ],
+            "real_screen_capture": False,
+            "ocr_executed": False,
+            "pixel_data_stored": False,
+            "screen_click_executed": False,
+            "keyboard_type_executed": False,
+            "broker_action_executed": False,
+            "order_action_executed": False,
+            "credential_accessed": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+        observation = self.record_observation(
+            session_id=session_id,
+            source="tonghuashun_simulation",
+            app_status="simulation_observed" if simulation_mode_detected else "attention_required",
+            window_title=title or "Tonghuashun simulation window",
+            confidence=confidence if simulation_mode_detected else min(confidence, 0.45),
+            detected_items=safe_detected,
+            warnings=warnings,
+            raw_payload=payload,
+            artifact_ref=artifact_ref,
+            observed_at=observed_at,
+        )
+        observation["tonghuashun_simulation"] = {
+            "simulation_mode_detected": simulation_mode_detected,
+            "training_label_ready": bool(simulation_mode_detected and observation.get("inserted") is True),
+            "automation_actions_allowed": False,
+            "manual_order_entry_required": True,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
         return observation
 
     def _ensure_artifact_review(self, observation: dict[str, Any]) -> dict[str, Any]:

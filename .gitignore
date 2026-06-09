@@ -5,6 +5,7 @@ __pycache__/
 *.pyd
 *.egg-info/
 *.sqlite3
+*.sqlite3-*
 *.sqlite
 *.db
 .env
@@ -16,6 +17,7 @@ dist/
 .codegraph/
 logs/
 *.log
+@AutomationLog.txt
 *.jsonl
 *.csv
 *.xls

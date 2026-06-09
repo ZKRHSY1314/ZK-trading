@@ -1,11 +1,12 @@
-<template>
+﻿<template>
   <main class="shell">
     <section class="topbar">
       <div>
         <p class="eyebrow">Local Simulation Mode</p>
-        <h1>A股AI交易驾驶舱</h1>
+        <h1>A股 AI 交易驾驶舱</h1>
         <p class="status">{{ statusText }}</p>
       </div>
+      <SafetyRibbon :status-text="statusText" :live-trading-enabled="Boolean(simCockpitStatus?.live_trading_enabled)" />
       <div class="top-actions">
         <button data-testid="auto-discovery-button" @click="runAutoDiscovery" :disabled="discoveryLoading">
           {{ discoveryLoading ? "发现中" : "自动发现" }}
@@ -26,20 +27,20 @@
         <button data-testid="potential-search-button" @click="runPotentialSearch" :disabled="potentialSearchLoading">
           {{ potentialSearchLoading ? "搜索中" : "潜力搜索" }}
         </button>
-        <button data-testid="live-trading-disabled-button" class="disabled-live" disabled>实盘禁用</button>
+        <button data-testid="live-trading-disabled-button" class="disabled-live" disabled>瀹炵洏绂佺敤</button>
       </div>
     </section>
 
     <section class="grid">
 <article class="panel wide">
         <h2>Price Readiness</h2>
-        <p class="review-only-banner">⚠ This data is for simulation and system readiness only. Do not use as investment advice.</p>
+        <p class="review-only-banner">鈿?This data is for simulation and system readiness only. Do not use as investment advice.</p>
         <div class="metrics">
-          <span>就绪 (Ready) {{ priceReadinessSummary?.ready ?? 0 }}</span>
-          <span>无价格 (Missing) {{ priceReadinessSummary?.missing_price ?? 0 }}</span>
-          <span>价格陈旧 (Stale) {{ priceReadinessSummary?.stale_price ?? 0 }}</span>
-          <span>历史不足 {{ priceReadinessSummary?.insufficient_history ?? 0 }}</span>
-          <span>错误 (Error) {{ priceReadinessSummary?.error ?? 0 }}</span>
+          <span>灏辩华 (Ready) {{ priceReadinessSummary?.ready ?? 0 }}</span>
+          <span>鏃犱环鏍?(Missing) {{ priceReadinessSummary?.missing_price ?? 0 }}</span>
+          <span>浠锋牸闄堟棫 (Stale) {{ priceReadinessSummary?.stale_price ?? 0 }}</span>
+          <span>鍘嗗彶涓嶈冻 {{ priceReadinessSummary?.insufficient_history ?? 0 }}</span>
+          <span>閿欒 (Error) {{ priceReadinessSummary?.error ?? 0 }}</span>
         </div>
         <div class="actions">
           <button data-testid="run-price-readiness-button" @click="runPriceReadiness" :disabled="priceReadinessLoading">
@@ -54,8 +55,8 @@
         <div v-if="dailyBarCoverage.length" class="score-list" style="margin-bottom: 24px;">
           <div v-for="cov in dailyBarCoverage" :key="cov.symbol" class="score-item">
             <strong>{{ cov.symbol }} / {{ cov.quality_status }}</strong>
-            <span>数量: {{ cov.cached_bar_count }} / 范围: {{ cov.first_trade_date }} 至 {{ cov.last_trade_date }}</span>
-            <small>数据源: {{ cov.source }}</small>
+            <span>鏁伴噺: {{ cov.cached_bar_count }} / 鑼冨洿: {{ cov.first_trade_date }} 鑷?{{ cov.last_trade_date }}</span>
+            <small>鏁版嵁婧? {{ cov.source }}</small>
           </div>
         </div>
         <p v-else style="margin-bottom: 24px;">暂无日线缓存覆盖率数据。点击上方按钮进行刷新。</p>
@@ -64,9 +65,9 @@
         <div v-if="priceReadinessReports.length" class="score-list">
           <div v-for="report in priceReadinessReports" :key="report.symbol" class="score-item">
             <strong>{{ report.symbol }} {{ report.name }} / {{ report.coverage_status }}</strong>
-            <span>最新价格: {{ report.latest_price ?? 'N/A' }} / 数据源: {{ report.source }}</span>
-            <small>更新时间: {{ report.latest_price_at ?? 'N/A' }} / 历史数据点: {{ report.history_points }}</small>
-            <small v-if="report.error_message">⚠ {{ report.error_message }}</small>
+            <span>鏈€鏂颁环鏍? {{ report.latest_price ?? 'N/A' }} / 鏁版嵁婧? {{ report.source }}</span>
+            <small>鏇存柊鏃堕棿: {{ report.latest_price_at ?? 'N/A' }} / 鍘嗗彶鏁版嵁鐐? {{ report.history_points }}</small>
+            <small v-if="report.error_message">鈿?{{ report.error_message }}</small>
           </div>
         </div>
         <p v-else>暂无价格就绪报告。点击上方按钮进行检查。</p>
@@ -79,29 +80,29 @@
             {{ realtimeLoading ? "刷新中" : "刷新实时事件" }}
           </button>
           <button data-testid="sync-realtime-monitoring-button" @click="syncRealtimeMonitoring" :disabled="realtimeLoading">
-            同步监控提醒
+            鍚屾鐩戞帶鎻愰啋
           </button>
           <button data-testid="run-realtime-cycle-button" @click="runRealtimeCycle" :disabled="realtimeLoading">
-            运行实时闭环
+            杩愯瀹炴椂闂幆
           </button>
           <button data-testid="run-realtime-replay-button" @click="runRealtimeReplay" :disabled="realtimeLoading">
-            运行信号 Replay
+            杩愯淇″彿 Replay
           </button>
         </div>
         <div class="metrics">
           <span>Provider {{ realtimeCapabilities?.active_provider ?? "disabled" }}</span>
           <span>状态 {{ realtimeCapabilities?.provider_status ?? "未加载" }}</span>
-          <span>事件 {{ realtimeEvents.length }}</span>
-          <span>提醒 {{ realtimeMonitoringSync?.created_alert_count ?? 0 }}</span>
+          <span>浜嬩欢 {{ realtimeEvents.length }}</span>
+          <span>鎻愰啋 {{ realtimeMonitoringSync?.created_alert_count ?? 0 }}</span>
           <span>闭环 {{ realtimeCycleResult?.status ?? "未运行" }}</span>
           <span>调度 {{ realtimeSchedulerPlan?.status ?? "未加载" }}</span>
-          <span>提案 {{ realtimeAutomationProposal?.proposal_count ?? 0 }}</span>
+          <span>鎻愭 {{ realtimeAutomationProposal?.proposal_count ?? 0 }}</span>
           <span>实盘 {{ realtimeCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
         <div v-if="realtimeSchedulerPlan" class="score-list">
           <div class="score-item">
             <strong>Scheduler / {{ realtimeSchedulerPlan.status }}</strong>
-            <span>模式 {{ realtimeSchedulerPlan.recommended_mode }} / 标的 {{ realtimeSchedulerPlan.recommended_symbols.join(", ") }}</span>
+            <span>妯″紡 {{ realtimeSchedulerPlan.recommended_mode }} / 鏍囩殑 {{ realtimeSchedulerPlan.recommended_symbols.join(", ") }}</span>
             <small>{{ realtimeSchedulerPlan.cadence.workday_trading_hours.map((item) => item.time).join(" / ") }} / live trading disabled</small>
           </div>
           <div class="score-item">
@@ -129,24 +130,24 @@
         <div v-if="realtimeRefreshResult || realtimeMonitoringSync || realtimeCycleResult" class="score-list">
           <div v-if="realtimeRefreshResult" class="score-item">
             <strong>Refresh / {{ realtimeRefreshResult.status }}</strong>
-            <span>写入 {{ realtimeRefreshResult.refreshed_count }} / 失败 {{ realtimeRefreshResult.failed_count }} / 请求 {{ realtimeRefreshResult.requested_count }}</span>
+            <span>鍐欏叆 {{ realtimeRefreshResult.refreshed_count }} / 澶辫触 {{ realtimeRefreshResult.failed_count }} / 璇锋眰 {{ realtimeRefreshResult.requested_count }}</span>
             <small>fallback {{ realtimeRefreshResult.fallback_required ? "required" : "not required" }} / simulation-only</small>
           </div>
           <div v-if="realtimeMonitoringSync" class="score-item">
             <strong>Monitoring Sync / {{ realtimeMonitoringSync.status }}</strong>
-            <span>事件 {{ realtimeMonitoringSync.created_event_count }} / 提醒 {{ realtimeMonitoringSync.created_alert_count }} / 去重 {{ realtimeMonitoringSync.skipped_duplicate_count }}</span>
+            <span>浜嬩欢 {{ realtimeMonitoringSync.created_event_count }} / 鎻愰啋 {{ realtimeMonitoringSync.created_alert_count }} / 鍘婚噸 {{ realtimeMonitoringSync.skipped_duplicate_count }}</span>
             <small>review-only / live trading disabled</small>
           </div>
           <div v-if="realtimeCycleResult" class="score-item">
             <strong>Realtime Cycle / {{ realtimeCycleResult.status }} / #{{ realtimeCycleResult.run_id ?? "new" }}</strong>
-            <span>刷新 {{ realtimeCycleResult.summary.refreshed_count }} / 失败 {{ realtimeCycleResult.summary.refresh_failed_count }} / Replay {{ realtimeCycleResult.summary.replay_event_count }}</span>
-            <small>提醒 {{ realtimeCycleResult.summary.created_alert_count }} / fallback {{ realtimeCycleResult.summary.fallback_required ? "required" : "not required" }}</small>
+            <span>鍒锋柊 {{ realtimeCycleResult.summary.refreshed_count }} / 澶辫触 {{ realtimeCycleResult.summary.refresh_failed_count }} / Replay {{ realtimeCycleResult.summary.replay_event_count }}</span>
+            <small>鎻愰啋 {{ realtimeCycleResult.summary.created_alert_count }} / fallback {{ realtimeCycleResult.summary.fallback_required ? "required" : "not required" }}</small>
           </div>
         </div>
         <div v-if="realtimeCycleRuns.length" class="score-list">
           <div v-for="run in realtimeCycleRuns.slice(0, 5)" :key="run.id" class="score-item">
             <strong>Cycle #{{ run.id }} / {{ run.status }}</strong>
-            <span>刷新 {{ run.refreshed_count }} / 失败 {{ run.refresh_failed_count }} / 提醒 {{ run.created_alert_count }} / Replay {{ run.replay_event_count }}</span>
+            <span>鍒锋柊 {{ run.refreshed_count }} / 澶辫触 {{ run.refresh_failed_count }} / 鎻愰啋 {{ run.created_alert_count }} / Replay {{ run.replay_event_count }}</span>
             <small>{{ run.created_at }} / provider {{ run.provider ?? "disabled" }} / fallback {{ run.fallback_required ? "required" : "not required" }}</small>
           </div>
         </div>
@@ -154,14 +155,14 @@
           <div v-for="item in realtimeHealth.slice(0, 4)" :key="item.provider" class="score-item">
             <strong>{{ item.provider }} / {{ item.status }}</strong>
             <span>配置 {{ item.configured ? "已配置" : "未配置" }} / 质量 {{ item.quality_status }}</span>
-            <small>延迟 {{ item.latency_ms ?? "N/A" }} ms / {{ item.last_error ?? "暂无错误" }}</small>
+            <small>寤惰繜 {{ item.latency_ms ?? "N/A" }} ms / {{ item.last_error ?? "鏆傛棤閿欒" }}</small>
           </div>
         </div>
         <div v-if="realtimeSnapshot?.event" class="score-list">
           <div class="score-item">
-            <strong>{{ realtimeSnapshot.event.symbol }} 最新事件 / {{ realtimeSnapshot.status }}</strong>
-            <span>价格 {{ realtimeSnapshot.event.price }} / 来源 {{ realtimeSnapshot.event.source }}</span>
-            <small>延迟 {{ realtimeSnapshot.event.latency_ms?.toFixed?.(0) ?? realtimeSnapshot.event.latency_ms ?? "N/A" }} ms / 质量 {{ realtimeSnapshot.event.quality_status }}</small>
+            <strong>{{ realtimeSnapshot.event.symbol }} 鏈€鏂颁簨浠?/ {{ realtimeSnapshot.status }}</strong>
+            <span>浠锋牸 {{ realtimeSnapshot.event.price }} / 鏉ユ簮 {{ realtimeSnapshot.event.source }}</span>
+            <small>寤惰繜 {{ realtimeSnapshot.event.latency_ms?.toFixed?.(0) ?? realtimeSnapshot.event.latency_ms ?? "N/A" }} ms / 璐ㄩ噺 {{ realtimeSnapshot.event.quality_status }}</small>
           </div>
         </div>
         <p v-else>暂无实时事件缓存。外部源未配置时系统保持 disabled/needs_config，不伪装为实时行情。</p>
@@ -175,97 +176,185 @@
         <div v-if="realtimeReplay" class="score-list">
           <div class="score-item">
             <strong>Replay / {{ realtimeReplay.status }}</strong>
-            <span>事件 {{ realtimeReplay.event_count }} / 标的 {{ realtimeReplay.summary.symbol_count }} / 信号 {{ realtimeReplay.signals.length }}</span>
-            <small>延迟均值 {{ realtimeReplay.summary.latency_ms.avg ?? "N/A" }} ms / simulation-only</small>
+            <span>浜嬩欢 {{ realtimeReplay.event_count }} / 鏍囩殑 {{ realtimeReplay.summary.symbol_count }} / 淇″彿 {{ realtimeReplay.signals.length }}</span>
+            <small>寤惰繜鍧囧€?{{ realtimeReplay.summary.latency_ms.avg ?? "N/A" }} ms / simulation-only</small>
           </div>
           <div v-for="signal in realtimeReplay.signals.slice(0, 5)" :key="`${signal.symbol}-${signal.event_ts}-${signal.signal_type}`" class="score-item">
             <strong>{{ signal.symbol }} / {{ signal.signal_type }}</strong>
-            <span>强度 {{ signal.strength }} / 质量 {{ signal.quality_status }}</span>
+            <span>寮哄害 {{ signal.strength }} / 璐ㄩ噺 {{ signal.quality_status }}</span>
             <small>{{ signal.event_ts }} / {{ signal.reason }}</small>
           </div>
         </div>
       </article>
 <article class="panel wide">
-        <h2>V4.5 屏幕只读监控</h2>
-        <p class="review-only-banner">只记录屏幕观测证据；不读取真实像素、不 OCR、不点击、不输入、不下单。</p>
+        <h2>同花顺模拟盘控制台</h2>
+        <p class="review-only-banner">仅同花顺模拟账户动作；真实账户、券商登录、资金账号、银证转账和实盘委托硬阻断。</p>
         <div class="actions">
-          <button data-testid="mock-screen-observation-button" @click="recordMockScreenObservation" :disabled="screenMonitoringLoading">
-            {{ screenMonitoringLoading ? "记录中" : "记录只读观测样本" }}
+          <button data-testid="sim-cockpit-refresh-button" @click="loadSimCockpit" :disabled="simCockpitLoading">
+            {{ simCockpitLoading ? "刷新中" : "刷新模拟盘状态" }}
           </button>
-          <button data-testid="fixture-screen-replay-button" @click="replayScreenFixture" :disabled="screenMonitoringLoading">
-            回放屏幕 Fixture
+          <button data-testid="sim-cockpit-verify-fixture-button" @click="verifySimCockpitFixture" :disabled="simCockpitLoading">
+            鐧昏 mncg 楠岃瘉鏍锋湰
           </button>
-          <button data-testid="screen-preflight-button" @click="runScreenCapturePreflight" :disabled="screenMonitoringLoading">
-            截图预检
+          <button data-testid="sim-cockpit-detect-window-button" @click="detectSimCockpitWindow" :disabled="simCockpitLoading">
+            妫€娴嬪悓鑺遍『绐楀彛
           </button>
-          <button data-testid="screen-capture-stub-button" @click="runScreenCaptureStub" :disabled="screenMonitoringLoading">
-            生成截图 Artifact Stub
+          <button data-testid="sim-cockpit-dry-run-screen-button" @click="dryRunSimCockpitScreen" :disabled="simCockpitLoading">
+            灏忛涔板叆 Dry-run
           </button>
-          <button data-testid="screen-artifact-sync-button" @click="syncScreenArtifactReviews" :disabled="screenMonitoringLoading">
-            同步 Artifact 复核
+          <button data-testid="sim-cockpit-screen-click-button" @click="executeSimCockpitScreenClick" :disabled="simCockpitLoading || !simCockpitStatus?.simulation_actions_allowed">
+            灏忛妯℃嫙鐐瑰嚮
           </button>
-          <button data-testid="screen-config-proposal-button" @click="generateScreenProviderConfigProposal" :disabled="screenMonitoringLoading">
-            生成 local-safe 配置提案
+          <button data-testid="sim-cockpit-run-button" @click="runSimulationCockpitCycle" :disabled="simCockpitLoading">
+            杩愯妯℃嫙鐩橀棴鐜?
           </button>
-          <button data-testid="screen-provider-replay-button" @click="runScreenProviderReplay" :disabled="screenMonitoringLoading">
-            运行 Provider Replay
+          <button data-testid="dataset2-simple-dry-run-button" @click="runDataset2SimpleDryRun" :disabled="simCockpitLoading">
+            Dataset2 Dry-run
           </button>
-          <button data-testid="screen-readiness-audit-button" @click="refreshScreenReadinessAudit" :disabled="screenMonitoringLoading">
-            生成 Readiness Audit
+          <button data-testid="dataset2-training-status-button" @click="loadDataset2TrainingStatus" :disabled="simCockpitLoading">
+            璁粌鐘舵€?
           </button>
-          <button data-testid="screen-readiness-ack-button" @click="acknowledgeScreenReadinessAudit" :disabled="screenMonitoringLoading">
-            确认 Audit 已审阅
+          <button data-testid="dataset2-training-run-button" @click="runDataset2ControlledTraining" :disabled="simCockpitLoading">
+            鍙楁帶璁粌
           </button>
-          <button data-testid="screen-readiness-timeline-button" @click="refreshScreenReadinessTimeline" :disabled="screenMonitoringLoading">
-            刷新 Timeline
-          </button>
-          <button data-testid="screen-readiness-export-button" @click="refreshScreenReadinessExport" :disabled="screenMonitoringLoading">
-            生成 Evidence Export
-          </button>
-          <button data-testid="screen-readiness-verify-button" @click="verifyScreenReadinessExport" :disabled="screenMonitoringLoading">
-            校验证据包
-          </button>
-          <button data-testid="screen-readiness-compare-button" @click="compareScreenReadinessEvidence" :disabled="screenMonitoringLoading">
-            对比证据稳定性
-          </button>
-          <button data-testid="screen-readiness-health-button" @click="refreshScreenReadinessHealth" :disabled="screenMonitoringLoading">
-            生成健康摘要
-          </button>
-          <button data-testid="screen-digest-history-proposal-button" @click="refreshScreenDigestHistoryProposal" :disabled="screenMonitoringLoading">
-            历史保留方案
-          </button>
-          <button data-testid="screen-digest-migration-checklist-button" @click="refreshScreenDigestMigrationChecklist" :disabled="screenMonitoringLoading">
-            迁移就绪清单
-          </button>
-          <button data-testid="screen-digest-migration-spec-button" @click="verifyScreenDigestMigrationSpec" :disabled="screenMonitoringLoading">
-            校验迁移草案
-          </button>
-          <button data-testid="screen-digest-migration-spec-approval-button" @click="approveScreenDigestMigrationSpec" :disabled="screenMonitoringLoading">
-            确认草案已审阅
-          </button>
-          <button data-testid="screen-digest-migration-release-button" @click="refreshScreenDigestReleaseReadiness" :disabled="screenMonitoringLoading">
-            发布就绪汇总
-          </button>
-          <button data-testid="screen-digest-approval-review-button" @click="refreshScreenDigestApprovalReview" :disabled="screenMonitoringLoading">
-            审批有效期复核
-          </button>
-          <button data-testid="screen-digest-release-package-button" @click="refreshScreenDigestReleasePackage" :disabled="screenMonitoringLoading">
-            最终发布包清单
-          </button>
-          <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">刷新观测证据</button>
         </div>
         <div class="metrics">
-          <span>阶段 {{ screenMonitoringCapabilities?.stage ?? "V4.5-P1" }}</span>
-          <span>采集 {{ screenMonitoringCapabilities?.capture_provider ?? "disabled" }}</span>
+          <span>状态 {{ simCockpitStatus?.status ?? "未加载" }}</span>
+          <span>允许模拟动作 {{ simCockpitStatus?.simulation_actions_allowed ? "是" : "否" }}</span>
+          <span>鏈€鏂板姩浣?{{ simCockpitActions.length }}</span>
+          <span>鍥炴墽 {{ simCockpitReadbacks.length }}</span>
+          <span>Dataset2 鏍锋湰 {{ simCockpitDataset2Stage?.sim_cockpit_action_count ?? 0 }} / {{ simCockpitDataset2Stage?.sim_cockpit_readback_count ?? 0 }}</span>
+          <span>训练 {{ simCockpitDataset2TrainingStatus?.status ?? "未加载" }}</span>
+          <span>实盘 {{ simCockpitStatus?.live_trading_enabled ? "开启" : "关闭" }}</span>
+        </div>
+        <div v-if="simCockpitStatus" class="score-list">
+          <div class="score-item">
+            <strong>{{ simCockpitStatus.stage }} / {{ simCockpitStatus.status }}</strong>
+            <span>full auto simulation {{ simCockpitStatus.full_auto_simulation_enabled ? "enabled" : "disabled" }} / real trading blocked {{ simCockpitStatus.real_trading_blocked ? "yes" : "no" }}</span>
+            <small>latest verification #{{ simCockpitStatus.latest_verification?.id ?? "none" }} / {{ simCockpitStatus.latest_verification?.status ?? "needs_verification" }}</small>
+          </div>
+          <div v-if="simCockpitWindowDetection" class="score-item">
+            <strong>Window Detection / {{ simCockpitWindowDetection.status }}</strong>
+            <span>{{ simCockpitWindowDetection.best_window?.title ?? "no window" }} / {{ simCockpitWindowDetection.best_window?.process_name ?? "no process" }}</span>
+            <small>{{ (simCockpitWindowDetection.blocked_reasons ?? []).join(" / ") || "desktop adapter evidence recorded" }}</small>
+          </div>
+          <div v-if="simCockpitCycle" class="score-item">
+            <strong>Cycle #{{ simCockpitCycle.run_id }} / {{ simCockpitCycle.summary.status }}</strong>
+            <span>plans {{ simCockpitCycle.summary.candidate_plan_count ?? 0 }} / attempted {{ simCockpitCycle.summary.attempted_count ?? 0 }} / executed {{ simCockpitCycle.summary.executed_count ?? 0 }}</span>
+            <small>{{ simCockpitCycle.summary.reason ?? "simulation-only audit gateway" }}</small>
+          </div>
+          <div v-if="simCockpitDataset2DryRun" class="score-item">
+            <strong>Dataset2 Dry-run / {{ simCockpitDataset2DryRun.status }}</strong>
+            <span>samples {{ simCockpitDataset2DryRun.sample_candidate_count }} / training {{ simCockpitDataset2DryRun.training_executed ? "executed" : "not executed" }}</span>
+            <small>{{ simCockpitDataset2DryRun.sample_set_hash }}</small>
+          </div>
+          <div v-if="simCockpitDataset2TrainingStatus" class="score-item">
+            <strong>Dataset2 Training / {{ simCockpitDataset2TrainingStatus.status }}</strong>
+            <span>samples {{ simCockpitDataset2TrainingStatus.sample_candidate_count }} / labels {{ Object.keys(simCockpitDataset2TrainingStatus.label_counts).length }} / allowed {{ simCockpitDataset2TrainingStatus.training_allowed ? "yes" : "no" }}</span>
+            <small>{{ simCockpitDataset2TrainingStatus.blocked_reasons.join(" / ") || "in-memory training ready; artifact writing disabled" }}</small>
+          </div>
+          <div v-if="simCockpitDataset2TrainingRun" class="score-item">
+            <strong>Dataset2 Controlled Run / {{ simCockpitDataset2TrainingRun.status }}</strong>
+            <span>train {{ simCockpitDataset2TrainingRun.metrics.train_count }} / validation {{ simCockpitDataset2TrainingRun.metrics.validation_count }} / accuracy {{ formatPercent(simCockpitDataset2TrainingRun.metrics.validation_accuracy) }}</span>
+            <small>artifact {{ simCockpitDataset2TrainingRun.model_artifact_written ? "written" : "disabled" }} / {{ simCockpitDataset2TrainingRun.blocked_reasons.join(" / ") || simCockpitDataset2TrainingRun.sample_set_hash }}</small>
+          </div>
+        </div>
+        <div v-if="simCockpitReadbacks.length" class="score-list">
+          <div v-for="readback in simCockpitReadbacks.slice(0, 4)" :key="readback.id" class="score-item">
+            <strong>Readback #{{ readback.id }} {{ readback.readback_type }} / {{ readback.status }}</strong>
+            <span>{{ readback.symbol ?? readback.order_id ?? "no symbol" }} {{ readback.quantity ?? "" }} @ {{ readback.price ?? "N/A" }}</span>
+            <small>{{ readback.created_at }} / action #{{ readback.action_id ?? "manual" }}</small>
+          </div>
+        </div>
+        <div v-if="simCockpitActions.length" class="score-list">
+          <div v-for="action in simCockpitActions.slice(0, 6)" :key="action.id" class="score-item">
+            <strong>#{{ action.id }} {{ action.action_type }} / {{ action.status }}</strong>
+            <span>{{ action.symbol ?? action.order_id ?? "no symbol" }} {{ action.quantity ?? "" }} @ {{ action.price ?? "N/A" }}</span>
+            <small>{{ action.created_at }} / {{ (action.blocked_reasons ?? []).join(" / ") || "audit recorded" }}</small>
+          </div>
+        </div>
+        <p v-else>暂无模拟盘动作审计记录。</p>
+      </article><article class="panel wide">
+        <h2>V4.5 灞忓箷鍙鐩戞帶</h2>
+        <p class="review-only-banner">只记录屏幕观察证据；不读取真实像素、不 OCR、不点击、不输入、不下单。</p>
+        <div class="actions">
+          <button data-testid="mock-screen-observation-button" @click="recordMockScreenObservation" :disabled="screenMonitoringLoading">
+            {{ screenMonitoringLoading ? "记录中" : "记录只读观察样本" }}
+          </button>
+          <button data-testid="fixture-screen-replay-button" @click="replayScreenFixture" :disabled="screenMonitoringLoading">
+            鍥炴斁灞忓箷 Fixture
+          </button>
+          <button data-testid="screen-preflight-button" @click="runScreenCapturePreflight" :disabled="screenMonitoringLoading">
+            鎴浘棰勬
+          </button>
+          <button data-testid="screen-capture-stub-button" @click="runScreenCaptureStub" :disabled="screenMonitoringLoading">
+            鐢熸垚鎴浘 Artifact Stub
+          </button>
+          <button data-testid="screen-artifact-sync-button" @click="syncScreenArtifactReviews" :disabled="screenMonitoringLoading">
+            鍚屾 Artifact 澶嶆牳
+          </button>
+          <button data-testid="screen-config-proposal-button" @click="generateScreenProviderConfigProposal" :disabled="screenMonitoringLoading">
+            鐢熸垚 local-safe 閰嶇疆鎻愭
+          </button>
+          <button data-testid="screen-provider-replay-button" @click="runScreenProviderReplay" :disabled="screenMonitoringLoading">
+            杩愯 Provider Replay
+          </button>
+          <button data-testid="screen-readiness-audit-button" @click="refreshScreenReadinessAudit" :disabled="screenMonitoringLoading">
+            鐢熸垚 Readiness Audit
+          </button>
+          <button data-testid="screen-readiness-ack-button" @click="acknowledgeScreenReadinessAudit" :disabled="screenMonitoringLoading">
+            纭 Audit 宸插闃?
+          </button>
+          <button data-testid="screen-readiness-timeline-button" @click="refreshScreenReadinessTimeline" :disabled="screenMonitoringLoading">
+            鍒锋柊 Timeline
+          </button>
+          <button data-testid="screen-readiness-export-button" @click="refreshScreenReadinessExport" :disabled="screenMonitoringLoading">
+            鐢熸垚 Evidence Export
+          </button>
+          <button data-testid="screen-readiness-verify-button" @click="verifyScreenReadinessExport" :disabled="screenMonitoringLoading">
+            鏍￠獙璇佹嵁鍖?
+          </button>
+          <button data-testid="screen-readiness-compare-button" @click="compareScreenReadinessEvidence" :disabled="screenMonitoringLoading">
+            瀵规瘮璇佹嵁绋冲畾鎬?
+          </button>
+          <button data-testid="screen-readiness-health-button" @click="refreshScreenReadinessHealth" :disabled="screenMonitoringLoading">
+            鐢熸垚鍋ュ悍鎽樿
+          </button>
+          <button data-testid="screen-digest-history-proposal-button" @click="refreshScreenDigestHistoryProposal" :disabled="screenMonitoringLoading">
+            鍘嗗彶淇濈暀鏂规
+          </button>
+          <button data-testid="screen-digest-migration-checklist-button" @click="refreshScreenDigestMigrationChecklist" :disabled="screenMonitoringLoading">
+            杩佺Щ灏辩华娓呭崟
+          </button>
+          <button data-testid="screen-digest-migration-spec-button" @click="verifyScreenDigestMigrationSpec" :disabled="screenMonitoringLoading">
+            鏍￠獙杩佺Щ鑽夋
+          </button>
+          <button data-testid="screen-digest-migration-spec-approval-button" @click="approveScreenDigestMigrationSpec" :disabled="screenMonitoringLoading">
+            纭鑽夋宸插闃?
+          </button>
+          <button data-testid="screen-digest-migration-release-button" @click="refreshScreenDigestReleaseReadiness" :disabled="screenMonitoringLoading">
+            鍙戝竷灏辩华姹囨€?
+          </button>
+          <button data-testid="screen-digest-approval-review-button" @click="refreshScreenDigestApprovalReview" :disabled="screenMonitoringLoading">
+            瀹℃壒鏈夋晥鏈熷鏍?
+          </button>
+          <button data-testid="screen-digest-release-package-button" @click="refreshScreenDigestReleasePackage" :disabled="screenMonitoringLoading">
+            鏈€缁堝彂甯冨寘娓呭崟
+          </button>
+          <button @click="loadScreenMonitoring" :disabled="screenMonitoringLoading">鍒锋柊瑙傛祴璇佹嵁</button>
+        </div>
+        <div class="metrics">
+          <span>闃舵 {{ screenMonitoringCapabilities?.stage ?? "V4.5-P1" }}</span>
+          <span>閲囬泦 {{ screenMonitoringCapabilities?.capture_provider ?? "disabled" }}</span>
           <span>Provider {{ screenMonitoringCapabilities?.provider_status ?? "disabled" }}</span>
           <span>Readiness {{ screenProviderReadiness?.status ?? "未加载" }}</span>
           <span>OCR {{ screenMonitoringCapabilities?.ocr_provider ?? "not_configured" }}</span>
-          <span>观测 {{ screenObservations.length }}</span>
+          <span>瑙傛祴 {{ screenObservations.length }}</span>
           <span>Artifact {{ screenArtifactReviews.length }}</span>
-          <span>配置提案 {{ screenProviderConfigProposals.length }}</span>
+          <span>閰嶇疆鎻愭 {{ screenProviderConfigProposals.length }}</span>
           <span>Replay {{ screenProviderReplayRuns.length }}</span>
           <span>Audit {{ screenReadinessAudit?.status ?? "未加载" }}</span>
-          <span>确认 {{ screenReadinessAuditAcks.length }}</span>
+          <span>纭 {{ screenReadinessAuditAcks.length }}</span>
           <span>Timeline {{ screenReadinessTimeline?.item_count ?? 0 }}</span>
           <span>Export {{ screenReadinessExport?.status ?? "未生成" }}</span>
           <span>Verify {{ screenReadinessVerification?.status ?? "未校验" }}</span>
@@ -274,28 +363,28 @@
           <span>History {{ screenDigestHistoryProposal?.status ?? "未生成" }}</span>
           <span>Migration {{ screenDigestMigrationChecklist?.status ?? "未生成" }}</span>
           <span>Spec {{ screenDigestMigrationSpecVerification?.status ?? "未校验" }}</span>
-          <span>Spec审批 {{ screenDigestMigrationSpecApprovals.length }}</span>
+          <span>Spec瀹℃壒 {{ screenDigestMigrationSpecApprovals.length }}</span>
           <span>Release {{ screenDigestReleaseReadiness?.status ?? "未生成" }}</span>
           <span>Approval {{ screenDigestApprovalReview?.status ?? "未复核" }}</span>
           <span>Package {{ screenDigestReleasePackage?.status ?? "未生成" }}</span>
-          <span>会话 {{ screenMonitoringSession?.status ?? "empty" }}</span>
+          <span>浼氳瘽 {{ screenMonitoringSession?.status ?? "empty" }}</span>
           <span>实盘 {{ screenMonitoringCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
         <div v-if="screenMonitoringCapabilities" class="score-list">
           <div class="score-item">
             <strong>Read-only Guardrails / {{ screenMonitoringCapabilities.status }}</strong>
             <span>{{ screenMonitoringCapabilities.allowed_modes.join(" / ") }}</span>
-            <small>禁止 {{ screenMonitoringCapabilities.forbidden_modes.join(" / ") }}</small>
+            <small>绂佹 {{ screenMonitoringCapabilities.forbidden_modes.join(" / ") }}</small>
           </div>
           <div v-for="provider in screenMonitoringProviders" :key="provider.provider" class="score-item">
             <strong>{{ provider.provider }} / {{ provider.status }}</strong>
             <span>配置 {{ provider.configured ? "已配置" : "未配置" }} / fixture {{ provider.fixture_replay_supported ? "enabled" : "disabled" }}</span>
-            <small>真实截图 {{ provider.capture_supported ? "可用" : "关闭" }} / OCR {{ provider.ocr_supported ? "可用" : "关闭" }}</small>
+            <small>鐪熷疄鎴浘 {{ provider.capture_supported ? "鍙敤" : "鍏抽棴" }} / OCR {{ provider.ocr_supported ? "鍙敤" : "鍏抽棴" }}</small>
           </div>
           <div v-if="screenProviderReadiness" class="score-item">
             <strong>Provider Readiness / {{ screenProviderReadiness.status }}</strong>
             <span>{{ screenProviderReadiness.active_provider }} / {{ screenProviderReadiness.provider_status }}</span>
-            <small>{{ screenProviderReadiness.next_safe_steps.slice(0, 2).join("；") }}</small>
+            <small>{{ screenProviderReadiness.next_safe_steps.slice(0, 2).join("; ") }}</small>
           </div>
           <div
             v-for="check in screenProviderReadiness?.checks.slice(0, 6) ?? []"
@@ -308,7 +397,7 @@
           </div>
           <div v-if="screenMonitoringSession && screenMonitoringSession.status !== 'empty'" class="score-item">
             <strong>Session #{{ screenMonitoringSession.id }} / {{ screenMonitoringSession.status }}</strong>
-            <span>观测 {{ screenMonitoringSession.summary.observation_count }} / 警告 {{ screenMonitoringSession.summary.warning_count }}</span>
+            <span>瑙傛祴 {{ screenMonitoringSession.summary.observation_count }} / 璀﹀憡 {{ screenMonitoringSession.summary.warning_count }}</span>
             <small>{{ screenMonitoringSession.window_title ?? "未记录窗口" }} / live trading disabled</small>
           </div>
           <div v-if="screenFixtureReplayResult" class="score-item">
@@ -328,13 +417,13 @@
           </div>
           <div v-if="screenArtifactPolicy" class="score-item">
             <strong>Retention Policy / {{ screenArtifactPolicy.status }}</strong>
-            <span>保留 {{ screenArtifactPolicy.retention_days }} 天 / 队列 {{ screenArtifactPolicy.max_review_queue_items }}</span>
+            <span>淇濈暀 {{ screenArtifactPolicy.retention_days }} 澶?/ 闃熷垪 {{ screenArtifactPolicy.max_review_queue_items }}</span>
             <small>像素保存 {{ screenArtifactPolicy.pixel_data_stored ? "是" : "否" }} / OCR {{ screenArtifactPolicy.ocr_executed ? "是" : "否" }} / {{ screenArtifactPolicy.review_queue.decision_effect }}</small>
           </div>
           <div v-if="screenArtifactSyncResult" class="score-item">
             <strong>Artifact Sync / {{ screenArtifactSyncResult.status }}</strong>
-            <span>新增 {{ screenArtifactSyncResult.created_review_count }} / 已存在 {{ screenArtifactSyncResult.skipped_existing_count }}</span>
-            <small>扫描 {{ screenArtifactSyncResult.scanned_observation_count }} / audit only</small>
+            <span>鏂板 {{ screenArtifactSyncResult.created_review_count }} / 宸插瓨鍦?{{ screenArtifactSyncResult.skipped_existing_count }}</span>
+            <small>鎵弿 {{ screenArtifactSyncResult.scanned_observation_count }} / audit only</small>
           </div>
           <div v-if="screenProviderConfigProposalResult" class="score-item">
             <strong>Config Proposal / {{ screenProviderConfigProposalResult.status }}</strong>
@@ -343,13 +432,13 @@
           </div>
           <div v-if="screenProviderReplayResult" class="score-item">
             <strong>Provider Replay / {{ screenProviderReplayResult.status }}</strong>
-            <span>步骤 {{ screenProviderReplayResult.summary.step_count }} / 通过 {{ screenProviderReplayResult.summary.passed_count }} / 阻断 {{ screenProviderReplayResult.summary.blocked_count }}</span>
+            <span>姝ラ {{ screenProviderReplayResult.summary.step_count }} / 閫氳繃 {{ screenProviderReplayResult.summary.passed_count }} / 闃绘柇 {{ screenProviderReplayResult.summary.blocked_count }}</span>
             <small>{{ screenProviderReplayResult.summary.allowed_output }} / live trading disabled</small>
           </div>
           <div v-if="screenReadinessAudit" class="score-item">
             <strong>Readiness Audit / {{ screenReadinessAudit.status }}</strong>
-            <span>检查阻断 {{ screenReadinessAudit.summary.blocked_check_count }} / Artifact待审 {{ screenReadinessAudit.summary.artifact_pending_count }} / 配置待审 {{ screenReadinessAudit.summary.config_pending_count }}</span>
-            <small>{{ screenReadinessAudit.summary.allowed_output }} / 安全 {{ screenReadinessAudit.summary.safety_passed ? "通过" : "需复核" }}</small>
+            <span>妫€鏌ラ樆鏂?{{ screenReadinessAudit.summary.blocked_check_count }} / Artifact寰呭 {{ screenReadinessAudit.summary.artifact_pending_count }} / 閰嶇疆寰呭 {{ screenReadinessAudit.summary.config_pending_count }}</span>
+            <small>{{ screenReadinessAudit.summary.allowed_output }} / 瀹夊叏 {{ screenReadinessAudit.summary.safety_passed ? "閫氳繃" : "闇€澶嶆牳" }}</small>
           </div>
           <div v-if="screenReadinessAuditAckResult" class="score-item">
             <strong>Audit Ack / {{ screenReadinessAuditAckResult.status }}</strong>
@@ -368,7 +457,7 @@
           </div>
           <div v-if="screenReadinessComparison" class="score-item">
             <strong>Evidence Compare / {{ screenReadinessComparison.status }}</strong>
-            <span>差异 {{ screenReadinessComparison.difference_count }} / {{ screenReadinessComparison.allowed_output }}</span>
+            <span>宸紓 {{ screenReadinessComparison.difference_count }} / {{ screenReadinessComparison.allowed_output }}</span>
             <small>{{ screenReadinessComparison.baseline.export_bundle_hash.slice(0, 16) }} -> {{ screenReadinessComparison.candidate.export_bundle_hash.slice(0, 16) }} / OCR {{ screenReadinessComparison.safety_summary.ocr_executed ? "执行" : "关闭" }}</small>
           </div>
           <div v-if="screenReadinessHealth" class="score-item">
@@ -404,7 +493,7 @@
           <div v-if="screenDigestReleaseReadiness" class="score-item">
             <strong>Release Readiness / {{ screenDigestReleaseReadiness.status }}</strong>
             <span>{{ screenDigestReleaseReadiness.decision.go_no_go }} / {{ screenDigestReleaseReadiness.allowed_output }}</span>
-            <small>审批 {{ screenDigestReleaseReadiness.evidence.approval_count }} / gate {{ screenDigestReleaseReadiness.gates.length }} / 迁移 {{ screenDigestReleaseReadiness.decision.migration_allowed_now ? "允许" : "禁止" }}</small>
+            <small>瀹℃壒 {{ screenDigestReleaseReadiness.evidence.approval_count }} / gate {{ screenDigestReleaseReadiness.gates.length }} / 杩佺Щ {{ screenDigestReleaseReadiness.decision.migration_allowed_now ? "鍏佽" : "绂佹" }}</small>
           </div>
           <div v-if="screenDigestApprovalReview" class="score-item">
             <strong>Approval Review / {{ screenDigestApprovalReview.status }}</strong>
@@ -444,8 +533,8 @@
             <span>{{ review.artifact_status }} / {{ review.artifact_ref ?? "无 artifact" }}</span>
             <small>{{ review.observation.window_title ?? "未记录窗口" }} / 像素保存 {{ review.redaction.pixel_data_stored ? "是" : "否" }} / live trading disabled</small>
             <div class="actions" v-if="review.review_status === 'pending_review'">
-              <button @click="approveScreenArtifactReview(review.id)" :disabled="screenMonitoringLoading">接受</button>
-              <button @click="rejectScreenArtifactReview(review.id)" :disabled="screenMonitoringLoading">拒绝</button>
+              <button @click="approveScreenArtifactReview(review.id)" :disabled="screenMonitoringLoading">鎺ュ彈</button>
+              <button @click="rejectScreenArtifactReview(review.id)" :disabled="screenMonitoringLoading">鎷掔粷</button>
             </div>
           </div>
         </div>
@@ -455,8 +544,8 @@
             <span>{{ proposal.provider }} / {{ proposal.target_window_title ?? "未指定窗口" }}</span>
             <small>写 env {{ proposal.proposal.writes_env ? "是" : "否" }} / 自动应用 {{ proposal.proposal.apply_automatically ? "是" : "否" }} / live trading disabled</small>
             <div class="actions" v-if="proposal.status === 'pending_review'">
-              <button @click="approveScreenProviderConfigProposal(proposal.id)" :disabled="screenMonitoringLoading">接受</button>
-              <button @click="rejectScreenProviderConfigProposal(proposal.id)" :disabled="screenMonitoringLoading">拒绝</button>
+              <button @click="approveScreenProviderConfigProposal(proposal.id)" :disabled="screenMonitoringLoading">鎺ュ彈</button>
+              <button @click="rejectScreenProviderConfigProposal(proposal.id)" :disabled="screenMonitoringLoading">鎷掔粷</button>
             </div>
           </div>
         </div>
@@ -464,14 +553,14 @@
           <div v-for="run in screenProviderReplayRuns.slice(0, 5)" :key="run.id" class="score-item">
             <strong>Provider Replay #{{ run.id }} / {{ run.status }}</strong>
             <span>{{ run.scenario_name }} / proposal {{ run.proposal_id ?? "none" }}</span>
-            <small>通过 {{ run.summary.passed_count }} / 阻断 {{ run.summary.blocked_count }} / 像素与 OCR 关闭</small>
+            <small>閫氳繃 {{ run.summary.passed_count }} / 闃绘柇 {{ run.summary.blocked_count }} / 鍍忕礌涓?OCR 鍏抽棴</small>
           </div>
         </div>
         <div v-if="screenReadinessAuditAcks.length" class="score-list">
           <div v-for="ack in screenReadinessAuditAcks.slice(0, 5)" :key="ack.id" class="score-item">
             <strong>Audit Ack #{{ ack.id }} / {{ ack.status }}</strong>
             <span>{{ ack.acknowledged_by }} / {{ ack.report_status }} / {{ ack.report_stage }}</span>
-            <small>{{ ack.updated_at }} / {{ ack.acknowledgement_effect }} / 不启用截图或实盘</small>
+            <small>{{ ack.updated_at }} / {{ ack.acknowledgement_effect }} / 涓嶅惎鐢ㄦ埅鍥炬垨瀹炵洏</small>
           </div>
         </div>
         <div v-if="screenReadinessTimeline?.items.length" class="score-list">
@@ -481,68 +570,68 @@
             <small>{{ item.event_ts }} / 写 env {{ item.writes_env ? "是" : "否" }} / OCR {{ item.ocr_executed ? "执行" : "关闭" }} / live trading disabled</small>
           </div>
         </div>
-        <p v-if="!screenObservations.length">暂无屏幕观测证据。V4.5 仅支持 mock、fixture、截图预检和 artifact 元数据复核，不控制交易软件。</p>
+        <p v-if="!screenObservations.length">暂无屏幕观察证据。V4.5 仅支持 mock、fixture、截图预检和 artifact 元数据复核，不控制交易软件。</p>
       </article>
 <article class="panel wide">
         <h2>V2.0 可信度证据面板</h2>
-        <p class="review-only-banner">所有内容仅用于历史回测、模拟风控、告警复核和 AI 参数提案审查，不连接券商，不产生实盘订单。</p>
+        <p class="review-only-banner">所有内容仅用于历史回测、模拟风控、告警复核和 AI 参数提案审查；不连接券商，不产生实盘订单。</p>
         <div class="actions">
           <button @click="runBacktest" :disabled="v15Loading">{{ v15Loading ? "运行中" : "运行回测" }}</button>
-          <button @click="refreshMarketRegime" :disabled="v15Loading">刷新大盘环境</button>
-          <button @click="runAiReview" :disabled="v15Loading">生成AI提案</button>
+          <button @click="refreshMarketRegime" :disabled="v15Loading">鍒锋柊澶х洏鐜</button>
+          <button @click="runAiReview" :disabled="v15Loading">鐢熸垚AI鎻愭</button>
         </div>
         <div class="metrics">
           <span>大盘 {{ marketRegime?.regime ?? "未加载" }}</span>
           <span>组合姿态 {{ portfolioRisk?.posture ?? "未加载" }}</span>
-          <span>回测数 {{ backtestRuns.length }}</span>
-          <span>AI提案 {{ aiProposals.length }}</span>
+          <span>鍥炴祴鏁?{{ backtestRuns.length }}</span>
+          <span>AI鎻愭 {{ aiProposals.length }}</span>
         </div>
         <div v-if="backtestRuns.length" class="score-list">
           <div v-for="run in backtestRuns.slice(0, 3)" :key="run.id" class="score-item">
-            <strong>回测 #{{ run.id }} / {{ run.status }}</strong>
-            <span>收益 {{ ((run.metrics?.total_return ?? 0) * 100).toFixed(2) }}% / 回撤 {{ ((run.metrics?.max_drawdown ?? 0) * 100).toFixed(2) }}%</span>
-            <small>成交 {{ run.metrics?.trade_count ?? 0 }} / 平仓 {{ run.metrics?.closed_trade_count ?? 0 }} / 期望 {{ (run.metrics?.expectancy ?? 0).toFixed(2) }}</small>
-            <small>基准 {{ run.benchmark?.symbol ?? run.benchmark_symbol ?? "SH000300" }} / 超额 {{ ((run.metrics?.excess_return ?? 0) * 100).toFixed(2) }}%</small>
+            <strong>鍥炴祴 #{{ run.id }} / {{ run.status }}</strong>
+            <span>鏀剁泭 {{ ((run.metrics?.total_return ?? 0) * 100).toFixed(2) }}% / 鍥炴挙 {{ ((run.metrics?.max_drawdown ?? 0) * 100).toFixed(2) }}%</span>
+            <small>鎴愪氦 {{ run.metrics?.trade_count ?? 0 }} / 骞充粨 {{ run.metrics?.closed_trade_count ?? 0 }} / 鏈熸湜 {{ (run.metrics?.expectancy ?? 0).toFixed(2) }}</small>
+            <small>鍩哄噯 {{ run.benchmark?.symbol ?? run.benchmark_symbol ?? "SH000300" }} / 瓒呴 {{ ((run.metrics?.excess_return ?? 0) * 100).toFixed(2) }}%</small>
           </div>
         </div>
         <div v-if="backtestDetail" class="score-list">
           <div class="score-item">
-            <strong>详情 #{{ backtestDetail.run.id }} / {{ backtestDetail.benchmark?.status ?? "benchmark_unknown" }}</strong>
-            <span>权益点 {{ backtestDetail.daily_equity.length }} / 执行警告 {{ backtestDetail.execution_warnings.length }}</span>
-            <small>{{ backtestDetail.execution_warnings.slice(0, 3).join("；") || "暂无执行警告" }}</small>
+            <strong>璇︽儏 #{{ backtestDetail.run.id }} / {{ backtestDetail.benchmark?.status ?? "benchmark_unknown" }}</strong>
+            <span>鏉冪泭鐐?{{ backtestDetail.daily_equity.length }} / 鎵ц璀﹀憡 {{ backtestDetail.execution_warnings.length }}</span>
+            <small>{{ backtestDetail.execution_warnings.slice(0, 3).join("; ") || "暂无执行警告" }}</small>
           </div>
           <div v-for="trade in backtestDetail.closed_trades.slice(0, 5)" :key="trade.id" class="score-item">
-            <strong>{{ trade.symbol }} 平仓 / {{ trade.exit_reason }}</strong>
-            <span>收益 {{ trade.realized_pnl.toFixed(2) }} / {{ (trade.realized_pnl_pct * 100).toFixed(2) }}%</span>
-            <small>{{ trade.entry_date }} → {{ trade.exit_date }} / {{ trade.holding_days }} 天</small>
+            <strong>{{ trade.symbol }} 骞充粨 / {{ trade.exit_reason }}</strong>
+            <span>鏀剁泭 {{ trade.realized_pnl.toFixed(2) }} / {{ (trade.realized_pnl_pct * 100).toFixed(2) }}%</span>
+            <small>{{ trade.entry_date }} -> {{ trade.exit_date }} / {{ trade.holding_days }} 天</small>
           </div>
         </div>
         <div v-if="portfolioRisk" class="score-list">
           <div v-for="gate in portfolioRisk.gates" :key="gate.name" class="score-item">
             <strong>{{ gate.name }} / {{ gate.status }}</strong>
-            <span>当前 {{ gate.value }} / 限制 {{ gate.limit }}</span>
+            <span>褰撳墠 {{ gate.value }} / 闄愬埗 {{ gate.limit }}</span>
             <small>{{ gate.reason }}</small>
           </div>
         </div>
         <div v-if="monitoringLifecycle?.items?.length" class="score-list">
           <div v-for="item in monitoringLifecycle.items.slice(0, 5)" :key="item.alert_id" class="score-item">
-            <strong>告警 #{{ item.alert_id }} {{ item.symbol }} / {{ item.state }}</strong>
+            <strong>鍛婅 #{{ item.alert_id }} {{ item.symbol }} / {{ item.state }}</strong>
             <span>{{ item.alert_type }} / {{ item.severity }}</span>
             <div class="actions" v-if="item.state === 'open'">
-              <button @click="acknowledgeAlert(item.alert_id)">确认</button>
-              <button @click="actionAlert(item.alert_id, 'add_to_review')">加入复核</button>
+              <button @click="acknowledgeAlert(item.alert_id)">纭</button>
+              <button @click="actionAlert(item.alert_id, 'add_to_review')">鍔犲叆澶嶆牳</button>
             </div>
           </div>
         </div>
         <div v-if="aiProposals.length" class="score-list">
           <div v-for="proposal in aiProposals.slice(0, 5)" :key="proposal.id" class="score-item">
-            <strong>AI提案 #{{ proposal.id }} / {{ proposal.status }}</strong>
-            <span>样本 {{ proposal.trades_analyzed }} / 安全拦截 {{ proposal.safety_blocks?.length ?? 0 }}</span>
+            <strong>AI鎻愭 #{{ proposal.id }} / {{ proposal.status }}</strong>
+            <span>鏍锋湰 {{ proposal.trades_analyzed }} / 瀹夊叏鎷︽埅 {{ proposal.safety_blocks?.length ?? 0 }}</span>
             <small>验证 {{ proposal.validation?.status ?? "未验证" }}</small>
-            <small v-if="proposal.validation?.out_of_sample">样本外 {{ proposal.validation.out_of_sample?.period?.start }} → {{ proposal.validation.out_of_sample?.period?.end }}</small>
+            <small v-if="proposal.validation?.out_of_sample">鏍锋湰澶?{{ proposal.validation.out_of_sample?.period?.start }} 鈫?{{ proposal.validation.out_of_sample?.period?.end }}</small>
             <div class="actions">
-              <button @click="validateAiProposal(proposal.id)">验证</button>
-              <button class="disabled-live" @click="rejectAiProposal(proposal.id)">拒绝</button>
+              <button @click="validateAiProposal(proposal.id)">楠岃瘉</button>
+              <button class="disabled-live" @click="rejectAiProposal(proposal.id)">鎷掔粷</button>
             </div>
           </div>
         </div>
@@ -557,9 +646,9 @@
           <button @click="loadExperienceMemory" :disabled="experienceLoading">刷新记忆库</button>
         </div>
         <div class="metrics">
-          <span>复盘 {{ experienceSummary?.review_count ?? 0 }}</span>
-          <span>策略快照 {{ experienceSummary?.strategy_snapshot_count ?? 0 }}</span>
-          <span>代码演进 {{ experienceSummary?.code_evolution_count ?? 0 }}</span>
+          <span>澶嶇洏 {{ experienceSummary?.review_count ?? 0 }}</span>
+          <span>绛栫暐蹇収 {{ experienceSummary?.strategy_snapshot_count ?? 0 }}</span>
+          <span>浠ｇ爜婕旇繘 {{ experienceSummary?.code_evolution_count ?? 0 }}</span>
           <span>实盘 {{ experienceSummary?.live_trading_enabled ? "开启" : "关闭" }}</span>
         </div>
         <div v-if="experienceEventCounts.length" class="lifecycle">
@@ -571,18 +660,18 @@
           <div v-for="review in experienceReviews.slice(0, 3)" :key="review.id" class="score-item">
             <strong>{{ review.period_start }} / {{ review.title }}</strong>
             <span>
-              回测平仓 {{ review.summary?.backtest_metrics?.closed_trade_count ?? 0 }} /
-              风控 {{ review.summary?.portfolio_risk?.posture ?? "unknown" }}
+              鍥炴祴骞充粨 {{ review.summary?.backtest_metrics?.closed_trade_count ?? 0 }} /
+              椋庢帶 {{ review.summary?.portfolio_risk?.posture ?? "unknown" }}
             </span>
-            <small>{{ (review.next_actions ?? []).slice(0, 2).join("；") || "暂无下一步动作" }}</small>
+            <small>{{ (review.next_actions ?? []).slice(0, 2).join("; ") || "暂无下一步动作" }}</small>
           </div>
         </div>
         <div v-if="experienceStrategyPerformance.length" class="score-list">
           <div v-for="snapshot in experienceStrategyPerformance.slice(0, 3)" :key="snapshot.id" class="score-item">
-            <strong>{{ snapshot.strategy_name }} / {{ snapshot.period_start }} → {{ snapshot.period_end }}</strong>
+            <strong>{{ snapshot.strategy_name }} / {{ snapshot.period_start }} 鈫?{{ snapshot.period_end }}</strong>
             <span>
-              收益 {{ ((snapshot.metrics?.total_return ?? 0) * 100).toFixed(2) }}% /
-              回撤 {{ ((snapshot.metrics?.max_drawdown ?? 0) * 100).toFixed(2) }}%
+              鏀剁泭 {{ ((snapshot.metrics?.total_return ?? 0) * 100).toFixed(2) }}% /
+              鍥炴挙 {{ ((snapshot.metrics?.max_drawdown ?? 0) * 100).toFixed(2) }}%
             </span>
             <small>benchmark {{ snapshot.metrics?.benchmark?.symbol ?? "unknown" }} / posture {{ snapshot.metrics?.portfolio_posture ?? "unknown" }}</small>
           </div>
@@ -603,32 +692,32 @@
         </div>
       </article>
 <article class="panel wide">
-        <h2>V3.0 Codex代码进化审查</h2>
+        <h2>V3.0 Codex浠ｇ爜杩涘寲瀹℃煡</h2>
         <p class="review-only-banner">Codex 只能基于复盘证据生成审查建议和验证记录；不生成可自动应用的 patch，不创建实盘接口，不修改交易权限。</p>
         <div class="actions">
           <button data-testid="generate-code-evolution-button" @click="generateCodeEvolutionReviews" :disabled="codeEvolutionLoading">
             {{ codeEvolutionLoading ? "生成中" : "生成代码进化建议" }}
           </button>
           <button data-testid="refresh-code-evolution-button" @click="loadExperienceMemory" :disabled="codeEvolutionLoading">
-            刷新验证结果
+            鍒锋柊楠岃瘉缁撴灉
           </button>
         </div>
         <div class="metrics">
-          <span>总数 {{ experienceCodeEvolution.length }}</span>
-          <span>待验证 {{ codeEvolutionStatusCount.pending_validation + codeEvolutionStatusCount.draft }}</span>
-          <span>验证通过 {{ codeEvolutionStatusCount.validation_passed }}</span>
-          <span>已接受 {{ codeEvolutionStatusCount.accepted }}</span>
+          <span>鎬绘暟 {{ experienceCodeEvolution.length }}</span>
+          <span>寰呴獙璇?{{ codeEvolutionStatusCount.pending_validation + codeEvolutionStatusCount.draft }}</span>
+          <span>楠岃瘉閫氳繃 {{ codeEvolutionStatusCount.validation_passed }}</span>
+          <span>宸叉帴鍙?{{ codeEvolutionStatusCount.accepted }}</span>
         </div>
         <div class="v35-model-review">
           <div class="actions">
             <button data-testid="refresh-ai-model-audit-button" @click="loadAIModelAuditLogs" :disabled="aiModelLoading">
-              刷新审计日志
+              鍒锋柊瀹¤鏃ュ織
             </button>
           </div>
           <div class="metrics">
             <span>V3.5 Provider {{ aiModelCapabilities?.provider ?? "mock_local_rule" }}</span>
-            <span>允许输出 {{ aiModelCapabilities?.allowed_outputs?.length ?? 4 }}</span>
-            <span>审计 {{ aiModelAuditLogs.length }}</span>
+            <span>鍏佽杈撳嚭 {{ aiModelCapabilities?.allowed_outputs?.length ?? 4 }}</span>
+            <span>瀹¤ {{ aiModelAuditLogs.length }}</span>
             <span>实盘 {{ aiModelCapabilities?.live_trading_enabled ? "开启" : "关闭" }}</span>
           </div>
         </div>
@@ -636,30 +725,30 @@
           <div v-for="record in experienceCodeEvolution.slice(0, 8)" :key="record.id" :class="['score-item', codeEvolutionClass(record)]">
             <strong>#{{ record.id }} {{ record.record_type }} / {{ record.status }}</strong>
             <span>{{ record.title }}</span>
-            <small>风险 {{ record.rationale?.severity ?? "unknown" }} / 验证 {{ record.validation?.status ?? "not_run" }}</small>
-            <small>{{ (record.plan?.actions ?? []).slice(0, 2).join("；") }}</small>
+            <small>椋庨櫓 {{ record.rationale?.severity ?? "unknown" }} / 楠岃瘉 {{ record.validation?.status ?? "not_run" }}</small>
+            <small>{{ (record.plan?.actions ?? []).slice(0, 2).join("; ") }}</small>
             <template v-if="modelReview(record)">
-              <small>AI解释 {{ modelReviewSummary(record) }}</small>
-              <small>归因 {{ modelReviewTags(record).join(" / ") || "none" }} / 相似案例 {{ modelReviewSimilarCount(record) }}</small>
-              <small>安全拦截 {{ modelReviewSafetyBlocks(record).length }}</small>
+              <small>AI瑙ｉ噴 {{ modelReviewSummary(record) }}</small>
+              <small>褰掑洜 {{ modelReviewTags(record).join(" / ") || "none" }} / 鐩镐技妗堜緥 {{ modelReviewSimilarCount(record) }}</small>
+              <small>瀹夊叏鎷︽埅 {{ modelReviewSafetyBlocks(record).length }}</small>
             </template>
-            <small v-else>AI解释 未生成</small>
+            <small v-else>AI解释未生成</small>
             <div class="actions">
               <button @click="explainCodeEvolutionWithModel(record.id)" :disabled="aiModelLoading || codeEvolutionLoading">
-                生成AI解释
+                鐢熸垚AI瑙ｉ噴
               </button>
               <button @click="approveCodeEvolution(record.id)" :disabled="record.status !== 'validation_passed' || codeEvolutionLoading">
-                接受
+                鎺ュ彈
               </button>
               <button class="disabled-live" @click="rejectCodeEvolution(record.id)" :disabled="codeEvolutionLoading">
-                拒绝
+                鎷掔粷
               </button>
             </div>
           </div>
         </div>
         <div v-if="aiModelAuditLogs.length" class="score-list">
           <div v-for="log in aiModelAuditLogs.slice(0, 4)" :key="log.id" class="score-item">
-            <strong>模型审计 #{{ log.id }} / {{ log.operation }}</strong>
+            <strong>妯″瀷瀹¤ #{{ log.id }} / {{ log.operation }}</strong>
             <span>{{ log.provider }} / safety {{ log.safety?.safety_blocks_applied?.length ?? 0 }}</span>
             <small>{{ log.created_at }}</small>
           </div>
@@ -667,78 +756,141 @@
         <p v-if="!experienceCodeEvolution.length">暂无代码进化建议。先生成每日经验复盘，再生成审查建议。</p>
       </article>
 <article class="panel">
-        <h2>候选池</h2>
+        <h2>鍊欓€夋睜</h2>
         <div class="metrics">
-          <span>强候选 {{ latestScan?.strong_count ?? 0 }}</span>
-          <span>观察 {{ latestScan?.watch_count ?? 0 }}</span>
-          <span>剔除 {{ latestScan?.rejected_count ?? 0 }}</span>
-          <span>自动发现 {{ discovery?.discovered_count ?? automation?.summary?.auto_discovery?.discovered_count ?? 0 }}</span>
-          <span>涨停优先 {{ discovery?.limit_up_count ?? automation?.summary?.auto_discovery?.limit_up_count ?? 0 }}</span>
+          <span>寮哄€欓€?{{ latestScan?.strong_count ?? 0 }}</span>
+          <span>瑙傚療 {{ latestScan?.watch_count ?? 0 }}</span>
+          <span>鍓旈櫎 {{ latestScan?.rejected_count ?? 0 }}</span>
+          <span>鑷姩鍙戠幇 {{ discovery?.discovered_count ?? automation?.summary?.auto_discovery?.discovered_count ?? 0 }}</span>
+          <span>娑ㄥ仠浼樺厛 {{ discovery?.limit_up_count ?? automation?.summary?.auto_discovery?.limit_up_count ?? 0 }}</span>
         </div>
         <div class="lifecycle">
-          <span>待复核 {{ lifecycleSummary?.state_counts.pending_review ?? 0 }}</span>
-          <span>重点观察 {{ lifecycleSummary?.state_counts.focus_watch ?? 0 }}</span>
-          <span>阶段风控 {{ lifecycleSummary?.state_counts.phase_guarded ?? 0 }}</span>
-          <span>淘汰 {{ lifecycleSummary?.state_counts.rejected ?? 0 }}</span>
+          <span>寰呭鏍?{{ lifecycleSummary?.state_counts.pending_review ?? 0 }}</span>
+          <span>閲嶇偣瑙傚療 {{ lifecycleSummary?.state_counts.focus_watch ?? 0 }}</span>
+          <span>闃舵椋庢帶 {{ lifecycleSummary?.state_counts.phase_guarded ?? 0 }}</span>
+          <span>娣樻卑 {{ lifecycleSummary?.state_counts.rejected ?? 0 }}</span>
         </div>
         <div v-for="item in topCandidates" :key="`${item.tier}-${item.symbol}`" :class="['tier', item.tier]">
           <strong>{{ item.symbol }} {{ item.name }}</strong>
           <span>{{ item.rating || "未评级" }} / {{ item.risk_level || "无风险标记" }}</span>
-          <small>{{ item.reasons?.join("；") }}</small>
+          <small>{{ item.reasons?.join("; ") }}</small>
         </div>
       </article>
 <article class="panel wide">
-        <h2>盘后潜力搜索</h2>
+        <h2>鐩樺悗娼滃姏鎼滅储</h2>
         <div v-if="potentialSearch" class="metrics">
-          <span>状态 {{ potentialSearch.status }}</span>
-          <span>扫描 {{ potentialSearch.total_scanned }}</span>
-          <span>入库 {{ potentialSearch.stored_count }}</span>
-          <span>评分 {{ potentialSearch.scored_count }}</span>
+          <span>鐘舵€?{{ potentialSearch.status }}</span>
+          <span>鎵弿 {{ potentialSearch.total_scanned }}</span>
+          <span>鍏ュ簱 {{ potentialSearch.stored_count }}</span>
+          <span>璇勫垎 {{ potentialSearch.scored_count }}</span>
         </div>
         <div v-if="potentialSearch?.errors?.length" class="potential-errors">
-          <small v-for="(err, idx) in potentialSearch.errors" :key="idx">⚠ {{ err }}</small>
+          <small v-for="(err, idx) in potentialSearch.errors" :key="idx">鈿?{{ err }}</small>
         </div>
         <div v-if="potentialTopItems.length" class="score-list">
           <div v-for="item in potentialTopItems" :key="item.symbol" class="score-item">
             <strong>{{ item.symbol }} {{ item.name }} / {{ (item.potential_score ?? 0).toFixed(1) }}</strong>
             <span>{{ item.lifecycle_state ?? '未知' }}
-              <template v-if="item.current_price"> / ¥{{ item.current_price }}</template>
+              <template v-if="item.current_price"> / 楼{{ item.current_price }}</template>
               <template v-if="item.pct_change != null"> / {{ item.pct_change.toFixed(2) }}%</template>
             </span>
-            <small>{{ (item.reasons ?? []).slice(0, 3).join('；') }}</small>
+            <small>{{ (item.reasons ?? []).slice(0, 3).join('; ') }}</small>
           </div>
         </div>
-        <p v-else>暂无搜索记录。可在盘后运行「潜力搜索」按钮收集更多候选。</p>
+        <p v-else>暂无搜索记录。可在盘后运行“潜力搜索”按钮收集更多候选。</p>
+      </article>
+<article class="panel wide">
+        <h2>V5.7 非交易时段研究回测</h2>
+        <p class="review-only-banner">盘后均衡执行潜力股搜索、Dataset2 策略历史 replay、回测、沙盒评估和候选模型产物；候选模型不会自动加载为生产规则。</p>
+        <div class="actions">
+          <button data-testid="offhour-research-run-button" @click="runOffhourResearch" :disabled="offhourResearchLoading">
+            {{ offhourResearchLoading ? "研究中" : "运行盘后研究循环" }}
+          </button>
+          <button data-testid="offhour-research-refresh-button" @click="loadOffhourResearch" :disabled="offhourResearchLoading">
+            刷新研究结果
+          </button>
+          <button class="disabled-live" disabled>实盘禁止</button>
+        </div>
+        <div class="metrics">
+          <span>模式 {{ offhourResearchCapabilities?.mode ?? "未加载" }}</span>
+          <span>最近状态 {{ offhourResearchLatest?.status ?? "暂无" }}</span>
+          <span>信号 {{ offhourResearchLatest?.strategy_replay?.signal_count ?? 0 }}</span>
+          <span>沙盒 {{ offhourResearchLatest?.sandbox?.evaluated_count ?? 0 }}</span>
+          <span>候选产物 {{ offhourModelCandidate?.artifact?.status ?? offhourResearchLatest?.model_candidate?.status ?? "暂无" }}</span>
+          <span>实盘 {{ offhourResearchLatest?.live_trading_enabled ? "开启" : "关闭" }}</span>
+        </div>
+        <div v-if="offhourResearchLatest?.summary" class="score-list">
+          <div class="score-item">
+            <strong>Codex Supervisor / {{ offhourResearchLatest.status }}</strong>
+            <span>{{ offhourResearchLatest.next_action ?? offhourResearchLatest.summary.next_action }}</span>
+            <small>review-only / simulation-only / live trading disabled</small>
+          </div>
+          <div class="score-item">
+            <strong>Potential Search</strong>
+            <span>扫描 {{ offhourResearchLatest.potential_search?.total_scanned ?? 0 }} / 入库 {{ offhourResearchLatest.potential_search?.stored_count ?? 0 }} / 评分 {{ offhourResearchLatest.potential_search?.scored_count ?? 0 }}</span>
+            <small>{{ (offhourResearchLatest.potential_search?.top_scored_symbols ?? []).slice(0, 6).join(" / ") || "暂无候选" }}</small>
+          </div>
+          <div class="score-item">
+            <strong>Dataset2 Replay</strong>
+            <span>信号 {{ offhourResearchLatest.strategy_replay?.signal_count ?? 0 }} / 股票 {{ (offhourResearchLatest.strategy_replay?.symbols ?? []).length }}</span>
+            <small>{{ Object.entries(offhourResearchLatest.strategy_replay?.action_counts ?? {}).map(([k, v]) => `${k}:${v}`).join(" / ") || "暂无动作分布" }}</small>
+          </div>
+          <div class="score-item">
+            <strong>Backtest / {{ offhourResearchLatest.backtest?.status ?? "skipped" }}</strong>
+            <span>收益 {{ (Number(offhourResearchLatest.backtest?.metrics?.total_return ?? 0) * 100).toFixed(2) }}% / 回撤 {{ (Number(offhourResearchLatest.backtest?.metrics?.max_drawdown ?? 0) * 100).toFixed(2) }}%</span>
+            <small>胜率 {{ (Number(offhourResearchLatest.backtest?.metrics?.win_rate ?? 0) * 100).toFixed(2) }}% / run #{{ offhourResearchLatest.backtest?.run_id ?? "none" }}</small>
+          </div>
+          <div class="score-item">
+            <strong>Sandbox</strong>
+            <span>{{ Object.entries(offhourResearchLatest.sandbox?.outcome_counts ?? {}).map(([k, v]) => `${k}:${v}`).join(" / ") || "暂无评估" }}</span>
+            <small>evaluated {{ offhourResearchLatest.sandbox?.evaluated_count ?? 0 }} / pending {{ offhourResearchLatest.sandbox?.pending_count ?? 0 }}</small>
+          </div>
+          <div v-if="offhourResearchLatest.model_candidate?.artifact_written" class="score-item">
+            <strong>Model Candidate</strong>
+            <span>{{ offhourResearchLatest.model_candidate.artifact_kind }} / {{ offhourResearchLatest.model_candidate.artifact_hash?.slice(0, 16) }}</span>
+            <small>candidate-only / auto-loaded false / rules.yaml unchanged</small>
+          </div>
+          <div
+            v-for="signal in (offhourResearchLatest.strategy_replay?.signals ?? []).slice(0, 5)"
+            :key="`${signal.symbol}-${signal.signal_date}-${signal.pattern_id}`"
+            class="score-item"
+          >
+            <strong>{{ signal.symbol }} / {{ signal.pattern_id }} / {{ signal.action_label }}</strong>
+            <span>score {{ signal.score }} / risk {{ signal.risk_level ?? "unknown" }}</span>
+            <small>{{ (signal.matched_tags ?? []).join(" / ") }}</small>
+          </div>
+        </div>
+        <p v-else>暂无盘后研究循环记录。运行后会只写审计与候选产物，不会执行真实交易。</p>
       </article>
 <article class="panel wide">
         <h2>Agent Control Queue</h2>
         <div class="metrics">
-          <span>实盘状态: {{ agentCapabilities?.live_trading_enabled ? '允许' : '禁用' }}</span>
-          <span>券商控制: {{ agentCapabilities?.broker_control_blocked ? '拦截' : '允许' }}</span>
+          <span>瀹炵洏鐘舵€? {{ agentCapabilities?.live_trading_enabled ? '鍏佽' : '绂佺敤' }}</span>
+          <span>鍒稿晢鎺у埗: {{ agentCapabilities?.broker_control_blocked ? '鎷︽埅' : '鍏佽' }}</span>
         </div>
-        <p>安全沙盒任务:</p>
+        <p>瀹夊叏娌欑洅浠诲姟:</p>
         <div class="actions">
           <button v-for="t in agentCapabilities?.safe_tasks" :key="t" @click="runAgentTask(t)" :disabled="agentTaskLoading">
-            运行 {{ t }}
+            杩愯 {{ t }}
           </button>
         </div>
-        <p>需要审批的任务:</p>
+        <p>闇€瑕佸鎵圭殑浠诲姟:</p>
         <div class="actions">
           <button v-for="t in agentCapabilities?.observation_tasks" :key="t" @click="runAgentTask(t)" :disabled="agentTaskLoading" class="ghost">
-            发起 {{ t }}
+            鍙戣捣 {{ t }}
           </button>
         </div>
-        <p>阻断任务:</p>
+        <p>闃绘柇浠诲姟:</p>
         <div class="actions">
           <button class="disabled-live" v-for="t in agentCapabilities?.blocked_tasks" :key="t" disabled>
-            拦截 {{ t }}
+            鎷︽埅 {{ t }}
           </button>
         </div>
 
         <div v-if="agentTasks.length" class="score-list">
           <div v-for="task in agentTasks" :key="task.id" class="score-item">
-            <strong>任务 #{{ task.id }} : {{ task.task_type }}</strong>
-            <span>状态: {{ task.status }} / 审批: {{ task.approval_status }}</span>
+            <strong>浠诲姟 #{{ task.id }} : {{ task.task_type }}</strong>
+            <span>鐘舵€? {{ task.status }} / 瀹℃壒: {{ task.approval_status }}</span>
             <div class="actions" v-if="task.approval_status === 'pending'">
               <button @click="approveTask(task.id)">Approve</button>
               <button class="disabled-live" @click="rejectTask(task.id)">Reject</button>
@@ -746,15 +898,15 @@
             <div class="actions" v-else-if="task.approval_status === 'approved' && task.status !== 'completed' && task.status !== 'failed'">
               <button @click="executeTask(task.id)" :disabled="agentTaskLoading">Execute</button>
             </div>
-            <small v-if="task.error">⚠ {{ task.error }}</small>
+            <small v-if="task.error">鈿?{{ task.error }}</small>
           </div>
         </div>
-        <p v-else>暂无Agent任务记录。</p>
+        <p v-else>暂无 Agent 任务记录。</p>
 
-        <p>审计日志:</p>
+        <p>瀹¤鏃ュ織:</p>
         <div v-if="agentAudit.length" class="score-list">
           <div v-for="audit in agentAudit" :key="audit.id" class="score-item">
-            <strong>事件: {{ audit.event_type }} (任务 #{{ audit.task_id }})</strong>
+            <strong>浜嬩欢: {{ audit.event_type }} (浠诲姟 #{{ audit.task_id }})</strong>
             <span>{{ audit.message }}</span>
             <small>{{ audit.created_at }}</small>
           </div>
@@ -769,7 +921,7 @@
             {{ tradeGatewayLoading ? "刷新中" : "刷新网关门禁" }}
           </button>
           <button data-testid="trade-gateway-audit-spec-approve-button" @click="approveTradeGatewayAuditMigrationSpec" :disabled="tradeGatewayLoading">
-            记录规格审批元数据
+            记录审计规格审批
           </button>
           <button data-testid="trade-gateway-health-digest-history-spec-approve-button" @click="approveTradeGatewayHealthDigestHistoryMigrationSpec" :disabled="tradeGatewayLoading">
             Record history spec approval
@@ -783,18 +935,18 @@
           <span>券商适配 {{ tradeGatewayCapabilities?.broker_adapter_enabled ? "开启" : "关闭" }}</span>
           <span>凭证存储 {{ tradeGatewayCapabilities?.credential_storage_enabled ? "开启" : "关闭" }}</span>
           <span>人工确认 {{ tradeGatewayManualContract?.status ?? "未加载" }}</span>
-          <span>审计Schema {{ tradeGatewayAuditSchema?.status ?? "未加载" }}</span>
+          <span>审计 Schema {{ tradeGatewayAuditSchema?.status ?? "未加载" }}</span>
           <span>风险契约 {{ tradeGatewayRiskContract?.status ?? "未加载" }}</span>
-          <span>回滚 {{ tradeGatewayRollbackRunbook?.status ?? "未加载" }}</span>
+          <span>回滚预案 {{ tradeGatewayRollbackRunbook?.status ?? "未加载" }}</span>
           <span>Pre-live {{ tradeGatewayPreLivePackage?.status ?? "未加载" }}</span>
           <span>验收 {{ tradeGatewayAcceptanceChecklist?.status ?? "未加载" }}</span>
           <span>发布门禁 {{ tradeGatewayReleaseGate?.status ?? "未加载" }}</span>
           <span>最终报告 {{ tradeGatewayFinalReport?.status ?? "未加载" }}</span>
           <span>威胁模型 {{ tradeGatewayBrokerThreatModel?.status ?? "未加载" }}</span>
-          <span>接口草案 {{ tradeGatewayBrokerInterfaceDraft?.status ?? "未加载" }}</span>
+          <span>接口草稿 {{ tradeGatewayBrokerInterfaceDraft?.status ?? "未加载" }}</span>
           <span>契约验证 {{ tradeGatewayBrokerContractVerification?.status ?? "未加载" }}</span>
           <span>失败场景 {{ tradeGatewayOrderFailureFixtures?.status ?? "未加载" }}</span>
-          <span>Runbook映射 {{ tradeGatewayOrderRunbookMapping?.status ?? "未加载" }}</span>
+          <span>Runbook 映射 {{ tradeGatewayOrderRunbookMapping?.status ?? "未加载" }}</span>
           <span>审计账本计划 {{ tradeGatewayAuditStoragePlan?.status ?? "未加载" }}</span>
           <span>迁移规格校验 {{ tradeGatewayAuditMigrationSpecVerification?.status ?? "未加载" }}</span>
           <span>规格审批 {{ tradeGatewayAuditMigrationSpecApprovals.length }}</span>
@@ -831,12 +983,12 @@
           <div v-if="tradeGatewayManualContract" class="score-item">
             <strong>Manual Confirmation / {{ tradeGatewayManualContract.status }}</strong>
             <span>{{ tradeGatewayManualContract.contract_state }} / TTL {{ tradeGatewayManualContract.expiry_policy.confirmation_ttl_seconds }}s</span>
-            <small>执行 {{ tradeGatewayManualContract.decision.contract_allows_execution_now ? "允许" : "禁止" }} / {{ tradeGatewayManualContract.allowed_output }}</small>
+            <small>鎵ц {{ tradeGatewayManualContract.decision.contract_allows_execution_now ? "鍏佽" : "绂佹" }} / {{ tradeGatewayManualContract.allowed_output }}</small>
           </div>
           <div v-if="tradeGatewayManualContract" class="score-item">
             <strong>Confirmation Inputs</strong>
             <span>{{ tradeGatewayManualContract.required_operator_inputs.map((item) => item.name).join(" / ") }}</span>
-            <small>禁止输入 {{ tradeGatewayManualContract.forbidden_inputs.join(" / ") }}</small>
+            <small>绂佹杈撳叆 {{ tradeGatewayManualContract.forbidden_inputs.join(" / ") }}</small>
           </div>
           <div v-if="tradeGatewayAuditSchema" class="score-item">
             <strong>Audit Evidence / {{ tradeGatewayAuditSchema.status }}</strong>
@@ -856,7 +1008,7 @@
           <div v-if="tradeGatewayRiskContract" class="score-item">
             <strong>Portfolio Gates</strong>
             <span>{{ tradeGatewayRiskContract.portfolio_gates.map((item) => `${item.name}:${item.failure_status}`).join(" / ") }}</span>
-            <small>人工覆盖 {{ tradeGatewayRiskContract.integration_notes.manual_confirmation_override_allowed ? "允许" : "禁止" }} / AI覆盖 {{ tradeGatewayRiskContract.integration_notes.ai_override_allowed ? "允许" : "禁止" }}</small>
+            <small>人工覆盖 {{ tradeGatewayRiskContract.integration_notes.manual_confirmation_override_allowed ? "允许" : "禁止" }} / AI 覆盖 {{ tradeGatewayRiskContract.integration_notes.ai_override_allowed ? "允许" : "禁止" }}</small>
           </div>
           <div v-if="tradeGatewayRiskContract" class="score-item">
             <strong>Symbol Gates</strong>
@@ -886,12 +1038,12 @@
           <div v-if="tradeGatewayAcceptanceChecklist" class="score-item">
             <strong>Operator Acceptance / {{ tradeGatewayAcceptanceChecklist.status }}</strong>
             <span>{{ tradeGatewayAcceptanceChecklist.checklist_items.map((item) => `${item.id}:${item.required ? "必需" : "可选"}`).join(" / ") }}</span>
-            <small>API记录验收 {{ tradeGatewayAcceptanceChecklist.acceptance_policy.api_can_record_acceptance ? "允许" : "禁止" }} / 启用网关 {{ tradeGatewayAcceptanceChecklist.acceptance_policy.api_can_enable_gateway ? "允许" : "禁止" }}</small>
+            <small>API 记录验收 {{ tradeGatewayAcceptanceChecklist.acceptance_policy.api_can_record_acceptance ? "允许" : "禁止" }} / 启用网关 {{ tradeGatewayAcceptanceChecklist.acceptance_policy.api_can_enable_gateway ? "允许" : "禁止" }}</small>
           </div>
           <div v-if="tradeGatewayReleaseGate" class="score-item">
             <strong>Disabled Release Gate / {{ tradeGatewayReleaseGate.status }}</strong>
             <span>{{ tradeGatewayReleaseGate.default_state }} / {{ tradeGatewayReleaseGate.release_gate_state }}</span>
-            <small>可启用 {{ tradeGatewayReleaseGate.decision.release_gate_allows_enablement_now ? "是" : "否" }} / API启用 {{ tradeGatewayReleaseGate.decision.api_can_enable_gateway ? "允许" : "禁止" }}</small>
+            <small>可启用 {{ tradeGatewayReleaseGate.decision.release_gate_allows_enablement_now ? "是" : "否" }} / API 启用 {{ tradeGatewayReleaseGate.decision.api_can_enable_gateway ? "允许" : "禁止" }}</small>
           </div>
           <div v-if="tradeGatewayReleaseGate" class="score-item">
             <strong>Release Blockers</strong>
@@ -901,7 +1053,7 @@
           <div v-if="tradeGatewayFinalReport" class="score-item">
             <strong>Final Readiness / {{ tradeGatewayFinalReport.status }}</strong>
             <span>{{ tradeGatewayFinalReport.report_id.slice(0, 16) }} / {{ tradeGatewayFinalReport.report_state }}</span>
-            <small>V5基线 {{ tradeGatewayFinalReport.decision.v5_review_only_baseline_complete ? "完成" : "未完成" }} / V5.5威胁建模 {{ tradeGatewayFinalReport.decision.ready_for_v5_5_threat_modeling ? "可开始" : "等待" }}</small>
+            <small>V5 基线 {{ tradeGatewayFinalReport.decision.v5_review_only_baseline_complete ? "完成" : "未完成" }} / V5.5 威胁建模 {{ tradeGatewayFinalReport.decision.ready_for_v5_5_threat_modeling ? "可开始" : "等待" }}</small>
           </div>
           <div v-if="tradeGatewayFinalReport" class="score-item">
             <strong>Final Safety Matrix</strong>
@@ -1132,10 +1284,10 @@
 
 <article class="panel wide">
         <h2>Sandbox Experiments</h2>
-        <p class="review-only-banner">🔬 Sandbox-only: experiments simulate what-if scenarios for approved proposals. No scoring rules, candidate scores, or trading behavior are changed.</p>
+        <p class="review-only-banner">馃敩 Sandbox-only: experiments simulate what-if scenarios for approved proposals. No scoring rules, candidate scores, or trading behavior are changed.</p>
         <div class="metrics">
-          <span>实验总数 {{ sandboxSummary?.total_experiments ?? 0 }}</span>
-          <span>待运行提案 {{ sandboxSummary?.approved_proposals_without_experiment ?? 0 }}</span>
+          <span>瀹為獙鎬绘暟 {{ sandboxSummary?.total_experiments ?? 0 }}</span>
+          <span>寰呰繍琛屾彁妗?{{ sandboxSummary?.approved_proposals_without_experiment ?? 0 }}</span>
         </div>
         <div class="metrics" v-if="sandboxSummary?.by_conclusion">
           <span v-for="(cnt, key) in sandboxSummary.by_conclusion" :key="key">{{ key }}: {{ cnt }}</span>
@@ -1147,35 +1299,35 @@
         </div>
         <div v-if="sandboxExperiments.length" class="score-list">
           <div v-for="exp in sandboxExperiments" :key="exp.id" :class="['score-item', sandboxConclusionClass(exp)]">
-            <strong>实验 #{{ exp.id }} / 提案 #{{ exp.proposal_id }} — {{ exp.conclusion }}</strong>
+            <strong>瀹為獙 #{{ exp.id }} / 鎻愭 #{{ exp.proposal_id }} 鈥?{{ exp.conclusion }}</strong>
             <span>
-              基线样本 {{ exp.baseline_metrics?.sample_count ?? 0 }} /
-              强突破 {{ exp.baseline_metrics?.strong_follow_through_count ?? 0 }} /
-              失败 {{ exp.baseline_metrics?.failed_signal_count ?? 0 }}
+              鍩虹嚎鏍锋湰 {{ exp.baseline_metrics?.sample_count ?? 0 }} /
+              寮虹獊鐮?{{ exp.baseline_metrics?.strong_follow_through_count ?? 0 }} /
+              澶辫触 {{ exp.baseline_metrics?.failed_signal_count ?? 0 }}
             </span>
             <span v-if="exp.proposed_metrics?.behavior_change">
-              提案动作: {{ exp.proposed_metrics?.action }} /
-              <template v-if="exp.proposed_metrics?.estimated_coverage_pct != null">覆盖率 {{ exp.proposed_metrics.estimated_coverage_pct }}%</template>
-              <template v-if="exp.proposed_metrics?.collateral_damage_pct != null">误伤率 {{ exp.proposed_metrics.collateral_damage_pct }}%</template>
+              鎻愭鍔ㄤ綔: {{ exp.proposed_metrics?.action }} /
+              <template v-if="exp.proposed_metrics?.estimated_coverage_pct != null">瑕嗙洊鐜?{{ exp.proposed_metrics.estimated_coverage_pct }}%</template>
+              <template v-if="exp.proposed_metrics?.collateral_damage_pct != null">璇激鐜?{{ exp.proposed_metrics.collateral_damage_pct }}%</template>
             </span>
-            <span v-else>无行为变化: {{ exp.proposed_metrics?.note }}</span>
-            <small>创建: {{ exp.created_at }} / 状态: {{ exp.status }}</small>
+            <span v-else>鏃犺涓哄彉鍖? {{ exp.proposed_metrics?.note }}</span>
+            <small>鍒涘缓: {{ exp.created_at }} / 鐘舵€? {{ exp.status }}</small>
           </div>
         </div>
-        <p v-else>暂无沙盒实验记录。批准校准提案后点击「运行已批准提案实验」开始。</p>
+        <p v-else>暂无沙盒实验记录。批准校准提案后可运行已批准提案实验。</p>
       </article>
 <article class="panel wide">
         <h2>Paper Simulation</h2>
-        <p class="review-only-banner">🧪 SIMULATION ONLY: All actions shown here are simulated paper-trading results. They are NOT real orders, NOT investment advice, and NOT connected to any broker.</p>
+        <p class="review-only-banner">馃И SIMULATION ONLY: All actions shown here are simulated paper-trading results. They are NOT real orders, NOT investment advice, and NOT connected to any broker.</p>
         <div class="metrics">
-          <span>策略总数 {{ paperSimSummary?.policy_count ?? 0 }}</span>
-          <span>草稿 {{ paperSimSummary?.policy_by_status?.draft ?? 0 }}</span>
-          <span>已批准 {{ paperSimSummary?.policy_by_status?.approved ?? 0 }}</span>
-          <span>已拒绝 {{ paperSimSummary?.policy_by_status?.rejected ?? 0 }}</span>
+          <span>绛栫暐鎬绘暟 {{ paperSimSummary?.policy_count ?? 0 }}</span>
+          <span>鑽夌 {{ paperSimSummary?.policy_by_status?.draft ?? 0 }}</span>
+          <span>宸叉壒鍑?{{ paperSimSummary?.policy_by_status?.approved ?? 0 }}</span>
+          <span>宸叉嫆缁?{{ paperSimSummary?.policy_by_status?.rejected ?? 0 }}</span>
         </div>
         <div class="metrics">
-          <span>模拟运行 {{ paperSimSummary?.run_count ?? 0 }}</span>
-          <span>模拟动作 {{ paperSimSummary?.action_count ?? 0 }}</span>
+          <span>妯℃嫙杩愯 {{ paperSimSummary?.run_count ?? 0 }}</span>
+          <span>妯℃嫙鍔ㄤ綔 {{ paperSimSummary?.action_count ?? 0 }}</span>
           <span v-for="(cnt, key) in paperSimSummary?.action_by_type" :key="key">{{ key }}: {{ cnt }}</span>
         </div>
         <div class="actions">
@@ -1190,9 +1342,9 @@
         <h3 v-if="paperSimPolicies.length" style="margin-top: 16px;">Simulation Policies</h3>
         <div v-if="paperSimPolicies.length" class="score-list">
           <div v-for="p in paperSimPolicies" :key="p.id" :class="['score-item', policyStatusClass(p)]">
-            <strong>策略 #{{ p.id }} / 实验 #{{ p.source_experiment_id }} — {{ p.policy_type }}</strong>
-            <span>状态: {{ p.status }} / {{ p.policy?.disclaimer ? '⚠ 仅限模拟' : '' }}</span>
-            <small>动作: {{ p.policy?.action ?? '观察' }} / 创建: {{ p.created_at }}</small>
+            <strong>绛栫暐 #{{ p.id }} / 瀹為獙 #{{ p.source_experiment_id }} 鈥?{{ p.policy_type }}</strong>
+            <span>鐘舵€? {{ p.status }} / {{ p.policy?.disclaimer ? '鈿?浠呴檺妯℃嫙' : '' }}</span>
+            <small>鍔ㄤ綔: {{ p.policy?.action ?? '瑙傚療' }} / 鍒涘缓: {{ p.created_at }}</small>
             <div class="actions" v-if="p.status === 'draft'">
               <button @click="approveSimPolicy(p.id)">Approve</button>
               <button class="disabled-live" @click="rejectSimPolicy(p.id)">Reject</button>
@@ -1203,27 +1355,27 @@
         <h3 v-if="paperSimRuns.length" style="margin-top: 16px;">Recent Simulation Runs</h3>
         <div v-if="paperSimRuns.length" class="score-list">
           <div v-for="run in paperSimRuns" :key="run.id" class="score-item">
-            <strong>运行 #{{ run.id }} / 策略 #{{ run.policy_id }} — {{ run.status }}</strong>
+            <strong>杩愯 #{{ run.id }} / 绛栫暐 #{{ run.policy_id }} 鈥?{{ run.status }}</strong>
             <span>
-              候选 {{ run.metrics?.total_candidates ?? 0 }} /
-              观察 {{ run.metrics?.observe_count ?? 0 }} /
-              模拟入场 {{ run.metrics?.simulated_entry_count ?? 0 }} /
-              模拟退出 {{ run.metrics?.simulated_exit_count ?? 0 }} /
-              跳过 {{ run.metrics?.skip_count ?? 0 }}
+              鍊欓€?{{ run.metrics?.total_candidates ?? 0 }} /
+              瑙傚療 {{ run.metrics?.observe_count ?? 0 }} /
+              妯℃嫙鍏ュ満 {{ run.metrics?.simulated_entry_count ?? 0 }} /
+              妯℃嫙閫€鍑?{{ run.metrics?.simulated_exit_count ?? 0 }} /
+              璺宠繃 {{ run.metrics?.skip_count ?? 0 }}
             </span>
-            <small>{{ run.metrics?.disclaimer ?? '仅限模拟' }}</small>
+            <small>{{ run.metrics?.disclaimer ?? '浠呴檺妯℃嫙' }}</small>
           </div>
         </div>
-        <p v-if="!paperSimPolicies.length && !paperSimRuns.length">暂无模拟策略或运行记录。请先运行沙盒实验，然后点击「从实验生成策略草稿」。</p>
+        <p v-if="!paperSimPolicies.length && !paperSimRuns.length">暂无模拟策略或运行记录。请先运行沙盒实验，然后从实验生成策略草稿。</p>
       </article>
 <article class="panel wide">
         <h2>Simulation Evaluation</h2>
-        <p class="review-only-banner">🧪 EVALUATION ONLY: This panel evaluates simulated actions against subsequent market data. It does NOT alter production scoring, rules, or live trading.</p>
+        <p class="review-only-banner">馃И EVALUATION ONLY: This panel evaluates simulated actions against subsequent market data. It does NOT alter production scoring, rules, or live trading.</p>
         <div class="metrics">
-          <span>总评估数 {{ paperSimEvalSummary?.total_evaluations ?? 0 }}</span>
-          <span>已完成 {{ paperSimEvalSummary?.by_status?.completed ?? 0 }}</span>
-          <span>等待未来数据 {{ paperSimEvalSummary?.by_status?.pending_future_data ?? 0 }}</span>
-          <span>无价格跳过 {{ paperSimEvalSummary?.by_status?.skipped_no_price ?? 0 }}</span>
+          <span>鎬昏瘎浼版暟 {{ paperSimEvalSummary?.total_evaluations ?? 0 }}</span>
+          <span>宸插畬鎴?{{ paperSimEvalSummary?.by_status?.completed ?? 0 }}</span>
+          <span>绛夊緟鏈潵鏁版嵁 {{ paperSimEvalSummary?.by_status?.pending_future_data ?? 0 }}</span>
+          <span>鏃犱环鏍艰烦杩?{{ paperSimEvalSummary?.by_status?.skipped_no_price ?? 0 }}</span>
         </div>
         <div class="metrics">
           <span v-for="(cnt, key) in paperSimEvalSummary?.by_outcome_label" :key="'lbl-'+key">{{ key }}: {{ cnt }}</span>
@@ -1237,81 +1389,109 @@
         <h3 v-if="paperSimEvalPolicies.length" style="margin-top: 16px;">Policy Performance Conclusions</h3>
         <div v-if="paperSimEvalPolicies.length" class="score-list">
           <div v-for="p in paperSimEvalPolicies" :key="p.policy_id" :class="['score-item', evalConclusionClass(p.conclusion)]">
-            <strong>策略 #{{ p.policy_id }} ({{ p.policy_type }}) — {{ p.conclusion }}</strong>
+            <strong>绛栫暐 #{{ p.policy_id }} ({{ p.policy_type }}) 鈥?{{ p.conclusion }}</strong>
             <span>
-              已完成 {{ p.completed }} /
-              强突破 {{ p.strong_follow_through }} /
-              失败信号 {{ p.failed_signal }} /
-              大回撤 {{ p.large_drawdowns }}
+              宸插畬鎴?{{ p.completed }} /
+              寮虹獊鐮?{{ p.strong_follow_through }} /
+              澶辫触淇″彿 {{ p.failed_signal }} /
+              澶у洖鎾?{{ p.large_drawdowns }}
             </span>
             <small>
-              待定: {{ p.pending_future_data }} /
-              跳过: {{ p.skipped_no_price }} /
+              寰呭畾: {{ p.pending_future_data }} /
+              璺宠繃: {{ p.skipped_no_price }} /
               {{ p.disclaimer }}
             </small>
           </div>
         </div>
-        <p v-if="!paperSimEvalPolicies.length">暂无策略评估结论。点击「评估近期模拟动作」开始评估。</p>
+        <p v-if="!paperSimEvalPolicies.length">暂无策略评估结论。点击评估近期模拟动作开始评估。</p>
       </article>
 <article class="panel wide">
-        <h2>AI复盘</h2>
+        <h2>AI澶嶇洏</h2>
         <p>{{ reviewText }}</p>
         <div class="account">
           <span>模拟现金 {{ account?.cash?.toFixed(2) ?? "未加载" }}</span>
           <span>持仓 {{ account?.positions?.length ?? 0 }}</span>
           <span>自动化 {{ automation?.status ?? "未运行" }}</span>
-          <span>处理 {{ automation?.summary?.processed_count ?? 0 }}</span>
+          <span>澶勭悊 {{ automation?.summary?.processed_count ?? 0 }}</span>
         </div>
         <div v-if="automation" class="plan">
-          <strong>自动化进程 #{{ automation.run_id || automation.id }}</strong>
-          <span>计划 {{ automation.summary?.planned_count ?? 0 }} / 跳过 {{ automation.summary?.skipped_count ?? 0 }}</span>
+          <strong>鑷姩鍖栬繘绋?#{{ automation.run_id || automation.id }}</strong>
+          <span>璁″垝 {{ automation.summary?.planned_count ?? 0 }} / 璺宠繃 {{ automation.summary?.skipped_count ?? 0 }}</span>
           <span v-if="automation.summary?.phase_matches?.length">
-            阶段风控 {{ automation.summary.phase_guarded_count ?? 0 }} /
+            闃舵椋庢帶 {{ automation.summary.phase_guarded_count ?? 0 }} /
             {{ automation.summary.phase_matches[0].target_symbol }}
             {{ automation.summary.phase_matches[0].score?.toFixed(1) ?? "NA" }}
           </span>
           <span v-if="automation.summary?.auto_discovery">
-            自动发现 {{ automation.summary.auto_discovery.discovered_count }} /
-            涨停 {{ automation.summary.auto_discovery.limit_up_count }}
+            鑷姩鍙戠幇 {{ automation.summary.auto_discovery.discovered_count }} /
+            娑ㄥ仠 {{ automation.summary.auto_discovery.limit_up_count }}
           </span>
           <span v-if="automation.summary?.scoring">
-            潜力评分 {{ automation.summary.scoring.scored_count }} /
+            娼滃姏璇勫垎 {{ automation.summary.scoring.scored_count }} /
             {{ automation.summary.scoring.top_scores?.[0]?.symbol ?? "NA" }}
             {{ automation.summary.scoring.top_scores?.[0]?.total_score?.toFixed(1) ?? "NA" }}
           </span>
-          <small>{{ (automation.summary?.items ?? []).map((item) => `${item.symbol}:${item.status}`).join("；") }}</small>
+          <small>{{ (automation.summary?.items ?? []).map((item) => item.symbol + ":" + item.status + (item.risk_blocked_count ? "(RB:" + item.risk_blocked_count + (item.risk_blocked?.[0]?.rule_id ? "," + item.risk_blocked[0].rule_id : "") + ")" : "")).join("；") }}</small>
+        </div>
+        <div v-if="automation?.summary?.risk_blocked_summary" class="report">
+          <strong>风险阻断汇总</strong>
+          <span>总阻断 {{ automation?.summary?.risk_blocked_summary?.total ?? 0 }}</span>
+          <small>规则 Top：{{ automation?.summary?.risk_blocked_summary?.top_rules?.slice(0, 3).map((item) => `${item[0]}:${item[1]}`).join("；") || "无" }}</small>
+          <small v-if="automation?.summary?.risk_blocked_summary?.top_reasons?.length">
+            常见原因：{{ automation?.summary?.risk_blocked_summary?.top_reasons.slice(0, 3).join("；") }}
+          </small>
+        </div>
+        <div v-if="automationQualityGates.length || automationQualityEventsCount !== null || automationQualityNextAction || automationSuppressedByQualitySymbols.length" class="report">
+          <strong>质量告警摘要</strong>
+          <span>质量告警 {{ automationQualityEventsCount ?? 0 }} / 抑制标的 {{ automationSuppressedByQualitySymbols.length }}</span>
+          <small v-if="automationQualityNextAction">执行建议：{{ automationQualityNextAction }}</small>
+          <small v-if="automationQualityGates.length">
+            告警明细：{{ automationQualityGates.map((gate) => `${gate.symbol || "N/A"}:${gate.quality_grade}`).join("；") }}
+          </small>
+        </div>
+        <div v-if="automationDurationMs !== null || automationRunSteps.length || automationFailedSteps.length || automationNextAction || automationEffectiveCycleParams" class="report">
+          <strong>自动化闭环摘要</strong>
+          <span v-if="automationDurationMs !== null">耗时 {{ automationDurationMs }}ms</span>
+          <span v-if="automationEffectiveCycleParams">
+            鍙傛暟 {{ automationEffectiveCycleParams.limit }}/{{ automationEffectiveCycleParams.monitor_limit }}/{{ automationEffectiveCycleParams.review_symbol }}
+          </span>
+          <span v-if="automationNextAction">下一步建议 {{ automationNextAction }}</span>
+          <span v-if="automationRunSteps.length">步骤 {{ automationRunSteps.map((step) => `${step.step_id}:${step.status}`).join(" / ") }}</span>
+          <small v-if="automationFailedSteps.length">
+            失败步骤 {{ automationFailedSteps.map((step) => `${step.step_id}:${step.reason || step.status}`).join(" / ") }}
+          </small>
         </div>
         <div v-if="lifecycleSummary" class="report">
-          <strong>候选池生命周期</strong>
+          <strong>鍊欓€夋睜鐢熷懡鍛ㄦ湡</strong>
           <span>
-            自动发现 {{ lifecycleSummary.state_counts.auto_discovered }} /
-            待复核 {{ lifecycleSummary.state_counts.pending_review }} /
-            重点观察 {{ lifecycleSummary.state_counts.focus_watch }} /
-            阶段风控 {{ lifecycleSummary.state_counts.phase_guarded }} /
-            淘汰 {{ lifecycleSummary.state_counts.rejected }}
+            鑷姩鍙戠幇 {{ lifecycleSummary.state_counts.auto_discovered }} /
+            寰呭鏍?{{ lifecycleSummary.state_counts.pending_review }} /
+            閲嶇偣瑙傚療 {{ lifecycleSummary.state_counts.focus_watch }} /
+            闃舵椋庢帶 {{ lifecycleSummary.state_counts.phase_guarded }} /
+            娣樻卑 {{ lifecycleSummary.state_counts.rejected }}
           </span>
-          <small>{{ lifecycleSummary.latest_events.slice(0, 5).map((item) => `${item.symbol}:${item.from_state ?? "new"}→${item.to_state}`).join("；") }}</small>
+          <small>{{ lifecycleSummary.latest_events.slice(0, 5).map((item) => `${item.symbol}:${item.from_state ?? "new"} -> ${item.to_state}`).join(" / ") }}</small>
         </div>
         <div v-if="learningReport" class="report">
           <strong>{{ learningReport.title }} #{{ learningReport.id }}</strong>
           <span>
-            样本 {{ learningReport.summary.learning.backtest.sample_count }} /
-            胜率 {{ (learningReport.summary.learning.backtest.win_rate * 100).toFixed(1) }}%
+            鏍锋湰 {{ learningReport.summary.learning.backtest.sample_count }} /
+            鑳滅巼 {{ (learningReport.summary.learning.backtest.win_rate * 100).toFixed(1) }}%
           </span>
           <span v-if="learningReport.summary.main_force_patterns?.pattern_count">
-            主力阶段样本 {{ learningReport.summary.main_force_patterns.pattern_count }} /
+            涓诲姏闃舵鏍锋湰 {{ learningReport.summary.main_force_patterns.pattern_count }} /
             {{ learningReport.summary.main_force_patterns.patterns[0].symbol }}
             {{ learningReport.summary.main_force_patterns.patterns[0].current_phase }}
           </span>
           <span v-if="learningReport.summary.phase_matches?.guarded_count">
-            阶段风控 {{ learningReport.summary.phase_matches.guarded_count }} /
+            闃舵椋庢帶 {{ learningReport.summary.phase_matches.guarded_count }} /
             {{ learningReport.summary.phase_matches.matches[0].target_symbol }}
             {{ learningReport.summary.phase_matches.matches[0].score?.toFixed(1) ?? "NA" }}
           </span>
           <span>
-            乐凯胶片、三维通信保留用户确认样本；金螳螂按出货完成阶段样本训练
+            涔愬嚡鑳剁墖銆佷笁缁撮€氫俊淇濈暀鐢ㄦ埛纭鏍锋湰锛涢噾铻宠瀭鎸夊嚭璐у畬鎴愰樁娈垫牱鏈缁?
           </span>
-          <small>{{ learningReport.summary.next_actions.slice(0, 2).join("；") }}</small>
+          <small>{{ learningReport.summary.next_actions.slice(0, 2).join(" / ") }}</small>
         </div>
         <div v-if="dataset2Readiness" class="report">
           <strong>Dataset2 Readiness / {{ dataset2Readiness.status }}</strong>
@@ -2307,6 +2487,1258 @@
           </span>
           <small>{{ dataset2TrainingConvergenceReview.decision.next_required_action }}</small>
         </div>
+        <div v-if="dataset2StagingAutomatedCleanupApply" class="report">
+          <strong>Dataset2 Automated Staging Cleanup / {{ dataset2StagingAutomatedCleanupApply.status }}</strong>
+          <span>
+            event {{ dataset2StagingAutomatedCleanupApply.event_id }} /
+            package {{ dataset2StagingAutomatedCleanupApply.package_id ?? "latest" }}
+          </span>
+          <span>
+            mutated {{ dataset2StagingAutomatedCleanupApply.summary.mutated_record_count }} /
+            operations {{ dataset2StagingAutomatedCleanupApply.summary.applied_operation_count }}
+          </span>
+          <span>
+            staging writes {{ dataset2StagingAutomatedCleanupApply.decision.writes_staging_records_now ? "yes" : "no" }} /
+            training {{ dataset2StagingAutomatedCleanupApply.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2StagingAutomatedCleanupApply.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2PostCleanupTrainingFreezeReview" class="report">
+          <strong>Dataset2 Post-Cleanup Freeze Review / {{ dataset2PostCleanupTrainingFreezeReview.status }}</strong>
+          <span>
+            event {{ dataset2PostCleanupTrainingFreezeReview.event_id }} /
+            records {{ dataset2PostCleanupTrainingFreezeReview.evidence.record_count }} /
+            learning {{ dataset2PostCleanupTrainingFreezeReview.evidence.learning_sample_count }}
+          </span>
+          <span>
+            freeze ready {{ dataset2PostCleanupTrainingFreezeReview.decision.training_freeze_candidate_ready ? "yes" : "no" }} /
+            promotion preflight {{ dataset2PostCleanupTrainingFreezeReview.decision.can_prepare_learning_sample_promotion_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            blocked checks {{ dataset2PostCleanupTrainingFreezeReview.summary.blocked_check_count }} /
+            training {{ dataset2PostCleanupTrainingFreezeReview.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2PostCleanupTrainingFreezeReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2LearningSamplePromotionPreflight" class="report">
+          <strong>Dataset2 Learning Sample Promotion Preflight / {{ dataset2LearningSamplePromotionPreflight.status }}</strong>
+          <span>
+            event {{ dataset2LearningSamplePromotionPreflight.event_id }} /
+            candidates {{ dataset2LearningSamplePromotionPreflight.projection.candidate_count }} /
+            future inserts {{ dataset2LearningSamplePromotionPreflight.projection.expected_insert_count_future_p62 }}
+          </span>
+          <span>
+            labels {{ Object.entries(dataset2LearningSamplePromotionPreflight.projection.label_counts).map(([label, count]) => `${label}:${count}`).join(" / ") || "none" }}
+          </span>
+          <span>
+            ready {{ dataset2LearningSamplePromotionPreflight.decision.learning_sample_promotion_preflight_ready ? "yes" : "no" }} /
+            writes samples {{ dataset2LearningSamplePromotionPreflight.decision.writes_learning_samples_now ? "yes" : "no" }} /
+            training {{ dataset2LearningSamplePromotionPreflight.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2LearningSamplePromotionPreflight.evidence.plan_hash.slice(0, 16) }} / {{ dataset2LearningSamplePromotionPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2LearningSamplePromotionApply" class="report">
+          <strong>Dataset2 Learning Sample Promotion Apply / {{ dataset2LearningSamplePromotionApply.status }}</strong>
+          <span>
+            event {{ dataset2LearningSamplePromotionApply.event_id }} /
+            inserted {{ dataset2LearningSamplePromotionApply.evidence.inserted_count ?? 0 }} /
+            learning {{ dataset2LearningSamplePromotionApply.evidence.learning_sample_count_before }} -> {{ dataset2LearningSamplePromotionApply.evidence.learning_sample_count_after }}
+          </span>
+          <span>
+            writes samples {{ dataset2LearningSamplePromotionApply.decision.writes_learning_samples_now ? "yes" : "no" }} /
+            training {{ dataset2LearningSamplePromotionApply.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2LearningSamplePromotionApply.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2PostPromotionTrainingFreezeReview" class="report">
+          <strong>Dataset2 Post-Promotion Freeze Review / {{ dataset2PostPromotionTrainingFreezeReview.status }}</strong>
+          <span>
+            event {{ dataset2PostPromotionTrainingFreezeReview.event_id }} /
+            samples {{ dataset2PostPromotionTrainingFreezeReview.evidence.learning_sample_count }} /
+            P62 {{ dataset2PostPromotionTrainingFreezeReview.evidence.latest_p62_apply_id ?? "missing" }}
+          </span>
+          <span>
+            labels {{ Object.entries(dataset2PostPromotionTrainingFreezeReview.counts.labels).map(([label, count]) => `${label}:${count}`).join(" / ") || "none" }}
+          </span>
+          <span>
+            freeze ready {{ dataset2PostPromotionTrainingFreezeReview.decision.post_promotion_training_freeze_ready ? "yes" : "no" }} /
+            prepare training {{ dataset2PostPromotionTrainingFreezeReview.decision.can_prepare_dataset2_training_run_now ? "yes" : "no" }} /
+            training {{ dataset2PostPromotionTrainingFreezeReview.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2PostPromotionTrainingFreezeReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2TrainingRunPlan" class="report">
+          <strong>Dataset2 Training Run Plan / {{ dataset2TrainingRunPlan.status }}</strong>
+          <span>
+            event {{ dataset2TrainingRunPlan.event_id }} /
+            samples {{ dataset2TrainingRunPlan.evidence.learning_sample_count }} /
+            features {{ dataset2TrainingRunPlan.summary.feature_count }}
+          </span>
+          <span>
+            model {{ dataset2TrainingRunPlan.training_plan.model_family }} /
+            labels {{ Object.entries(dataset2TrainingRunPlan.training_plan.label_counts).map(([label, count]) => `${label}:${count}`).join(" / ") || "none" }}
+          </span>
+          <span>
+            plan ready {{ dataset2TrainingRunPlan.decision.dataset2_training_run_plan_ready ? "yes" : "no" }} /
+            execute now {{ dataset2TrainingRunPlan.training_plan.can_execute_training_now ? "yes" : "no" }} /
+            training {{ dataset2TrainingRunPlan.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2TrainingRunPlan.training_plan.plan_id }} / {{ dataset2TrainingRunPlan.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2TrainingExecutionApproval" class="report">
+          <strong>Dataset2 Training Execution Approval / {{ dataset2TrainingExecutionApproval.status }}</strong>
+          <span>
+            event {{ dataset2TrainingExecutionApproval.event_id }} /
+            plan {{ dataset2TrainingExecutionApproval.evidence.training_plan_event_id ?? "missing" }} /
+            samples {{ dataset2TrainingExecutionApproval.evidence.learning_sample_count }}
+          </span>
+          <span>
+            dry-run approved {{ dataset2TrainingExecutionApproval.decision.dataset2_training_execution_approved_for_dry_run ? "yes" : "no" }} /
+            execute now {{ dataset2TrainingExecutionApproval.decision.can_execute_dataset2_training_now ? "yes" : "no" }} /
+            training {{ dataset2TrainingExecutionApproval.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2TrainingExecutionApproval.evidence.training_plan_id ?? "no plan" }} / {{ dataset2TrainingExecutionApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2TrainingDryRun" class="report">
+          <strong>Dataset2 Training Dry Run / {{ dataset2TrainingDryRun.status }}</strong>
+          <span>
+            event {{ dataset2TrainingDryRun.event_id }} /
+            train {{ dataset2TrainingDryRun.dry_run.train_row_count }} /
+            out-of-sample {{ dataset2TrainingDryRun.dry_run.out_of_sample_row_count }}
+          </span>
+          <span>
+            baseline {{ dataset2TrainingDryRun.dry_run.baseline_strategy }} /
+            accuracy {{ dataset2TrainingDryRun.dry_run.out_of_sample_accuracy ?? "n/a" }} /
+            artifact {{ dataset2TrainingDryRun.dry_run.model_artifact_written ? "written" : "not written" }}
+          </span>
+          <small>{{ dataset2TrainingDryRun.evidence.training_plan_id ?? "no plan" }} / {{ dataset2TrainingDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2TrainingDryRunReview" class="report">
+          <strong>Dataset2 Training Dry Run Review / {{ dataset2TrainingDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2TrainingDryRunReview.event_id }} /
+            dry-run {{ dataset2TrainingDryRunReview.evidence.dry_run_event_id ?? "missing" }} /
+            accuracy {{ dataset2TrainingDryRunReview.metrics_review.out_of_sample_accuracy ?? "n/a" }}
+          </span>
+          <span>
+            prepare plan {{ dataset2TrainingDryRunReview.decision.can_prepare_controlled_dataset2_training_execution_plan_now ? "yes" : "no" }} /
+            execute now {{ dataset2TrainingDryRunReview.decision.can_execute_dataset2_training_now ? "yes" : "no" }} /
+            training {{ dataset2TrainingDryRunReview.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2TrainingDryRunReview.evidence.training_plan_id ?? "no plan" }} / {{ dataset2TrainingDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionPlan" class="report">
+          <strong>Dataset2 Controlled Training Plan / {{ dataset2ControlledTrainingExecutionPlan.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionPlan.event_id }} /
+            review {{ dataset2ControlledTrainingExecutionPlan.evidence.dry_run_review_id ?? "missing" }} /
+            baseline {{ dataset2ControlledTrainingExecutionPlan.execution_plan.baseline_accuracy ?? "n/a" }}
+          </span>
+          <span>
+            preflight {{ dataset2ControlledTrainingExecutionPlan.decision.can_prepare_controlled_dataset2_training_execution_preflight_now ? "ready" : "blocked" }} /
+            execute now {{ dataset2ControlledTrainingExecutionPlan.decision.can_execute_dataset2_training_now ? "yes" : "no" }} /
+            training {{ dataset2ControlledTrainingExecutionPlan.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionPlan.execution_plan.plan_id }} / {{ dataset2ControlledTrainingExecutionPlan.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionPreflight" class="report">
+          <strong>Dataset2 Controlled Training Preflight / {{ dataset2ControlledTrainingExecutionPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionPreflight.event_id }} /
+            plan {{ dataset2ControlledTrainingExecutionPreflight.evidence.execution_plan_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionPreflight.evidence.current_learning_sample_count }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingExecutionPreflight.preflight.confirmation_token_matched ? "matched" : "blocked" }} /
+            dry-run {{ dataset2ControlledTrainingExecutionPreflight.decision.can_prepare_controlled_dataset2_training_execution_dry_run_now ? "ready" : "blocked" }} /
+            training {{ dataset2ControlledTrainingExecutionPreflight.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionPreflight.evidence.execution_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionDryRun" class="report">
+          <strong>Dataset2 Controlled Training Dry Run / {{ dataset2ControlledTrainingExecutionDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingExecutionDryRun.evidence.preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionDryRun.evidence.learning_sample_count }}
+          </span>
+          <span>
+            manifest {{ dataset2ControlledTrainingExecutionDryRun.simulation_result.manifest_hash || "missing" }} /
+            artifact {{ dataset2ControlledTrainingExecutionDryRun.simulation_result.would_write_model_artifact ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingExecutionDryRun.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionDryRun.evidence.execution_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Dry Run Review / {{ dataset2ControlledTrainingExecutionDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionDryRunReview.event_id }} /
+            dry-run {{ dataset2ControlledTrainingExecutionDryRunReview.evidence.dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionDryRunReview.evidence.learning_sample_count }}
+          </span>
+          <span>
+            manifest {{ dataset2ControlledTrainingExecutionDryRunReview.evidence.manifest_hash || "missing" }} /
+            accepted {{ dataset2ControlledTrainingExecutionDryRunReview.decision.controlled_dataset2_training_execution_dry_run_review_accepted ? "yes" : "no" }} /
+            training {{ dataset2ControlledTrainingExecutionDryRunReview.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionDryRunReview.evidence.execution_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionReleasePlan" class="report">
+          <strong>Dataset2 Controlled Training Release Plan / {{ dataset2ControlledTrainingExecutionReleasePlan.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionReleasePlan.event_id }} /
+            review {{ dataset2ControlledTrainingExecutionReleasePlan.evidence.dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionReleasePlan.evidence.learning_sample_count }}
+          </span>
+          <span>
+            plan {{ dataset2ControlledTrainingExecutionReleasePlan.release_plan.plan_id }} /
+            hash {{ dataset2ControlledTrainingExecutionReleasePlan.release_plan.plan_hash.slice(0, 16) }} /
+            preflight {{ dataset2ControlledTrainingExecutionReleasePlan.decision.can_prepare_controlled_dataset2_training_execution_release_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingExecutionReleasePlan.release_plan.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingExecutionReleasePlan.release_plan.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingExecutionReleasePlan.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionReleasePlan.release_plan.expected_confirmation_token }} / {{ dataset2ControlledTrainingExecutionReleasePlan.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionReleasePreflight" class="report">
+          <strong>Dataset2 Controlled Training Release Preflight / {{ dataset2ControlledTrainingExecutionReleasePreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionReleasePreflight.event_id }} /
+            plan {{ dataset2ControlledTrainingExecutionReleasePreflight.evidence.release_plan_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionReleasePreflight.evidence.current_learning_sample_count }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingExecutionReleasePreflight.preflight.confirmation_token_matched ? "matched" : "blocked" }} /
+            sample hash {{ dataset2ControlledTrainingExecutionReleasePreflight.evidence.current_sample_set_hash?.slice(0, 16) ?? "missing" }} /
+            dry-run {{ dataset2ControlledTrainingExecutionReleasePreflight.decision.can_prepare_controlled_dataset2_training_execution_release_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingExecutionReleasePreflight.release_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingExecutionReleasePreflight.release_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingExecutionReleasePreflight.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionReleasePreflight.evidence.release_plan_hash ?? "no hash" }} / {{ dataset2ControlledTrainingExecutionReleasePreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionReleaseDryRun" class="report">
+          <strong>Dataset2 Controlled Training Release Dry Run / {{ dataset2ControlledTrainingExecutionReleaseDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionReleaseDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingExecutionReleaseDryRun.evidence.release_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionReleaseDryRun.evidence.learning_sample_count }}
+          </span>
+          <span>
+            release manifest {{ dataset2ControlledTrainingExecutionReleaseDryRun.simulation_result.release_simulation_manifest_hash.slice(0, 16) }} /
+            artifact manifest {{ dataset2ControlledTrainingExecutionReleaseDryRun.simulation_result.artifact_manifest_hash.slice(0, 16) }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingExecutionReleaseDryRun.simulation_result.would_write_model_artifact ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingExecutionReleaseDryRun.simulation_result.would_write_file ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingExecutionReleaseDryRun.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionReleaseDryRun.evidence.release_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionReleaseDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionReleaseDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Release Review / {{ dataset2ControlledTrainingExecutionReleaseDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionReleaseDryRunReview.event_id }} /
+            release dry-run {{ dataset2ControlledTrainingExecutionReleaseDryRunReview.evidence.release_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionReleaseDryRunReview.evidence.learning_sample_count }}
+          </span>
+          <span>
+            release manifest {{ dataset2ControlledTrainingExecutionReleaseDryRunReview.evidence.release_simulation_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            artifact manifest {{ dataset2ControlledTrainingExecutionReleaseDryRunReview.evidence.artifact_manifest_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            accepted {{ dataset2ControlledTrainingExecutionReleaseDryRunReview.decision.controlled_dataset2_training_execution_release_dry_run_review_accepted ? "yes" : "no" }} /
+            final approval {{ dataset2ControlledTrainingExecutionReleaseDryRunReview.decision.can_prepare_controlled_dataset2_training_execution_final_approval_now ? "ready" : "blocked" }} /
+            training {{ dataset2ControlledTrainingExecutionReleaseDryRunReview.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionReleaseDryRunReview.evidence.release_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionReleaseDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionFinalApproval" class="report">
+          <strong>Dataset2 Controlled Training Final Approval / {{ dataset2ControlledTrainingExecutionFinalApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionFinalApproval.event_id }} /
+            review {{ dataset2ControlledTrainingExecutionFinalApproval.evidence.release_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionFinalApproval.evidence.learning_sample_count }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingExecutionFinalApproval.approval.confirmation_token_matched ? "matched" : "blocked" }} /
+            final preflight {{ dataset2ControlledTrainingExecutionFinalApproval.decision.can_prepare_controlled_dataset2_training_execution_final_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingExecutionFinalApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingExecutionFinalApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingExecutionFinalApproval.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionFinalApproval.evidence.release_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionFinalApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionFinalPreflight" class="report">
+          <strong>Dataset2 Controlled Training Final Preflight / {{ dataset2ControlledTrainingExecutionFinalPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionFinalPreflight.event_id }} /
+            approval {{ dataset2ControlledTrainingExecutionFinalPreflight.evidence.final_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionFinalPreflight.evidence.current_learning_sample_count }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingExecutionFinalPreflight.preflight.confirmation_token_matched ? "matched" : "blocked" }} /
+            final dry-run {{ dataset2ControlledTrainingExecutionFinalPreflight.decision.can_prepare_controlled_dataset2_training_execution_final_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingExecutionFinalPreflight.final_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingExecutionFinalPreflight.final_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingExecutionFinalPreflight.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionFinalPreflight.evidence.release_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionFinalPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionFinalDryRun" class="report">
+          <strong>Dataset2 Controlled Training Final Dry-Run / {{ dataset2ControlledTrainingExecutionFinalDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionFinalDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingExecutionFinalDryRun.evidence.final_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionFinalDryRun.evidence.current_learning_sample_count }}
+          </span>
+          <span>
+            final manifest {{ dataset2ControlledTrainingExecutionFinalDryRun.evidence.final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            artifact manifest {{ dataset2ControlledTrainingExecutionFinalDryRun.evidence.simulated_artifact_manifest_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            review {{ dataset2ControlledTrainingExecutionFinalDryRun.decision.can_prepare_controlled_dataset2_training_execution_final_dry_run_review_now ? "ready" : "blocked" }} /
+            file {{ dataset2ControlledTrainingExecutionFinalDryRun.simulation_result.would_write_file ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingExecutionFinalDryRun.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionFinalDryRun.evidence.release_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionFinalDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionFinalDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Final Dry-Run Review / {{ dataset2ControlledTrainingExecutionFinalDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionFinalDryRunReview.event_id }} /
+            dry-run {{ dataset2ControlledTrainingExecutionFinalDryRunReview.evidence.final_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionFinalDryRunReview.evidence.learning_sample_count }}
+          </span>
+          <span>
+            final manifest {{ dataset2ControlledTrainingExecutionFinalDryRunReview.evidence.final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            artifact manifest {{ dataset2ControlledTrainingExecutionFinalDryRunReview.evidence.simulated_artifact_manifest_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            accepted {{ dataset2ControlledTrainingExecutionFinalDryRunReview.decision.controlled_dataset2_training_execution_final_dry_run_review_accepted ? "yes" : "no" }} /
+            run approval {{ dataset2ControlledTrainingExecutionFinalDryRunReview.decision.can_prepare_controlled_dataset2_training_execution_run_approval_now ? "ready" : "blocked" }} /
+            training {{ dataset2ControlledTrainingExecutionFinalDryRunReview.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionFinalDryRunReview.evidence.release_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionFinalDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionRunApproval" class="report">
+          <strong>Dataset2 Controlled Training Run Approval / {{ dataset2ControlledTrainingExecutionRunApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionRunApproval.event_id }} /
+            review {{ dataset2ControlledTrainingExecutionRunApproval.evidence.final_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionRunApproval.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingExecutionRunApproval.approval.confirmation_token_matched ? "matched" : "blocked" }} /
+            run preflight {{ dataset2ControlledTrainingExecutionRunApproval.decision.can_prepare_controlled_dataset2_training_execution_run_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingExecutionRunApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingExecutionRunApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingExecutionRunApproval.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionRunApproval.evidence.release_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionRunApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionRunPreflight" class="report">
+          <strong>Dataset2 Controlled Training Run Preflight / {{ dataset2ControlledTrainingExecutionRunPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionRunPreflight.event_id }} /
+            approval {{ dataset2ControlledTrainingExecutionRunPreflight.evidence.run_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionRunPreflight.evidence.current_learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            sample hash {{ dataset2ControlledTrainingExecutionRunPreflight.evidence.current_sample_set_hash?.slice(0, 16) ?? "missing" }} /
+            token {{ dataset2ControlledTrainingExecutionRunPreflight.preflight.confirmation_token_matched ? "matched" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingExecutionRunPreflight.run_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingExecutionRunPreflight.run_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingExecutionRunPreflight.decision.training_started_now ? "started" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionRunPreflight.evidence.release_plan_id ?? "no plan" }} / {{ dataset2ControlledTrainingExecutionRunPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionRun" class="report">
+          <strong>Dataset2 Controlled Training Run / {{ dataset2ControlledTrainingExecutionRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingExecutionRun.evidence.run_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionRun.evidence.current_learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            train {{ dataset2ControlledTrainingExecutionRun.training_result.train_row_count }} /
+            out {{ dataset2ControlledTrainingExecutionRun.training_result.out_of_sample_row_count }} /
+            accuracy {{ dataset2ControlledTrainingExecutionRun.training_result.out_of_sample_accuracy ?? "n/a" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingExecutionRun.training_result.model_artifact_written ? "written" : "not written" }} /
+            file {{ dataset2ControlledTrainingExecutionRun.training_result.writes_file ? "written" : "not written" }} /
+            memory {{ dataset2ControlledTrainingExecutionRun.training_result.in_memory_model_trained ? "trained" : "blocked" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionRun.training_result.model_summary_hash ?? "no model summary" }} / {{ dataset2ControlledTrainingExecutionRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingExecutionRunReview" class="report">
+          <strong>Dataset2 Controlled Training Run Review / {{ dataset2ControlledTrainingExecutionRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingExecutionRunReview.event_id }} /
+            run {{ dataset2ControlledTrainingExecutionRunReview.evidence.run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingExecutionRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            train {{ dataset2ControlledTrainingExecutionRunReview.run_review.train_row_count }} /
+            out {{ dataset2ControlledTrainingExecutionRunReview.run_review.out_of_sample_row_count }} /
+            accuracy {{ dataset2ControlledTrainingExecutionRunReview.run_review.out_of_sample_accuracy ?? "n/a" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingExecutionRunReview.run_review.model_artifact_written ? "written" : "not written" }} /
+            file {{ dataset2ControlledTrainingExecutionRunReview.run_review.writes_file ? "written" : "not written" }} /
+            next plan {{ dataset2ControlledTrainingExecutionRunReview.decision.can_prepare_controlled_dataset2_training_artifact_plan_now ? "ready" : "blocked" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingExecutionRunReview.evidence.model_summary_hash ?? "no model summary" }} / {{ dataset2ControlledTrainingExecutionRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactPlan" class="report">
+          <strong>Dataset2 Controlled Training Artifact Plan / {{ dataset2ControlledTrainingArtifactPlan.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactPlan.event_id }} /
+            review {{ dataset2ControlledTrainingArtifactPlan.evidence.run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactPlan.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            plan {{ dataset2ControlledTrainingArtifactPlan.artifact_plan.artifact_plan_id }} /
+            hash {{ dataset2ControlledTrainingArtifactPlan.artifact_plan.artifact_plan_hash.slice(0, 16) }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactPlan.artifact_plan.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactPlan.artifact_plan.writes_file_now ? "write" : "not written" }} /
+            approval {{ dataset2ControlledTrainingArtifactPlan.decision.can_request_controlled_dataset2_training_artifact_plan_approval_now ? "ready" : "blocked" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactPlan.evidence.model_summary_hash ?? "no model summary" }} / {{ dataset2ControlledTrainingArtifactPlan.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactPlanApproval" class="report">
+          <strong>Dataset2 Controlled Training Artifact Plan Approval / {{ dataset2ControlledTrainingArtifactPlanApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactPlanApproval.event_id }} /
+            plan {{ dataset2ControlledTrainingArtifactPlanApproval.evidence.artifact_plan_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactPlanApproval.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactPlanApproval.approval.confirmation_token_matched ? "matched" : "blocked" }} /
+            preflight {{ dataset2ControlledTrainingArtifactPlanApproval.decision.can_prepare_controlled_dataset2_training_artifact_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactPlanApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactPlanApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactPlanApproval.approval_scope.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactPlanApproval.evidence.artifact_plan_hash ?? "no artifact plan hash" }} / {{ dataset2ControlledTrainingArtifactPlanApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactPreflight" class="report">
+          <strong>Dataset2 Controlled Training Artifact Preflight / {{ dataset2ControlledTrainingArtifactPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactPreflight.event_id }} /
+            approval {{ dataset2ControlledTrainingArtifactPreflight.evidence.artifact_plan_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactPreflight.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactPreflight.preflight.confirmation_token_matched ? "matched" : "blocked" }} /
+            dry-run {{ dataset2ControlledTrainingArtifactPreflight.decision.can_run_controlled_dataset2_training_artifact_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactPreflight.artifact_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactPreflight.artifact_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactPreflight.artifact_preflight.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactPreflight.evidence.artifact_plan_hash ?? "no artifact plan hash" }} / {{ dataset2ControlledTrainingArtifactPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactDryRun" class="report">
+          <strong>Dataset2 Controlled Training Artifact Dry Run / {{ dataset2ControlledTrainingArtifactDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingArtifactDryRun.evidence.artifact_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactDryRun.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactDryRun.dry_run.confirmation_token_matched ? "matched" : "blocked" }} /
+            review {{ dataset2ControlledTrainingArtifactDryRun.decision.can_prepare_controlled_dataset2_training_artifact_dry_run_review_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactDryRun.artifact_dry_run.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactDryRun.artifact_dry_run.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactDryRun.artifact_dry_run.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactDryRun.artifact_dry_run.artifact_dry_run_manifest_hash.slice(0, 16) }} / {{ dataset2ControlledTrainingArtifactDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Artifact Dry Run Review / {{ dataset2ControlledTrainingArtifactDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactDryRunReview.event_id }} /
+            dry-run {{ dataset2ControlledTrainingArtifactDryRunReview.evidence.artifact_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactDryRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            accepted {{ dataset2ControlledTrainingArtifactDryRunReview.review.accepted_for_controlled_dataset2_training_artifact_release_approval ? "yes" : "blocked" }} /
+            approval {{ dataset2ControlledTrainingArtifactDryRunReview.decision.can_request_controlled_dataset2_training_artifact_release_approval_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactDryRunReview.artifact_review.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactDryRunReview.artifact_review.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactDryRunReview.artifact_review.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactDryRunReview.evidence.artifact_dry_run_manifest_hash?.slice(0, 16) ?? "no dry-run hash" }} / {{ dataset2ControlledTrainingArtifactDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactReleaseApproval" class="report">
+          <strong>Dataset2 Controlled Training Artifact Release Approval / {{ dataset2ControlledTrainingArtifactReleaseApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactReleaseApproval.event_id }} /
+            review {{ dataset2ControlledTrainingArtifactReleaseApproval.evidence.artifact_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactReleaseApproval.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactReleaseApproval.approval.confirmation_token_matched ? "matched" : "blocked" }} /
+            preflight {{ dataset2ControlledTrainingArtifactReleaseApproval.decision.can_prepare_controlled_dataset2_training_artifact_release_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactReleaseApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactReleaseApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactReleaseApproval.approval_scope.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactReleaseApproval.evidence.artifact_dry_run_manifest_hash?.slice(0, 16) ?? "no dry-run hash" }} / {{ dataset2ControlledTrainingArtifactReleaseApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactReleasePreflight" class="report">
+          <strong>Dataset2 Controlled Training Artifact Release Preflight / {{ dataset2ControlledTrainingArtifactReleasePreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactReleasePreflight.event_id }} /
+            approval {{ dataset2ControlledTrainingArtifactReleasePreflight.evidence.artifact_release_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactReleasePreflight.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactReleasePreflight.preflight.confirmation_token_matched ? "matched" : "blocked" }} /
+            dry-run {{ dataset2ControlledTrainingArtifactReleasePreflight.decision.can_run_controlled_dataset2_training_artifact_release_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactReleasePreflight.artifact_release_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactReleasePreflight.artifact_release_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactReleasePreflight.artifact_release_preflight.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactReleasePreflight.evidence.artifact_dry_run_manifest_hash?.slice(0, 16) ?? "no dry-run hash" }} / {{ dataset2ControlledTrainingArtifactReleasePreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactReleaseDryRun" class="report">
+          <strong>Dataset2 Controlled Training Artifact Release Dry Run / {{ dataset2ControlledTrainingArtifactReleaseDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactReleaseDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingArtifactReleaseDryRun.evidence.artifact_release_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactReleaseDryRun.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactReleaseDryRun.dry_run.confirmation_token_matched ? "matched" : "blocked" }} /
+            review {{ dataset2ControlledTrainingArtifactReleaseDryRun.decision.can_prepare_controlled_dataset2_training_artifact_release_dry_run_review_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactReleaseDryRun.artifact_release_dry_run.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactReleaseDryRun.artifact_release_dry_run.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactReleaseDryRun.artifact_release_dry_run.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactReleaseDryRun.evidence.release_manifest_hash?.slice(0, 16) ?? "no release hash" }} / {{ dataset2ControlledTrainingArtifactReleaseDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactReleaseDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Artifact Release Dry Run Review / {{ dataset2ControlledTrainingArtifactReleaseDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactReleaseDryRunReview.event_id }} /
+            dry-run {{ dataset2ControlledTrainingArtifactReleaseDryRunReview.evidence.artifact_release_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactReleaseDryRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            accepted {{ dataset2ControlledTrainingArtifactReleaseDryRunReview.review.accepted_for_controlled_dataset2_training_artifact_final_approval ? "yes" : "blocked" }} /
+            final approval {{ dataset2ControlledTrainingArtifactReleaseDryRunReview.decision.can_request_controlled_dataset2_training_artifact_final_approval_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactReleaseDryRunReview.release_review.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactReleaseDryRunReview.release_review.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactReleaseDryRunReview.release_review.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactReleaseDryRunReview.evidence.release_manifest_hash?.slice(0, 16) ?? "no release hash" }} / {{ dataset2ControlledTrainingArtifactReleaseDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactFinalApproval" class="report">
+          <strong>Dataset2 Controlled Training Artifact Final Approval / {{ dataset2ControlledTrainingArtifactFinalApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactFinalApproval.event_id }} /
+            review {{ dataset2ControlledTrainingArtifactFinalApproval.evidence.artifact_release_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactFinalApproval.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactFinalApproval.approval.confirmation_token_matched ? "matched" : "blocked" }} /
+            preflight {{ dataset2ControlledTrainingArtifactFinalApproval.decision.can_prepare_controlled_dataset2_training_artifact_final_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactFinalApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactFinalApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactFinalApproval.approval_scope.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactFinalApproval.evidence.release_manifest_hash?.slice(0, 16) ?? "no release hash" }} / {{ dataset2ControlledTrainingArtifactFinalApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactFinalPreflight" class="report">
+          <strong>Dataset2 Controlled Training Artifact Final Preflight / {{ dataset2ControlledTrainingArtifactFinalPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactFinalPreflight.event_id }} /
+            approval {{ dataset2ControlledTrainingArtifactFinalPreflight.evidence.artifact_final_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactFinalPreflight.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactFinalPreflight.preflight.confirmation_token_matched ? "matched" : "blocked" }} /
+            dry-run {{ dataset2ControlledTrainingArtifactFinalPreflight.decision.can_run_controlled_dataset2_training_artifact_final_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactFinalPreflight.artifact_final_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactFinalPreflight.artifact_final_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactFinalPreflight.artifact_final_preflight.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactFinalPreflight.evidence.release_manifest_hash?.slice(0, 16) ?? "no release hash" }} / {{ dataset2ControlledTrainingArtifactFinalPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactFinalDryRun" class="report">
+          <strong>Dataset2 Controlled Training Artifact Final Dry-Run / {{ dataset2ControlledTrainingArtifactFinalDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactFinalDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingArtifactFinalDryRun.evidence.artifact_final_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactFinalDryRun.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactFinalDryRun.dry_run.confirmation_token_matched ? "matched" : "blocked" }} /
+            review {{ dataset2ControlledTrainingArtifactFinalDryRun.decision.can_prepare_controlled_dataset2_training_artifact_final_dry_run_review_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final manifest {{ dataset2ControlledTrainingArtifactFinalDryRun.evidence.final_artifact_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactFinalDryRun.evidence.simulated_final_artifact_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactFinalDryRun.artifact_final_dry_run.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactFinalDryRun.artifact_final_dry_run.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactFinalDryRun.artifact_final_dry_run.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactFinalDryRun.evidence.release_manifest_hash?.slice(0, 16) ?? "no release hash" }} / {{ dataset2ControlledTrainingArtifactFinalDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactFinalDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Artifact Final Dry-Run Review / {{ dataset2ControlledTrainingArtifactFinalDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactFinalDryRunReview.event_id }} /
+            dry-run {{ dataset2ControlledTrainingArtifactFinalDryRunReview.evidence.artifact_final_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactFinalDryRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            accepted {{ dataset2ControlledTrainingArtifactFinalDryRunReview.review.accepted_for_controlled_dataset2_training_artifact_write_preflight ? "yes" : "blocked" }} /
+            write preflight {{ dataset2ControlledTrainingArtifactFinalDryRunReview.decision.can_prepare_controlled_dataset2_training_artifact_write_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final manifest {{ dataset2ControlledTrainingArtifactFinalDryRunReview.evidence.final_artifact_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactFinalDryRunReview.evidence.simulated_final_artifact_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactFinalDryRunReview.final_dry_run_review.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactFinalDryRunReview.final_dry_run_review.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactFinalDryRunReview.final_dry_run_review.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactFinalDryRunReview.final_dry_run_review.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactFinalDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWritePreflight" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Preflight / {{ dataset2ControlledTrainingArtifactWritePreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWritePreflight.event_id }} /
+            review {{ dataset2ControlledTrainingArtifactWritePreflight.evidence.artifact_final_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWritePreflight.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactWritePreflight.preflight.confirmation_token_matched ? "matched" : "blocked" }} /
+            dry-run {{ dataset2ControlledTrainingArtifactWritePreflight.decision.can_run_controlled_dataset2_training_artifact_write_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            planned manifest {{ dataset2ControlledTrainingArtifactWritePreflight.evidence.planned_artifact_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            path selected {{ dataset2ControlledTrainingArtifactWritePreflight.artifact_write_preflight.planned_artifact_manifest.artifact_path_selected_now ? "yes" : "no" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWritePreflight.artifact_write_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWritePreflight.artifact_write_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWritePreflight.artifact_write_preflight.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWritePreflight.artifact_write_preflight.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWritePreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteDryRun" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Dry-Run / {{ dataset2ControlledTrainingArtifactWriteDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingArtifactWriteDryRun.evidence.artifact_write_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteDryRun.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            token {{ dataset2ControlledTrainingArtifactWriteDryRun.dry_run.confirmation_token_matched ? "matched" : "blocked" }} /
+            review {{ dataset2ControlledTrainingArtifactWriteDryRun.decision.can_prepare_controlled_dataset2_training_artifact_write_dry_run_review_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            write dry-run {{ dataset2ControlledTrainingArtifactWriteDryRun.evidence.artifact_write_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteDryRun.evidence.simulated_artifact_write_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteDryRun.artifact_write_dry_run.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteDryRun.artifact_write_dry_run.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteDryRun.artifact_write_dry_run.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteDryRun.artifact_write_dry_run.expected_review_decision }} / {{ dataset2ControlledTrainingArtifactWriteDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Dry-Run Review / {{ dataset2ControlledTrainingArtifactWriteDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteDryRunReview.event_id }} /
+            dry-run {{ dataset2ControlledTrainingArtifactWriteDryRunReview.evidence.artifact_write_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteDryRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            reviewer {{ dataset2ControlledTrainingArtifactWriteDryRunReview.review.reviewed_by }} /
+            approval request {{ dataset2ControlledTrainingArtifactWriteDryRunReview.decision.can_request_controlled_dataset2_training_artifact_write_approval_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            write dry-run {{ dataset2ControlledTrainingArtifactWriteDryRunReview.evidence.artifact_write_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteDryRunReview.evidence.simulated_artifact_write_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteDryRunReview.artifact_write_dry_run_review.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteDryRunReview.artifact_write_dry_run_review.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteDryRunReview.artifact_write_dry_run_review.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteDryRunReview.artifact_write_dry_run_review.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteApproval" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Approval / {{ dataset2ControlledTrainingArtifactWriteApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteApproval.event_id }} /
+            review {{ dataset2ControlledTrainingArtifactWriteApproval.evidence.artifact_write_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteApproval.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            approver {{ dataset2ControlledTrainingArtifactWriteApproval.approval.approved_by }} /
+            preflight {{ dataset2ControlledTrainingArtifactWriteApproval.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            write dry-run {{ dataset2ControlledTrainingArtifactWriteApproval.evidence.artifact_write_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            planned {{ dataset2ControlledTrainingArtifactWriteApproval.approval_scope.planned_artifact_manifest_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteApproval.approval_scope.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteApproval.approval_scope.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionPreflight" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Preflight / {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.event_id }} /
+            approval {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.evidence.artifact_write_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            requester {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.preflight.requested_by }} /
+            dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.decision.can_run_controlled_dataset2_training_artifact_write_execution_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            write dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.evidence.artifact_write_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            planned {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.artifact_write_execution_preflight.planned_artifact_manifest_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.artifact_write_execution_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.artifact_write_execution_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.artifact_write_execution_preflight.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.artifact_write_execution_preflight.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionDryRun" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Dry-Run / {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.evidence.artifact_write_execution_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            simulator {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.dry_run.simulated_by }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_dry_run_review_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            execution {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.evidence.artifact_write_execution_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.evidence.simulated_artifact_write_execution_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.artifact_write_execution_dry_run.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.artifact_write_execution_dry_run.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.artifact_write_execution_dry_run.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.artifact_write_execution_dry_run.expected_review_decision }} / {{ dataset2ControlledTrainingArtifactWriteExecutionDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Dry-Run Review / {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.event_id }} /
+            dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.evidence.artifact_write_execution_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            reviewer {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.review.reviewed_by }} /
+            final approval {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.decision.can_request_controlled_dataset2_training_artifact_write_execution_final_approval_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            execution {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.evidence.artifact_write_execution_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.evidence.simulated_artifact_write_execution_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.artifact_write_execution_dry_run_review.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.artifact_write_execution_dry_run_review.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.artifact_write_execution_dry_run_review.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.artifact_write_execution_dry_run_review.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalApproval" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Approval / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.event_id }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.evidence.artifact_write_execution_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            approver {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.approval.approved_by }} /
+            final preflight {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_final_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            execution {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.evidence.artifact_write_execution_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.evidence.simulated_artifact_write_execution_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.approval_scope.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.approval_scope.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Preflight / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.event_id }} /
+            approval {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.evidence.artifact_write_execution_final_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            requester {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.preflight.requested_by }} /
+            final dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.decision.can_run_controlled_dataset2_training_artifact_write_execution_final_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            execution {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.evidence.artifact_write_execution_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            planned {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.artifact_write_execution_final_preflight.planned_artifact_manifest_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.artifact_write_execution_final_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.artifact_write_execution_final_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.artifact_write_execution_final_preflight.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.artifact_write_execution_final_preflight.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Dry-Run / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.evidence.artifact_write_execution_final_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            simulator {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.dry_run.simulated_by }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_final_dry_run_review_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.evidence.artifact_write_execution_final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.evidence.simulated_artifact_write_execution_final_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.artifact_write_execution_final_dry_run.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.artifact_write_execution_final_dry_run.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.artifact_write_execution_final_dry_run.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.artifact_write_execution_final_dry_run.expected_review_decision }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Dry-Run Review / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.event_id }} /
+            dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.evidence.artifact_write_execution_final_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            reviewer {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.review.reviewed_by }} /
+            final write approval {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.decision.can_request_controlled_dataset2_training_artifact_write_execution_final_write_approval_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.evidence.artifact_write_execution_final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.evidence.simulated_artifact_write_execution_final_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.artifact_write_execution_final_dry_run_review.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.artifact_write_execution_final_dry_run_review.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.artifact_write_execution_final_dry_run_review.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.artifact_write_execution_final_dry_run_review.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Approval / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.event_id }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.evidence.artifact_write_execution_final_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            approver {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.approval.approved_by }} /
+            final write preflight {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.evidence.artifact_write_execution_final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.evidence.simulated_artifact_write_execution_final_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.approval_scope.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.approval_scope.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Preflight / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.event_id }} /
+            approval {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.evidence.artifact_write_execution_final_write_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            requester {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.preflight.requested_by }} /
+            final write dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.decision.can_run_controlled_dataset2_training_artifact_write_execution_final_write_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.evidence.artifact_write_execution_final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.evidence.simulated_artifact_write_execution_final_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.artifact_write_execution_final_write_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.artifact_write_execution_final_write_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.artifact_write_execution_final_write_preflight.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.artifact_write_execution_final_write_preflight.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Dry-Run / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.evidence.artifact_write_execution_final_write_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            simulator {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.dry_run.simulated_by }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_dry_run_review_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final write {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.evidence.artifact_write_execution_final_write_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.evidence.simulated_artifact_write_execution_final_write_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.artifact_write_execution_final_write_dry_run.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.artifact_write_execution_final_write_dry_run.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.artifact_write_execution_final_write_dry_run.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.artifact_write_execution_final_write_dry_run.expected_review_decision }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Dry-Run Review / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.event_id }} /
+            dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.evidence.artifact_write_execution_final_write_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            reviewer {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.review.reviewed_by }} /
+            execution approval {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.decision.can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final write {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.evidence.artifact_write_execution_final_write_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.evidence.simulated_artifact_write_execution_final_write_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.artifact_write_execution_final_write_dry_run_review.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.artifact_write_execution_final_write_dry_run_review.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.artifact_write_execution_final_write_dry_run_review.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.artifact_write_execution_final_write_dry_run_review.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Approval / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.event_id }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.evidence.artifact_write_execution_final_write_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            approver {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.approval.approved_by }} /
+            execution preflight {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final write {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.evidence.artifact_write_execution_final_write_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.evidence.simulated_artifact_write_execution_final_write_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.approval_scope.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.approval_scope.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Preflight / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.event_id }} /
+            approval {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.evidence.artifact_write_execution_final_write_execution_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            requester {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.preflight.requested_by }} /
+            execution dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.decision.can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final write {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.evidence.artifact_write_execution_final_write_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.evidence.simulated_artifact_write_execution_final_write_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.artifact_write_execution_final_write_execution_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.artifact_write_execution_final_write_execution_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.artifact_write_execution_final_write_execution_preflight.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.artifact_write_execution_final_write_execution_preflight.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Dry-Run / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.evidence.artifact_write_execution_final_write_execution_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            simulator {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.dry_run.simulated_by }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_review_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            execution {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.evidence.artifact_write_execution_final_write_execution_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.evidence.simulated_artifact_write_execution_final_write_execution_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.artifact_write_execution_final_write_execution_dry_run.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.artifact_write_execution_final_write_execution_dry_run.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.artifact_write_execution_final_write_execution_dry_run.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.artifact_write_execution_final_write_execution_dry_run.expected_review_decision }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Dry-Run Review / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.event_id }} /
+            dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.evidence.artifact_write_execution_final_write_execution_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            reviewer {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.review.reviewed_by }} /
+            final approval {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.decision.can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            execution {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.evidence.artifact_write_execution_final_write_execution_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.evidence.simulated_artifact_write_execution_final_write_execution_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.artifact_write_execution_final_write_execution_dry_run_review.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.artifact_write_execution_final_write_execution_dry_run_review.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.artifact_write_execution_final_write_execution_dry_run_review.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.artifact_write_execution_final_write_execution_dry_run_review.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Final Approval / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.event_id }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.evidence.artifact_write_execution_final_write_execution_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            approver {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.approval.approved_by }} /
+            final preflight {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            execution {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.evidence.artifact_write_execution_final_write_execution_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.evidence.simulated_artifact_write_execution_final_write_execution_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.approval_scope.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.approval_scope.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Final Preflight / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.event_id }} /
+            approval {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.evidence.artifact_write_execution_final_write_execution_final_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            requester {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.preflight.requested_by }} /
+            final dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.decision.can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            execution {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.evidence.artifact_write_execution_final_write_execution_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.evidence.simulated_artifact_write_execution_final_write_execution_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.artifact_write_execution_final_write_execution_final_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.artifact_write_execution_final_write_execution_final_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.artifact_write_execution_final_write_execution_final_preflight.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.artifact_write_execution_final_write_execution_final_preflight.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Final Dry-run / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.event_id }} /
+            preflight {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.evidence.artifact_write_execution_final_write_execution_final_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            simulated by {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.dry_run.simulated_by }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_review_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.evidence.artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.evidence.simulated_artifact_write_execution_final_write_execution_final_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.artifact_write_execution_final_write_execution_final_dry_run.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.artifact_write_execution_final_write_execution_final_dry_run.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.artifact_write_execution_final_write_execution_final_dry_run.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.artifact_write_execution_final_write_execution_final_dry_run.expected_review_decision }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Final Dry-run Review / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.event_id ?? dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.id }} /
+            dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.evidence.artifact_write_execution_final_write_execution_final_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            reviewer {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.review.reviewed_by }} /
+            final approval {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.decision.can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.evidence.artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.evidence.simulated_artifact_write_execution_final_write_execution_final_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.artifact_write_execution_final_write_execution_final_dry_run_review.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.artifact_write_execution_final_write_execution_final_dry_run_review.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.artifact_write_execution_final_write_execution_final_dry_run_review.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.artifact_write_execution_final_write_execution_final_dry_run_review.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Final Final Approval / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.event_id ?? dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.id }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.evidence.artifact_write_execution_final_write_execution_final_dry_run_review_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            approver {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.approval.approved_by }} /
+            final preflight {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.evidence.artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.evidence.simulated_artifact_write_execution_final_write_execution_final_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.approval_scope.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.approval_scope.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.approval_scope.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.approval_scope.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Final Final Preflight / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.event_id ?? dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.id }} /
+            approval {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.evidence.artifact_write_execution_final_write_execution_final_final_approval_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            requester {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.preflight.requested_by }} /
+            final dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.decision.can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.evidence.artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.evidence.simulated_artifact_write_execution_final_write_execution_final_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.artifact_write_execution_final_write_execution_final_final_preflight.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.artifact_write_execution_final_write_execution_final_final_preflight.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.artifact_write_execution_final_write_execution_final_final_preflight.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.artifact_write_execution_final_write_execution_final_final_preflight.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Final Final Dry-run / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.event_id ?? dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.id }} /
+            preflight {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.evidence.artifact_write_execution_final_write_execution_final_final_preflight_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            simulated by {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.dry_run.simulated_by }} /
+            review {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.decision.can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final-final manifest {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.evidence.artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.evidence.simulated_artifact_write_execution_final_write_execution_final_final_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.artifact_write_execution_final_write_execution_final_final_dry_run.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.artifact_write_execution_final_write_execution_final_final_dry_run.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.artifact_write_execution_final_write_execution_final_final_dry_run.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.artifact_write_execution_final_write_execution_final_final_dry_run.allowed_next_stage }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.decision.next_required_action }}</small>
+        </div>
+        <div v-if="dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview" class="report">
+          <strong>Dataset2 Controlled Training Artifact Write Execution Final Write Execution Final Final Dry-run Review / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.status }}</strong>
+          <span>
+            event {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.event_id ?? dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.id }} /
+            dry-run {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.evidence.artifact_write_execution_final_write_execution_final_final_dry_run_event_id ?? "missing" }} /
+            samples {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.evidence.learning_sample_count ?? "missing" }}
+          </span>
+          <span>
+            reviewed by {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.review.reviewed_by }} /
+            final-final-final approval {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.decision.can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval_now ? "ready" : "blocked" }}
+          </span>
+          <span>
+            final-final manifest {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.evidence.artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash?.slice(0, 16) ?? "missing" }} /
+            payload {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.evidence.simulated_artifact_write_execution_final_write_execution_final_final_payload_hash?.slice(0, 16) ?? "missing" }}
+          </span>
+          <span>
+            artifact {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.artifact_write_execution_final_write_execution_final_final_dry_run_review.writes_model_artifact_now ? "write" : "not written" }} /
+            file {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.artifact_write_execution_final_write_execution_final_final_dry_run_review.writes_file_now ? "write" : "not written" }} /
+            training {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.artifact_write_execution_final_write_execution_final_final_dry_run_review.executes_training_now ? "executes" : "not started" }}
+          </span>
+          <small>{{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.artifact_write_execution_final_write_execution_final_final_dry_run_review.expected_confirmation_token }} / {{ dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.decision.next_required_action }}</small>
+        </div>
         <div class="actions">
           <button data-testid="dataset2-readiness-button" @click="loadDataset2Readiness" :disabled="dataset2Loading">
             {{ dataset2Loading ? "Dataset2 checking" : "Check Dataset2 readiness" }}
@@ -2497,50 +3929,260 @@
           <button data-testid="dataset2-training-convergence-review-button" @click="reviewDataset2TrainingConvergence" :disabled="dataset2Loading">
             Dataset2 convergence review
           </button>
+          <button data-testid="dataset2-staging-automated-cleanup-button" @click="applyDataset2StagingAutomatedCleanup" :disabled="dataset2Loading">
+            Dataset2 staging auto cleanup
+          </button>
+          <button data-testid="dataset2-post-cleanup-freeze-review-button" @click="reviewDataset2PostCleanupTrainingFreeze" :disabled="dataset2Loading">
+            Dataset2 freeze review
+          </button>
+          <button data-testid="dataset2-learning-sample-promotion-preflight-button" @click="planDataset2LearningSamplePromotionPreflight" :disabled="dataset2Loading">
+            Dataset2 promotion preflight
+          </button>
+          <button data-testid="dataset2-learning-sample-promotion-apply-button" @click="applyDataset2LearningSamplePromotion" :disabled="dataset2Loading">
+            Dataset2 apply promotion
+          </button>
+          <button data-testid="dataset2-post-promotion-freeze-review-button" @click="reviewDataset2PostPromotionTrainingFreeze" :disabled="dataset2Loading">
+            Dataset2 post-promotion freeze
+          </button>
+          <button data-testid="dataset2-training-run-plan-button" @click="planDataset2TrainingRun" :disabled="dataset2Loading">
+            Dataset2 training plan
+          </button>
+          <button data-testid="dataset2-training-execution-approval-button" @click="approveDataset2TrainingExecution" :disabled="dataset2Loading">
+            Dataset2 approve dry-run
+          </button>
+          <button data-testid="dataset2-training-dry-run-button" @click="runDataset2TrainingDryRun" :disabled="dataset2Loading">
+            Dataset2 training dry-run
+          </button>
+          <button data-testid="dataset2-training-dry-run-review-button" @click="reviewDataset2TrainingDryRun" :disabled="dataset2Loading">
+            Dataset2 dry-run review
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-plan-button" @click="planDataset2ControlledTrainingExecution" :disabled="dataset2Loading">
+            Dataset2 training plan gate
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-preflight-button" @click="preflightDataset2ControlledTrainingExecution" :disabled="dataset2Loading">
+            Dataset2 training preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-dry-run-button" @click="dryRunDataset2ControlledTrainingExecution" :disabled="dataset2Loading">
+            Dataset2 training exec dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-dry-run-review-button" @click="reviewDataset2ControlledTrainingExecutionDryRun" :disabled="dataset2Loading">
+            Dataset2 training exec review
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-release-plan-button" @click="planDataset2ControlledTrainingExecutionRelease" :disabled="dataset2Loading">
+            Dataset2 training release plan
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-release-preflight-button" @click="preflightDataset2ControlledTrainingExecutionRelease" :disabled="dataset2Loading">
+            Dataset2 training release preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-release-dry-run-button" @click="dryRunDataset2ControlledTrainingExecutionRelease" :disabled="dataset2Loading">
+            Dataset2 training release dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-release-dry-run-review-button" @click="reviewDataset2ControlledTrainingExecutionReleaseDryRun" :disabled="dataset2Loading">
+            Dataset2 training release review
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-final-approval-button" @click="approveDataset2ControlledTrainingExecutionFinal" :disabled="dataset2Loading">
+            Dataset2 training final approval
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-final-preflight-button" @click="preflightDataset2ControlledTrainingExecutionFinal" :disabled="dataset2Loading">
+            Dataset2 training final preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-final-dry-run-button" @click="dryRunDataset2ControlledTrainingExecutionFinal" :disabled="dataset2Loading">
+            Dataset2 training final dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-final-dry-run-review-button" @click="reviewDataset2ControlledTrainingExecutionFinalDryRun" :disabled="dataset2Loading">
+            Dataset2 training final review
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-run-approval-button" @click="approveDataset2ControlledTrainingExecutionRun" :disabled="dataset2Loading">
+            Dataset2 training run approval
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-run-preflight-button" @click="preflightDataset2ControlledTrainingExecutionRun" :disabled="dataset2Loading">
+            Dataset2 training run preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-run-button" @click="runDataset2ControlledTrainingExecution" :disabled="dataset2Loading">
+            Dataset2 training run
+          </button>
+          <button data-testid="dataset2-controlled-training-execution-run-review-button" @click="reviewDataset2ControlledTrainingExecutionRun" :disabled="dataset2Loading">
+            Dataset2 training run review
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-plan-button" @click="planDataset2ControlledTrainingArtifact" :disabled="dataset2Loading">
+            Dataset2 artifact plan
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-plan-approval-button" @click="approveDataset2ControlledTrainingArtifactPlan" :disabled="dataset2Loading">
+            Dataset2 artifact approval
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-preflight-button" @click="preflightDataset2ControlledTrainingArtifact" :disabled="dataset2Loading">
+            Dataset2 artifact preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-dry-run-button" @click="dryRunDataset2ControlledTrainingArtifact" :disabled="dataset2Loading">
+            Dataset2 artifact dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-dry-run-review-button" @click="reviewDataset2ControlledTrainingArtifactDryRun" :disabled="dataset2Loading">
+            Dataset2 artifact review
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-release-approval-button" @click="approveDataset2ControlledTrainingArtifactRelease" :disabled="dataset2Loading">
+            Dataset2 artifact release approval
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-release-preflight-button" @click="preflightDataset2ControlledTrainingArtifactRelease" :disabled="dataset2Loading">
+            Dataset2 artifact release preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-release-dry-run-button" @click="dryRunDataset2ControlledTrainingArtifactRelease" :disabled="dataset2Loading">
+            Dataset2 artifact release dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-release-dry-run-review-button" @click="reviewDataset2ControlledTrainingArtifactReleaseDryRun" :disabled="dataset2Loading">
+            Dataset2 artifact release review
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-final-approval-button" @click="approveDataset2ControlledTrainingArtifactFinal" :disabled="dataset2Loading">
+            Dataset2 artifact final approval
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-final-preflight-button" @click="preflightDataset2ControlledTrainingArtifactFinal" :disabled="dataset2Loading">
+            Dataset2 artifact final preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-final-dry-run-button" @click="dryRunDataset2ControlledTrainingArtifactFinal" :disabled="dataset2Loading">
+            Dataset2 artifact final dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-final-dry-run-review-button" @click="reviewDataset2ControlledTrainingArtifactFinalDryRun" :disabled="dataset2Loading">
+            Dataset2 artifact final review
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-preflight-button" @click="preflightDataset2ControlledTrainingArtifactWrite" :disabled="dataset2Loading">
+            Dataset2 artifact write preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-dry-run-button" @click="dryRunDataset2ControlledTrainingArtifactWrite" :disabled="dataset2Loading">
+            Dataset2 artifact write dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-dry-run-review-button" @click="reviewDataset2ControlledTrainingArtifactWriteDryRun" :disabled="dataset2Loading">
+            Dataset2 artifact write review
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-approval-button" @click="approveDataset2ControlledTrainingArtifactWrite" :disabled="dataset2Loading">
+            Dataset2 artifact write approval
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-preflight-button" @click="preflightDataset2ControlledTrainingArtifactWriteExecution" :disabled="dataset2Loading">
+            Dataset2 artifact write execution preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-dry-run-button" @click="dryRunDataset2ControlledTrainingArtifactWriteExecution" :disabled="dataset2Loading">
+            Dataset2 artifact write execution dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-dry-run-review-button" @click="reviewDataset2ControlledTrainingArtifactWriteExecutionDryRun" :disabled="dataset2Loading">
+            Dataset2 artifact write execution review
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-approval-button" @click="approveDataset2ControlledTrainingArtifactWriteExecutionFinal" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final approval
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-preflight-button" @click="preflightDataset2ControlledTrainingArtifactWriteExecutionFinal" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-dry-run-button" @click="dryRunDataset2ControlledTrainingArtifactWriteExecutionFinal" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-dry-run-review-button" @click="reviewDataset2ControlledTrainingArtifactWriteExecutionFinalDryRun" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final dry-run review
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-approval-button" @click="approveDataset2ControlledTrainingArtifactWriteExecutionFinalWrite" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write approval
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-preflight-button" @click="preflightDataset2ControlledTrainingArtifactWriteExecutionFinalWrite" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-dry-run-button" @click="dryRunDataset2ControlledTrainingArtifactWriteExecutionFinalWrite" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-dry-run-review-button" @click="reviewDataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write dry-run review
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-approval-button" @click="approveDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecution" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution approval
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-preflight-button" @click="preflightDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecution" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-dry-run-button" @click="dryRunDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecution" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-dry-run-review-button" @click="reviewDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution dry-run review
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-final-approval-button" @click="approveDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinal" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution final approval
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-final-preflight-button" @click="preflightDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinal" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution final preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-final-dry-run-button" @click="dryRunDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinal" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution final dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-final-dry-run-review-button" @click="reviewDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution final dry-run review
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-final-final-approval-button" @click="approveDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinal" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution final final approval
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-final-final-preflight-button" @click="preflightDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinal" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution final final preflight
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run-button" @click="dryRunDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinal" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution final final dry-run
+          </button>
+          <button data-testid="dataset2-controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run-review-button" @click="reviewDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun" :disabled="dataset2Loading">
+            Dataset2 artifact write execution final write execution final final dry-run review
+          </button>
         </div>
         <div v-if="monitoring" class="report">
-          <strong>盘中监控 #{{ monitoring.session_id }}</strong>
+          <strong>鐩樹腑鐩戞帶 #{{ monitoring.session_id }}</strong>
           <span>
-            事件 {{ monitoring.event_count }} / 告警 {{ monitoring.alert_count ?? 0 }} /
-            允许买入 {{ monitoring.allowed_count }}
+            浜嬩欢 {{ monitoring.event_count }} / 鍛婅 {{ monitoring.alert_count ?? 0 }} /
+            鍏佽涔板叆 {{ monitoring.allowed_count }}
           </span>
-          <small>{{ monitoring.events.slice(0, 5).map((item) => item.summary).join("；") }}</small>
-          <small>{{ (monitoring.alerts ?? []).slice(0, 5).map((item) => item.message).join("；") }}</small>
+          <span v-if="monitoring.quality_events_count !== undefined || monitoring.suppressed_by_quality_symbols?.length || monitoring.quality_next_action">
+            质量告警 {{ monitoring.quality_events_count ?? 0 }} / 抑制标的 {{ monitoring.suppressed_by_quality_symbols?.length ?? 0 }} / 决策动作 {{ monitoring.quality_next_action ?? "continue_with_alerts" }}
+          </span>
+          <small v-if="monitoring.quality_gates?.length">
+            告警明细：{{ monitoring.quality_gates?.map((gate) => `${gate.symbol || "N/A"}:${gate.quality_grade}`).join("；") }}
+          </small>
+          <small>{{ monitoring.events.slice(0, 5).map((item) => item.summary).join(" / ") }}</small>
+          <small>{{ (monitoring.alerts ?? []).slice(0, 5).map((item) => item.message).join(" / ") }}</small>
         </div>
         <div v-if="monitoringReview" class="report">
           <strong>{{ monitoringReview.title }} #{{ monitoringReview.id }}</strong>
           <span>
-            事件 {{ monitoringReview.summary.event_count }} / 告警 {{ monitoringReview.summary.alert_count }} /
-            风控阻断 {{ monitoringReview.summary.risk_blocked_count }}
+            浜嬩欢 {{ monitoringReview.summary.event_count }} / 鍛婅 {{ monitoringReview.summary.alert_count }} /
+            椋庢帶闃绘柇 {{ monitoringReview.summary.risk_blocked_count }}
           </span>
           <span>{{ monitoringReview.summary.diagnosis }}</span>
-          <small>{{ monitoringReview.summary.next_actions.slice(0, 3).join("；") }}</small>
+          <span v-if="monitoringReview.summary.quality_events_count !== undefined || monitoringReview.summary.quality_next_action">
+            质量告警 {{ monitoringReview.summary.quality_events_count ?? 0 }} / 抑制标的 {{ monitoringReview.summary.suppressed_by_quality_symbols?.length ?? 0 }} / 动作 {{ monitoringReview.summary.quality_next_action ?? "continue_with_alerts" }}
+          </span>
+          <small v-if="monitoringReview.summary.quality_gates?.length">
+            告警明细：{{ monitoringReview.summary.quality_gates?.map((gate) => `${gate.symbol || "N/A"}:${gate.quality_grade}`).join("；") }}
+          </small>
+          <small>{{ monitoringReview.summary.next_actions.slice(0, 3).join(" / ") }}</small>
+          <small v-if="monitoringReview.summary.risk_blocked_reasons?.length">
+            阻断原因：{{ monitoringReview.summary.risk_blocked_reasons.slice(0, 6).join("；") }}
+          </small>
         </div>
         <div v-for="item in phaseReplays" :key="item.id" class="report">
-          <strong>主力阶段回放 #{{ item.id }} {{ item.symbol }} {{ item.name }}</strong>
+          <strong>涓诲姏闃舵鍥炴斁 #{{ item.id }} {{ item.symbol }} {{ item.name }}</strong>
           <span>
-            {{ item.summary.start_date }} 至 {{ item.summary.end_date }} /
-            最新 {{ item.summary.latest_phase_name }} /
-            区间 {{ item.summary.period_return_pct?.toFixed(1) ?? "NA" }}%
+            {{ item.summary.start_date }} 鑷?{{ item.summary.end_date }} /
+            鏈€鏂?{{ item.summary.latest_phase_name }} /
+            鍖洪棿 {{ item.summary.period_return_pct?.toFixed(1) ?? "NA" }}%
           </span>
           <span>{{ item.summary.diagnosis }}</span>
-          <small>{{ item.segments.slice(-4).map((segment) => `${segment.phase_name}:${segment.start_date}-${segment.end_date}`).join("；") }}</small>
+          <small>{{ item.segments.slice(-4).map((segment) => `${segment.phase_name}:${segment.start_date}-${segment.end_date}`).join(" / ") }}</small>
         </div>
         <div v-if="phaseMatch" class="report">
-          <strong>阶段相似度 #{{ phaseMatch.id }} {{ phaseMatch.target_symbol }} {{ phaseMatch.target_name }}</strong>
+          <strong>闃舵鐩镐技搴?#{{ phaseMatch.id }} {{ phaseMatch.target_symbol }} {{ phaseMatch.target_name }}</strong>
           <span>
-            最像 {{ phaseMatch.summary.best_match?.core_symbol }}
+            鏈€鍍?{{ phaseMatch.summary.best_match?.core_symbol }}
             {{ phaseMatch.summary.best_match?.core_name }} /
-            分数 {{ phaseMatch.summary.best_match?.score.toFixed(1) ?? "NA" }}
+            鍒嗘暟 {{ phaseMatch.summary.best_match?.score.toFixed(1) ?? "NA" }}
           </span>
           <span>{{ phaseMatch.summary.diagnosis }}</span>
-          <small>{{ phaseMatch.summary.next_actions.slice(0, 3).join("；") }}</small>
+          <small>{{ phaseMatch.summary.next_actions.slice(0, 3).join(" / ") }}</small>
         </div>
       </article>
 <article class="panel wide">
         <h2>Agent Learning Samples</h2>
         <div class="metrics">
-          <span>总样本 {{ agentLearningSummary?.total_count ?? 0 }}</span>
+          <span>鎬绘牱鏈?{{ agentLearningSummary?.total_count ?? 0 }}</span>
           <span v-for="(cnt, key) in agentLearningSummary?.by_sample_type" :key="key">{{ key }}: {{ cnt }}</span>
         </div>
         <div class="metrics">
@@ -2552,23 +4194,23 @@
           </button>
         </div>
         <div v-if="agentLearningIngestResult" class="report">
-          <strong>收集结果</strong>
-          <span>处理任务 {{ agentLearningIngestResult.tasks_processed }} / 新增样本 {{ agentLearningIngestResult.total_created }}</span>
+          <strong>鏀堕泦缁撴灉</strong>
+          <span>澶勭悊浠诲姟 {{ agentLearningIngestResult.tasks_processed }} / 鏂板鏍锋湰 {{ agentLearningIngestResult.total_created }}</span>
         </div>
         <div v-if="agentLearningSamples.length" class="score-list">
           <div v-for="sample in agentLearningSamples" :key="sample.id" class="score-item">
-            <strong>{{ sample.symbol ?? '系统' }} {{ sample.name ?? '' }} / {{ sample.sample_type }}</strong>
+            <strong>{{ sample.symbol ?? '绯荤粺' }} {{ sample.name ?? '' }} / {{ sample.sample_type }}</strong>
             <span>任务 #{{ sample.source_task_id }} / 标签: {{ sample.label ?? '未标注' }}</span>
-            <small v-if="sample.risk_flags?.length">⚠ {{ sample.risk_flags.join('；') }}</small>
+            <small v-if="sample.risk_flags?.length">风险 {{ sample.risk_flags.join(' / ') }}</small>
           </div>
         </div>
-        <p v-else>暂无Agent学习样本。点击「收集最近完成的任务」开始收集。</p>
+        <p v-else>暂无 Agent 学习样本。点击收集最近完成的任务开始收集。</p>
       </article>
 <article class="panel wide">
         <h2>Agent Learning Outcomes</h2>
         <div class="metrics">
-          <span>覆盖数 {{ agentOutcomeSummary?.coverage_count ?? 0 }}</span>
-          <span>等待未来数据 {{ agentOutcomeSummary?.pending_count ?? 0 }}</span>
+          <span>瑕嗙洊鏁?{{ agentOutcomeSummary?.coverage_count ?? 0 }}</span>
+          <span>绛夊緟鏈潵鏁版嵁 {{ agentOutcomeSummary?.pending_count ?? 0 }}</span>
         </div>
         <div class="metrics">
           <span v-for="(cnt, key) in agentOutcomeSummary?.by_label" :key="key">{{ key }}: {{ cnt }}</span>
@@ -2580,26 +4222,26 @@
         </div>
         <div v-if="agentOutcomes.length" class="score-list">
           <div v-for="outcome in agentOutcomes" :key="outcome.id" class="score-item">
-            <strong>样本 #{{ outcome.sample_id }} / 周期 {{ outcome.horizon_days }}天 / {{ outcome.outcome_label }}</strong>
+            <strong>鏍锋湰 #{{ outcome.sample_id }} / 鍛ㄦ湡 {{ outcome.horizon_days }}澶?/ {{ outcome.outcome_label }}</strong>
             <span>
-              {{ outcome.start_date }} 至 {{ outcome.end_date }} / 风险: {{ outcome.risk_outcome }}
+              {{ outcome.start_date }} 鑷?{{ outcome.end_date }} / 椋庨櫓: {{ outcome.risk_outcome }}
             </span>
             <small v-if="hasOutcomeReturns(outcome)">
-              最大收益: {{ formatOutcomeMetric(outcome, "max_return") }}% / 最大回撤: {{ formatOutcomeMetric(outcome, "min_return") }}% / 最终收益: {{ formatOutcomeMetric(outcome, "close_return") }}%
+              鏈€澶ф敹鐩? {{ formatOutcomeMetric(outcome, "max_return") }}% / 鏈€澶у洖鎾? {{ formatOutcomeMetric(outcome, "min_return") }}% / 鏈€缁堟敹鐩? {{ formatOutcomeMetric(outcome, "close_return") }}%
             </small>
             <small v-else-if="outcome.outcome_label === 'pending_future_data'">待未来数据确认</small>
           </div>
         </div>
-        <p v-else>暂无结局评估记录。点击「评估最近样本结局」开始评估。</p>
+        <p v-else>暂无结局评估记录。点击评估最近样本结局开始评估。</p>
       </article>
 <article class="panel wide">
         <h2>Signal Performance & Calibration</h2>
-        <p class="review-only-banner">⚠ All calibration proposals are review-only. No scoring weights or trading rules are changed automatically.</p>
+        <p class="review-only-banner">鈿?All calibration proposals are review-only. No scoring weights or trading rules are changed automatically.</p>
         <div class="metrics">
-          <span>有结局样本 {{ signalPerformanceSummary?.total_samples_with_outcomes ?? 0 }}</span>
-          <span>类型组 {{ Object.keys(signalPerformanceSummary?.by_sample_type ?? {}).length }}</span>
-          <span>标签组 {{ Object.keys(signalPerformanceSummary?.by_label ?? {}).length }}</span>
-          <span>风险标签组 {{ Object.keys(signalPerformanceSummary?.by_risk_flag ?? {}).length }}</span>
+          <span>鏈夌粨灞€鏍锋湰 {{ signalPerformanceSummary?.total_samples_with_outcomes ?? 0 }}</span>
+          <span>绫诲瀷缁?{{ Object.keys(signalPerformanceSummary?.by_sample_type ?? {}).length }}</span>
+          <span>鏍囩缁?{{ Object.keys(signalPerformanceSummary?.by_label ?? {}).length }}</span>
+          <span>椋庨櫓鏍囩缁?{{ Object.keys(signalPerformanceSummary?.by_risk_flag ?? {}).length }}</span>
         </div>
         <div class="actions">
           <button data-testid="generate-proposals-button" @click="generateCalibrationProposals" :disabled="calibrationLoading">
@@ -2611,28 +4253,28 @@
           <div v-for="row in signalPerfRows" :key="row.key" class="score-item">
             <strong>{{ row.group }}: {{ row.key }}</strong>
             <span>
-              样本 {{ row.stats.sample_count }} /
-              强突破 {{ row.stats.strong_follow_through_count }} /
-              弱突破 {{ row.stats.mild_follow_through_count }} /
-              失败 {{ row.stats.failed_signal_count }}
+              鏍锋湰 {{ row.stats.sample_count }} /
+              寮虹獊鐮?{{ row.stats.strong_follow_through_count }} /
+              寮辩獊鐮?{{ row.stats.mild_follow_through_count }} /
+              澶辫触 {{ row.stats.failed_signal_count }}
             </span>
             <span>
-              待定率 {{ (row.stats.pending_rate * 100).toFixed(1) }}% /
+              寰呭畾鐜?{{ (row.stats.pending_rate * 100).toFixed(1) }}% /
               平均收益 {{ row.stats.avg_close_return != null ? row.stats.avg_close_return.toFixed(2) + '%' : '无' }} /
-              大回撤 {{ row.stats.large_drawdown_count }}
+              澶у洖鎾?{{ row.stats.large_drawdown_count }}
             </span>
-            <small v-if="row.stats.small_sample_warning" class="small-sample-warn">⚠ 小样本 (&lt;{{ smallSampleThreshold }})</small>
+            <small v-if="row.stats.small_sample_warning" class="small-sample-warn">鈿?灏忔牱鏈?(&lt;{{ smallSampleThreshold }})</small>
           </div>
         </div>
-        <p v-else>暂无信号绩效数据。请先运行「评估最近样本结局」。</p>
+        <p v-else>暂无信号绩效数据。请先运行评估最近样本结局。</p>
 
         <h3 v-if="calibrationProposals.length" style="margin-top: 16px;">Pending Calibration Proposals</h3>
         <div v-if="calibrationProposals.length" class="score-list">
           <div v-for="p in calibrationProposals" :key="p.id" :class="['score-item', proposalBorderClass(p)]">
-            <strong>{{ p.proposal_type }}: {{ p.target }} — {{ p.proposal?.action }}</strong>
+            <strong>{{ p.proposal_type }}: {{ p.target }} 鈥?{{ p.proposal?.action }}</strong>
             <span>{{ p.proposal?.reason }}</span>
             <small>{{ p.proposal?.recommendation }}</small>
-            <small>状态: {{ p.status }} / 创建: {{ p.created_at }}</small>
+            <small>鐘舵€? {{ p.status }} / 鍒涘缓: {{ p.created_at }}</small>
             <div class="actions" v-if="p.status === 'pending'">
               <button @click="approveCalibrationProposal(p.id)">Approve</button>
               <button class="disabled-live" @click="rejectCalibrationProposal(p.id)">Reject</button>
@@ -2643,12 +4285,12 @@
 <article class="panel">
         <h2>知识库</h2>
         <div class="knowledge">
-          <span>铁律 {{ summary?.principles ?? 0 }}</span>
-          <span>战法 {{ summary?.strategies ?? 0 }}</span>
-          <span>案例 {{ summary?.trade_cases ?? 0 }}</span>
-          <span>档案 {{ summary?.stock_profiles ?? 0 }}</span>
+          <span>閾佸緥 {{ summary?.principles ?? 0 }}</span>
+          <span>鎴樻硶 {{ summary?.strategies ?? 0 }}</span>
+          <span>妗堜緥 {{ summary?.trade_cases ?? 0 }}</span>
+          <span>妗ｆ {{ summary?.stock_profiles ?? 0 }}</span>
         </div>
-        <p>候选股分析会自动引用交易铁律、相关战法、相似案例和成本线档案。</p>
+        <p>候选股分析会自动引用交易纪律、相关战法、相似案例和成本线档案。</p>
         <div class="actions">
           <button data-testid="simulation-plan-button" @click="loadPlan" :disabled="!topCandidates.length || planLoading">
             {{ planLoading ? "生成中" : "生成模拟计划" }}
@@ -2656,32 +4298,35 @@
           <button data-testid="analyze-symbol-button" @click="runAnalysis" :disabled="!topCandidates.length || analysisLoading">
             {{ analysisLoading ? "分析中" : "生成分析解释" }}
           </button>
-          <button disabled>模拟卖出</button>
-          <button class="ghost" disabled>实盘买入</button>
+          <button disabled>妯℃嫙鍗栧嚭</button>
+          <button class="ghost" disabled>瀹炵洏涔板叆</button>
         </div>
         <div v-if="topScores.length" class="score-list">
           <div v-for="item in topScores.slice(0, 5)" :key="item.symbol" class="score-item">
             <strong>{{ item.symbol }} {{ item.name }} / {{ item.total_score.toFixed(1) }}</strong>
-            <span>{{ item.state }} / 发现 {{ item.components.discovery_score.toFixed(1) }} / 量能 {{ item.components.volume_score.toFixed(1) }} / 阶段 {{ item.components.phase_score.toFixed(1) }}</span>
-            <small>{{ item.reasons.slice(0, 3).join("；") }}</small>
+            <span>{{ item.state }} / 鍙戠幇 {{ item.components.discovery_score.toFixed(1) }} / 閲忚兘 {{ item.components.volume_score.toFixed(1) }} / 闃舵 {{ item.components.phase_score.toFixed(1) }}</span>
+            <small>{{ item.reasons.slice(0, 3).join(" / ") }}</small>
           </div>
         </div>
         <div v-if="plan" class="plan">
-          <strong>{{ plan.symbol }} {{ plan.name }}：{{ plan.action }}</strong>
+          <strong>{{ plan.symbol }} {{ plan.name }}: {{ plan.action }}</strong>
           <span>数量 {{ plan.quantity }} 股 / 参考价 {{ plan.reference_price }}</span>
           <span>止损 {{ plan.stop_loss ?? "待确认" }} / 目标 {{ plan.target_price ?? "待确认" }}</span>
-          <small>{{ plan.reasons.join("；") }}</small>
+          <small>{{ plan.reasons.join(" / ") }}</small>
         </div>
         <div v-if="analysis?.explanation" class="plan">
-          <strong>AI 决策分析：{{ analysis.snapshot.symbol }}</strong>
+          <strong>AI 决策分析: {{ analysis.snapshot.symbol }}</strong>
           <span>{{ analysis.explanation.signal_summary }}</span>
-          <span>匹配规则：{{ analysis.explanation.matched_rules.join("；") || "无" }}</span>
-          <span>风险拦截：{{ analysis.explanation.risk_blockers.join("；") || "无" }}</span>
-          <span>数据质量：{{ analysis.explanation.data_quality }}</span>
-          <span v-if="analysis.explanation.similar_cases?.length">
-            相似案例：{{ analysis.explanation.similar_cases.map((c: any) => c.name).join("；") }}
+          <span>匹配规则: {{ analysis.explanation.matched_rules.join(" / ") || "无" }}</span>
+          <span>风险拦截: {{ analysis.explanation.risk_blockers.join(" / ") || "无" }}</span>
+          <span v-if="analysis?.explanation?.risk_blocked?.length">
+            风险结构化阻断：{{ analysis.explanation.risk_blocked.map((item: RiskBlockCause) => `${item.rule_id}:${item.reason}`).join("；") }}
           </span>
-          <small v-for="(note, idx) in analysis.explanation.uncertainty_notes" :key="idx">⚠ {{ note }}</small>
+          <span>数据质量: {{ analysis.explanation.data_quality }}</span>
+          <span v-if="analysis.explanation.similar_cases?.length">
+            相似案例: {{ analysis.explanation.similar_cases.map((c: any) => c.name).join(" / ") }}
+          </span>
+          <small v-for="(note, idx) in analysis.explanation.uncertainty_notes" :key="idx">鈿?{{ note }}</small>
           <small class="review-only-banner">{{ analysis.explanation.simulation_disclaimer }}</small>
         </div>
       </article>
@@ -2691,6 +4336,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import SafetyRibbon from "./components/SafetyRibbon.vue";
 
 type KnowledgeSummary = {
   principles: number;
@@ -2784,6 +4430,18 @@ type SimulationPlan = {
   reasons: string[];
 };
 
+type RiskBlockCause = {
+  rule_id: string;
+  rule_name: string;
+  layer?: string;
+  trigger_level?: string;
+  reason: string;
+  threshold?: Record<string, any> | null;
+  evidence?: any;
+  evidence_snippet?: string | null;
+  source?: string;
+};
+
 type SimulationAccount = {
   cash: number;
   initial_cash: number;
@@ -2825,7 +4483,25 @@ type AutomationRun = {
       score?: number;
       diagnosis?: string;
     }>;
-    items: Array<{ symbol: string; status: string; action?: string }>;
+    items: Array<{
+      symbol: string;
+      status: string;
+      action?: string;
+      risk_blocked_count?: number;
+      risk_blocked?: RiskBlockCause[];
+      blocked_reason?: string;
+    }>;
+    risk_blocked_summary?: {
+      total?: number;
+      top_rules?: Array<[string, number]>;
+      by_layer?: Record<string, number>;
+      top_reasons?: string[];
+      samples?: Array<{
+        symbol?: string;
+        rule_id: string;
+        rule_name?: string;
+      }>;
+    };
   };
 };
 
@@ -6684,6 +8360,3725 @@ type Dataset2TrainingConvergenceReview = {
   live_trading_enabled: boolean;
 };
 
+type Dataset2StagingAutomatedCleanupApply = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  evidence: Record<string, any>;
+  checks?: Dataset2ManualEvidence["checks"];
+  summary: {
+    mutated_record_count: number;
+    applied_operation_count: number;
+    operation_counts?: Record<string, number>;
+    quality_flag_counts_before?: Record<string, number>;
+    quality_flag_counts_after?: Record<string, number>;
+    next_required_action: string;
+  };
+  request: Record<string, any>;
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2PostCleanupTrainingFreezeReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  evidence: {
+    latest_p59_cleanup_id?: number | null;
+    latest_p59_cleanup_status?: string | null;
+    staging_source_data_hash?: string | null;
+    record_count: number;
+    learning_sample_count: number;
+  };
+  counts: Record<string, Record<string, number>>;
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    missing_historical_count: number;
+    missing_required_count: number;
+    low_support_label_count: number;
+    next_required_action: string;
+  };
+  review: Record<string, any>;
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2LearningSamplePromotionPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  evidence: {
+    latest_p60_freeze_review_id?: number | null;
+    latest_p60_freeze_status?: string | null;
+    staging_source_data_hash?: string | null;
+    learning_sample_count_before: number;
+    projected_learning_sample_count_after_future_p62: number;
+    plan_hash: string;
+  };
+  projection: {
+    source_type: string;
+    candidate_count: number;
+    expected_insert_count_future_p62: number;
+    label_counts: Record<string, number>;
+    action_label_counts: Record<string, number>;
+    risk_level_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    preview: Record<string, any>[];
+    record_bodies_included: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    candidate_count: number;
+    duplicate_sample_id_count: number;
+    existing_source_id_count: number;
+    next_required_action: string;
+  };
+  preflight: Record<string, any>;
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2LearningSamplePromotionApply = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight_event_id?: number | null;
+  promotion: Record<string, any>;
+  evidence: {
+    learning_sample_count_before: number;
+    learning_sample_count_after: number;
+    projected_candidate_count?: number;
+    inserted_count?: number;
+    plan_hash: string;
+    source_type?: string;
+  };
+  projection?: {
+    inserted_count: number;
+    label_counts: Record<string, number>;
+    risk_level_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    sample_ids_preview: string[];
+    record_bodies_included: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    inserted_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2PostPromotionTrainingFreezeReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: Record<string, any>;
+  evidence: {
+    latest_p62_apply_id?: number | null;
+    latest_p62_apply_status?: string | null;
+    learning_sample_count: number;
+    p62_inserted_count?: number | null;
+    source_type: string;
+  };
+  counts: {
+    labels: Record<string, number>;
+    risk_levels: Record<string, number>;
+    splits: Record<string, number>;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    low_support_label_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2TrainingRunPlan = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  planning: Record<string, any>;
+  evidence: {
+    latest_p63_freeze_review_id?: number | null;
+    latest_p63_freeze_status?: string | null;
+    learning_sample_count: number;
+    source_type: string;
+  };
+  training_plan: {
+    plan_id: string;
+    model_family: string;
+    target: string;
+    source_type: string;
+    feature_keys: string[];
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    class_weights: Record<string, number>;
+    validation_policy: string;
+    minimum_acceptance: Record<string, boolean>;
+    can_execute_training_now: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    feature_count: number;
+    label_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2TrainingExecutionApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: Record<string, any>;
+  evidence: {
+    training_plan_event_id?: number | null;
+    training_plan_id?: string | null;
+    training_plan_hash?: string | null;
+    learning_sample_count: number;
+    planned_learning_sample_count?: number | null;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    source_type: string;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2TrainingDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  run: Record<string, any>;
+  evidence: {
+    approval_event_id?: number | null;
+    training_plan_event_id?: number | null;
+    training_plan_id?: string | null;
+    learning_sample_count: number;
+    sample_set_hash: string;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    source_type: string;
+  };
+  dry_run: {
+    baseline_strategy: string;
+    majority_label?: string | null;
+    train_row_count: number;
+    out_of_sample_row_count: number;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    train_label_counts: Record<string, number>;
+    out_of_sample_label_counts: Record<string, number>;
+    planned_feature_count: number;
+    feature_missing_counts: Record<string, number>;
+    out_of_sample_accuracy?: number | null;
+    model_artifact_written: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2TrainingDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: Record<string, any>;
+  evidence: {
+    dry_run_event_id?: number | null;
+    approval_event_id?: number | null;
+    training_plan_event_id?: number | null;
+    training_plan_id?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    source_type: string;
+  };
+  metrics_review: {
+    baseline_strategy?: string | null;
+    majority_label?: string | null;
+    train_row_count: number;
+    out_of_sample_row_count: number;
+    out_of_sample_accuracy?: number | null;
+    planned_feature_count?: number | null;
+    feature_missing_counts: Record<string, number>;
+    model_artifact_written: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionPlan = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  planning: Record<string, any>;
+  evidence: {
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    approval_event_id?: number | null;
+    training_plan_event_id?: number | null;
+    training_plan_id?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    source_type: string;
+  };
+  execution_plan: {
+    plan_id: string;
+    plan_hash: string;
+    model_family: string;
+    validation_policy?: string | null;
+    baseline_accuracy?: number | null;
+    train_row_count?: number | null;
+    out_of_sample_row_count?: number | null;
+    required_preflight_checks: string[];
+    expected_confirmation_token: string;
+    writes_model_artifact_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: Record<string, any>;
+  evidence: {
+    execution_plan_event_id?: number | null;
+    execution_plan_id?: string | null;
+    execution_plan_hash?: string | null;
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    training_plan_id?: string | null;
+    planned_sample_set_hash?: string | null;
+    current_sample_set_hash?: string | null;
+    planned_learning_sample_count?: number | null;
+    current_learning_sample_count: number;
+    source_type: string;
+  };
+  execution_preflight: {
+    required_checks: string[];
+    baseline_accuracy?: number | null;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    can_run_training_dry_execution_now: boolean;
+    writes_model_artifact_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: Record<string, any>;
+  evidence: {
+    preflight_event_id?: number | null;
+    execution_plan_event_id?: number | null;
+    execution_plan_id?: string | null;
+    execution_plan_hash?: string | null;
+    training_plan_id?: string | null;
+    current_sample_set_hash?: string | null;
+    preflight_sample_set_hash?: string | null;
+    learning_sample_count: number;
+    preflight_learning_sample_count?: number | null;
+    source_type: string;
+  };
+  simulation_result: {
+    manifest: Record<string, any>;
+    manifest_hash: string;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    risk_level_counts: Record<string, number>;
+    baseline_accuracy?: number | null;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    would_write_model_artifact: boolean;
+    would_write_file: boolean;
+    would_execute_training: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: Record<string, any>;
+  evidence: {
+    dry_run_event_id?: number | null;
+    preflight_event_id?: number | null;
+    execution_plan_event_id?: number | null;
+    execution_plan_id?: string | null;
+    execution_plan_hash?: string | null;
+    training_plan_id?: string | null;
+    manifest_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count: number;
+    source_type: string;
+  };
+  manifest_review: {
+    manifest_kind?: string | null;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    baseline_accuracy?: number | null;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    risk_level_counts: Record<string, number>;
+    would_write_model_artifact: boolean;
+    would_write_file: boolean;
+    would_execute_training: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionReleasePlan = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  planning: Record<string, any>;
+  evidence: {
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    preflight_event_id?: number | null;
+    execution_plan_event_id?: number | null;
+    execution_plan_id?: string | null;
+    execution_plan_hash?: string | null;
+    training_plan_id?: string | null;
+    manifest_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count: number;
+    source_type: string;
+  };
+  release_plan: {
+    plan_id: string;
+    plan_hash: string;
+    plan_hash_inputs: Record<string, any>;
+    source_stage: string;
+    release_scope: string;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    baseline_accuracy?: number | null;
+    learning_sample_count?: number | null;
+    required_manual_approval_steps: string[];
+    required_preflight_checks: string[];
+    expected_confirmation_token: string;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionReleasePreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    release_plan_event_id?: number | null;
+    release_plan_id?: string | null;
+    release_plan_hash?: string | null;
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    preflight_event_id?: number | null;
+    execution_plan_event_id?: number | null;
+    execution_plan_id?: string | null;
+    training_plan_id?: string | null;
+    manifest_hash?: string | null;
+    planned_sample_set_hash?: string | null;
+    current_sample_set_hash?: string | null;
+    planned_learning_sample_count?: number | null;
+    current_learning_sample_count: number;
+    source_type: string;
+  };
+  release_preflight: {
+    required_checks: string[];
+    required_manual_approval_steps: string[];
+    baseline_accuracy?: number | null;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    can_prepare_controlled_dataset2_training_execution_release_dry_run_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionReleaseDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: Record<string, any>;
+  evidence: {
+    release_preflight_event_id?: number | null;
+    release_plan_event_id?: number | null;
+    release_plan_id?: string | null;
+    release_plan_hash?: string | null;
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    manifest_hash?: string | null;
+    current_sample_set_hash?: string | null;
+    preflight_sample_set_hash?: string | null;
+    learning_sample_count: number;
+    preflight_learning_sample_count?: number | null;
+    source_type: string;
+  };
+  simulation_result: {
+    release_simulation_manifest: Record<string, any>;
+    release_simulation_manifest_hash: string;
+    artifact_manifest: Record<string, any>;
+    artifact_manifest_hash: string;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    risk_level_counts: Record<string, number>;
+    feature_key_count: number;
+    baseline_accuracy?: number | null;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    would_write_model_artifact: boolean;
+    would_write_file: boolean;
+    would_execute_training: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionReleaseDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    release_dry_run_event_id?: number | null;
+    release_preflight_event_id?: number | null;
+    release_plan_event_id?: number | null;
+    release_plan_id?: string | null;
+    release_plan_hash?: string | null;
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    artifact_manifest_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count: number;
+    source_type: string;
+  };
+  manifest_review: {
+    manifest_kind?: string | null;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    baseline_accuracy?: number | null;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    risk_level_counts: Record<string, number>;
+    feature_key_count?: number | null;
+    artifact_write_allowed?: boolean | null;
+    artifact_path?: string | null;
+    would_write_model_artifact: boolean;
+    would_write_file: boolean;
+    would_execute_training: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionFinalApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    approved_for_controlled_dataset2_training_execution_final_preflight: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    release_dry_run_review_id?: number | null;
+    release_dry_run_event_id?: number | null;
+    release_preflight_event_id?: number | null;
+    release_plan_event_id?: number | null;
+    release_plan_id?: string | null;
+    release_plan_hash?: string | null;
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    artifact_manifest_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    source_type: string;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    baseline_accuracy?: number | null;
+    feature_key_count?: number | null;
+    artifact_write_allowed: boolean;
+    artifact_path?: string | null;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    record_bodies_included: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionFinalPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    final_approval_id?: number | null;
+    release_dry_run_review_id?: number | null;
+    release_dry_run_event_id?: number | null;
+    release_preflight_event_id?: number | null;
+    release_plan_event_id?: number | null;
+    release_plan_id?: string | null;
+    release_plan_hash?: string | null;
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    artifact_manifest_hash?: string | null;
+    approved_sample_set_hash?: string | null;
+    current_sample_set_hash?: string | null;
+    approved_learning_sample_count?: number | null;
+    current_learning_sample_count: number;
+    source_type: string;
+  };
+  final_preflight: {
+    model_family?: string | null;
+    validation_policy?: string | null;
+    baseline_accuracy?: number | null;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    risk_level_counts: Record<string, number>;
+    feature_key_count: number;
+    release_simulation_manifest_hash?: string | null;
+    artifact_manifest_hash?: string | null;
+    sample_set_hash?: string | null;
+    expected_confirmation_token: string;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    artifact_path?: string | null;
+    artifact_write_allowed: boolean;
+    record_bodies_included: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionFinalDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    model_artifact_written: boolean;
+    writes_file: boolean;
+    executes_training_now: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    final_preflight_event_id?: number | null;
+    final_approval_id?: number | null;
+    release_dry_run_review_id?: number | null;
+    release_dry_run_event_id?: number | null;
+    release_preflight_event_id?: number | null;
+    release_plan_event_id?: number | null;
+    release_plan_id?: string | null;
+    release_plan_hash?: string | null;
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    approved_artifact_manifest_hash?: string | null;
+    simulated_artifact_manifest_hash?: string | null;
+    final_dry_run_manifest_hash?: string | null;
+    preflight_sample_set_hash?: string | null;
+    current_sample_set_hash?: string | null;
+    preflight_learning_sample_count?: number | null;
+    current_learning_sample_count: number;
+    source_type: string;
+  };
+  simulation_result: {
+    final_dry_run_manifest: Record<string, any>;
+    final_dry_run_manifest_hash: string;
+    artifact_manifest: Record<string, any>;
+    artifact_manifest_hash: string;
+    approved_artifact_manifest_hash?: string | null;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    risk_level_counts: Record<string, number>;
+    feature_key_count: number;
+    baseline_accuracy?: number | null;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    would_write_model_artifact: boolean;
+    would_write_file: boolean;
+    would_execute_training: boolean;
+    training_started_now: boolean;
+    record_bodies_included: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionFinalDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    final_dry_run_event_id?: number | null;
+    final_preflight_event_id?: number | null;
+    final_approval_id?: number | null;
+    release_dry_run_review_id?: number | null;
+    release_dry_run_event_id?: number | null;
+    release_preflight_event_id?: number | null;
+    release_plan_event_id?: number | null;
+    release_plan_id?: string | null;
+    release_plan_hash?: string | null;
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    approved_artifact_manifest_hash?: string | null;
+    simulated_artifact_manifest_hash?: string | null;
+    final_dry_run_manifest_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count: number;
+    source_type: string;
+  };
+  manifest_review: {
+    manifest_kind?: string | null;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    baseline_accuracy?: number | null;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    risk_level_counts: Record<string, number>;
+    feature_key_count?: number | null;
+    artifact_write_allowed: boolean;
+    artifact_path?: string | null;
+    would_write_model_artifact: boolean;
+    would_write_file: boolean;
+    would_execute_training: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionRunApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    approved_for_controlled_dataset2_training_execution_run_preflight: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    final_dry_run_review_id?: number | null;
+    final_dry_run_event_id?: number | null;
+    final_preflight_event_id?: number | null;
+    final_approval_id?: number | null;
+    release_dry_run_review_id?: number | null;
+    release_dry_run_event_id?: number | null;
+    release_preflight_event_id?: number | null;
+    release_plan_event_id?: number | null;
+    release_plan_id?: string | null;
+    release_plan_hash?: string | null;
+    dry_run_review_id?: number | null;
+    dry_run_event_id?: number | null;
+    manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    approved_artifact_manifest_hash?: string | null;
+    simulated_artifact_manifest_hash?: string | null;
+    final_dry_run_manifest_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    source_type: string;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    model_family?: string | null;
+    validation_policy?: string | null;
+    baseline_accuracy?: number | null;
+    feature_key_count?: number | null;
+    artifact_write_allowed: boolean;
+    artifact_path?: string | null;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    record_bodies_included: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionRunPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    run_approval_id?: number | null;
+    final_dry_run_review_id?: number | null;
+    final_dry_run_event_id?: number | null;
+    final_preflight_event_id?: number | null;
+    final_approval_id?: number | null;
+    release_dry_run_review_id?: number | null;
+    release_dry_run_event_id?: number | null;
+    release_plan_id?: string | null;
+    release_plan_hash?: string | null;
+    final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    approved_sample_set_hash?: string | null;
+    current_sample_set_hash?: string | null;
+    approved_learning_sample_count?: number | null;
+    current_learning_sample_count?: number | null;
+    source_type: string;
+  };
+  run_preflight: {
+    model_family?: string | null;
+    validation_policy?: string | null;
+    baseline_accuracy?: number | null;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    risk_level_counts: Record<string, number>;
+    feature_key_count?: number | null;
+    final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    sample_set_hash?: string | null;
+    expected_confirmation_token: string;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    artifact_path?: string | null;
+    artifact_write_allowed: boolean;
+    record_bodies_included: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  run: {
+    run_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    run_preflight_event_id?: number | null;
+    run_approval_id?: number | null;
+    final_dry_run_review_id?: number | null;
+    final_dry_run_event_id?: number | null;
+    final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    preflight_sample_set_hash?: string | null;
+    current_sample_set_hash?: string | null;
+    preflight_learning_sample_count?: number | null;
+    current_learning_sample_count?: number | null;
+    source_type: string;
+  };
+  training_result: {
+    model_family: string;
+    algorithm: string;
+    target: string;
+    model_summary_hash?: string | null;
+    majority_label?: string | null;
+    train_row_count: number;
+    out_of_sample_row_count: number;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    train_label_counts: Record<string, number>;
+    out_of_sample_label_counts: Record<string, number>;
+    trained_feature_count: number;
+    feature_rule_count: number;
+    train_accuracy?: number | null;
+    out_of_sample_accuracy?: number | null;
+    model_artifact_written: boolean;
+    writes_file: boolean;
+    artifact_path?: string | null;
+    record_bodies_included: boolean;
+    in_memory_model_trained: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingExecutionRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    run_event_id?: number | null;
+    run_preflight_event_id?: number | null;
+    run_approval_id?: number | null;
+    final_dry_run_review_id?: number | null;
+    final_dry_run_event_id?: number | null;
+    final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    source_type: string;
+  };
+  run_review: {
+    model_family?: string | null;
+    algorithm?: string | null;
+    target?: string | null;
+    train_row_count?: number | null;
+    out_of_sample_row_count?: number | null;
+    train_accuracy?: number | null;
+    out_of_sample_accuracy?: number | null;
+    trained_feature_count?: number | null;
+    feature_rule_count?: number | null;
+    label_counts: Record<string, number>;
+    split_counts: Record<string, number>;
+    model_summary_hash?: string | null;
+    model_artifact_written: boolean;
+    writes_file: boolean;
+    artifact_path?: string | null;
+    record_bodies_included: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactPlan = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  planning: {
+    planned_by: string;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    run_preflight_event_id?: number | null;
+    run_approval_id?: number | null;
+    final_dry_run_review_id?: number | null;
+    final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_manifest_hash?: string | null;
+    release_simulation_manifest_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    source_type: string;
+  };
+  artifact_plan: {
+    artifact_plan_id: string;
+    artifact_plan_hash: string;
+    artifact_manifest: {
+      artifact_plan_id: string;
+      artifact_kind: string;
+      model_family: string;
+      algorithm: string;
+      target: string;
+      sample_set_hash?: string | null;
+      model_summary_hash?: string | null;
+      learning_sample_count?: number | null;
+      artifact_path?: string | null;
+      artifact_write_allowed_now: boolean;
+      requires_manual_approval: boolean;
+      record_bodies_included: boolean;
+    };
+    required_preflight_checks: string[];
+    expected_next_decision: string;
+    expected_confirmation_token: string;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactPlanApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    approved_for_controlled_dataset2_training_artifact_plan_preflight: boolean;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    source_type: string;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    artifact_kind?: string | null;
+    model_family?: string | null;
+    algorithm?: string | null;
+    target?: string | null;
+    sample_set_hash?: string | null;
+    model_summary_hash?: string | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    requires_manual_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    source_type: string;
+  };
+  artifact_preflight: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    artifact_kind?: string | null;
+    model_family?: string | null;
+    algorithm?: string | null;
+    target?: string | null;
+    sample_set_hash?: string | null;
+    model_summary_hash?: string | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    source_type: string;
+  };
+  artifact_dry_run: {
+    allowed_next_stage: string;
+    expected_review_decision: string;
+    artifact_dry_run_manifest_hash: string;
+    simulated_artifact_payload_hash: string;
+    artifact_manifest: {
+      artifact_plan_id?: string | null;
+      artifact_plan_hash?: string | null;
+      artifact_kind?: string | null;
+      model_family?: string | null;
+      algorithm?: string | null;
+      target?: string | null;
+      sample_set_hash?: string | null;
+      model_summary_hash?: string | null;
+      learning_sample_count?: number | null;
+      artifact_path?: string | null;
+      artifact_write_allowed_now: boolean;
+      would_write_model_artifact: boolean;
+      would_write_file: boolean;
+      executes_training_now: boolean;
+      training_started_now: boolean;
+      record_bodies_included: boolean;
+      dry_run_only: boolean;
+      source_type: string;
+    };
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    accepted_for_controlled_dataset2_training_artifact_release_approval: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    source_type: string;
+  };
+  artifact_review: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactReleaseApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    approved_for_controlled_dataset2_training_artifact_release_preflight: boolean;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_dry_run_review_id?: number | null;
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    source_type: string;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactReleasePreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_release_approval_id?: number | null;
+    artifact_dry_run_review_id?: number | null;
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    source_type: string;
+  };
+  artifact_release_preflight: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactReleaseDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_release_preflight_event_id?: number | null;
+    artifact_release_approval_id?: number | null;
+    artifact_dry_run_review_id?: number | null;
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    source_type: string;
+  };
+  artifact_release_dry_run: {
+    allowed_next_stage: string;
+    expected_review_decision: string;
+    release_manifest_hash: string;
+    release_payload_hash: string;
+    release_manifest: Record<string, any>;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactReleaseDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    accepted_for_controlled_dataset2_training_artifact_final_approval: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_release_dry_run_event_id?: number | null;
+    artifact_release_preflight_event_id?: number | null;
+    artifact_release_approval_id?: number | null;
+    artifact_dry_run_review_id?: number | null;
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    source_type: string;
+  };
+  release_review: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactFinalApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    approved_for_controlled_dataset2_training_artifact_final_preflight: boolean;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_release_dry_run_review_id?: number | null;
+    artifact_release_dry_run_event_id?: number | null;
+    artifact_release_preflight_event_id?: number | null;
+    artifact_release_approval_id?: number | null;
+    artifact_dry_run_review_id?: number | null;
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    source_type: string;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactFinalPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_final_approval_id?: number | null;
+    artifact_release_dry_run_review_id?: number | null;
+    artifact_release_dry_run_event_id?: number | null;
+    artifact_release_preflight_event_id?: number | null;
+    artifact_release_approval_id?: number | null;
+    artifact_dry_run_review_id?: number | null;
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    source_type: string;
+  };
+  artifact_final_preflight: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactFinalDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_final_preflight_event_id?: number | null;
+    artifact_final_approval_id?: number | null;
+    artifact_release_dry_run_review_id?: number | null;
+    artifact_release_dry_run_event_id?: number | null;
+    artifact_release_preflight_event_id?: number | null;
+    artifact_release_approval_id?: number | null;
+    artifact_dry_run_review_id?: number | null;
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    source_type: string;
+  };
+  artifact_final_dry_run: {
+    allowed_next_stage: string;
+    expected_review_decision: string;
+    final_artifact_manifest_hash: string;
+    simulated_final_artifact_payload_hash: string;
+    final_artifact_manifest: Record<string, any>;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactFinalDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    accepted_for_controlled_dataset2_training_artifact_write_preflight: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_final_dry_run_event_id?: number | null;
+    artifact_final_preflight_event_id?: number | null;
+    artifact_final_approval_id?: number | null;
+    artifact_release_dry_run_review_id?: number | null;
+    artifact_release_dry_run_event_id?: number | null;
+    artifact_release_preflight_event_id?: number | null;
+    artifact_release_approval_id?: number | null;
+    artifact_dry_run_review_id?: number | null;
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    source_type: string;
+  };
+  final_dry_run_review: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_preflight: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWritePreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_final_dry_run_review_id?: number | null;
+    artifact_final_dry_run_event_id?: number | null;
+    artifact_final_preflight_event_id?: number | null;
+    artifact_final_approval_id?: number | null;
+    artifact_release_dry_run_review_id?: number | null;
+    artifact_release_dry_run_event_id?: number | null;
+    artifact_release_preflight_event_id?: number | null;
+    artifact_release_approval_id?: number | null;
+    artifact_dry_run_review_id?: number | null;
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    source_type: string;
+  };
+  artifact_write_preflight: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    planned_artifact_manifest_hash?: string | null;
+    planned_artifact_manifest: Record<string, any>;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only_next: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: {
+    artifact_write_preflight_event_id?: number | null;
+    artifact_final_dry_run_review_id?: number | null;
+    artifact_final_dry_run_event_id?: number | null;
+    artifact_final_preflight_event_id?: number | null;
+    artifact_final_approval_id?: number | null;
+    artifact_release_dry_run_review_id?: number | null;
+    artifact_release_dry_run_event_id?: number | null;
+    artifact_release_preflight_event_id?: number | null;
+    artifact_release_approval_id?: number | null;
+    artifact_dry_run_review_id?: number | null;
+    artifact_dry_run_event_id?: number | null;
+    artifact_preflight_event_id?: number | null;
+    artifact_plan_approval_id?: number | null;
+    artifact_plan_event_id?: number | null;
+    run_review_id?: number | null;
+    run_event_id?: number | null;
+    artifact_plan_id?: string | null;
+    artifact_plan_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    model_summary_hash?: string | null;
+    artifact_dry_run_manifest_hash?: string | null;
+    simulated_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    source_type: string;
+  };
+  artifact_write_dry_run: {
+    allowed_next_stage: string;
+    expected_review_decision: string;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    artifact_write_dry_run_manifest: Record<string, any>;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    accepted_for_controlled_dataset2_training_artifact_write_approval: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteDryRun["evidence"] & {
+    artifact_write_dry_run_event_id?: number | null;
+  };
+  artifact_write_dry_run_review: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    approved_for_controlled_dataset2_training_artifact_write_execution_preflight: boolean;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteDryRunReview["evidence"] & {
+    artifact_write_dry_run_review_id?: number | null;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_preflight: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteApproval["evidence"] & {
+    artifact_write_approval_id?: number | null;
+  };
+  artifact_write_execution_preflight: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    preflight_only: boolean;
+    requires_manual_execution_dry_run: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionPreflight["evidence"] & {
+    artifact_write_execution_preflight_event_id?: number | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+  };
+  artifact_write_execution_dry_run: {
+    allowed_next_stage: string;
+    expected_review_decision: string;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest?: Record<string, any>;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    accepted_for_controlled_dataset2_training_artifact_write_execution_final_approval: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionDryRun["evidence"] & {
+    artifact_write_execution_dry_run_event_id?: number | null;
+  };
+  artifact_write_execution_dry_run_review: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    approved_for_controlled_dataset2_training_artifact_write_execution_final_preflight: boolean;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionDryRunReview["evidence"] & {
+    artifact_write_execution_dry_run_review_id?: number | null;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_preflight: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalApproval["evidence"] & {
+    artifact_write_execution_final_approval_id?: number | null;
+  };
+  artifact_write_execution_final_preflight: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    preflight_only: boolean;
+    requires_manual_final_dry_run: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight["evidence"] & {
+    artifact_write_execution_final_preflight_event_id?: number | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+  };
+  artifact_write_execution_final_dry_run: {
+    allowed_next_stage: string;
+    expected_review_decision: string;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest?: Record<string, any>;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_approval: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun["evidence"] & {
+    artifact_write_execution_final_dry_run_event_id?: number | null;
+  };
+  artifact_write_execution_final_dry_run_review: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    approved_for_controlled_dataset2_training_artifact_write_execution_final_write_preflight: boolean;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview["evidence"] & {
+    artifact_write_execution_final_dry_run_review_id?: number | null;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_preflight: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval["evidence"] & {
+    artifact_write_execution_final_write_approval_id?: number | null;
+  };
+  artifact_write_execution_final_write_preflight: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    preflight_only: boolean;
+    requires_manual_final_write_dry_run: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight["evidence"] & {
+    artifact_write_execution_final_write_preflight_event_id?: number | null;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+  };
+  artifact_write_execution_final_write_dry_run: {
+    allowed_next_stage: string;
+    expected_review_decision: string;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_write_dry_run_manifest: Record<string, any>;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun["evidence"] & {
+    artifact_write_execution_final_write_dry_run_event_id?: number | null;
+  };
+  artifact_write_execution_final_write_dry_run_review: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight: boolean;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview["evidence"] & {
+    artifact_write_execution_final_write_dry_run_review_id?: number | null;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_preflight: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval["evidence"] & {
+    artifact_write_execution_final_write_execution_approval_id?: number | null;
+  };
+  artifact_write_execution_final_write_execution_preflight: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    preflight_only: boolean;
+    requires_manual_final_write_execution_dry_run: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    note?: string | null;
+    confirmation_token_matched: boolean;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight["evidence"] & {
+    artifact_write_execution_final_write_execution_preflight_event_id?: number | null;
+    artifact_write_execution_final_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_payload_hash?: string | null;
+  };
+  artifact_write_execution_final_write_execution_dry_run: {
+    allowed_next_stage: string;
+    expected_review_decision: string;
+    artifact_write_execution_final_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_payload_hash?: string | null;
+    artifact_write_execution_final_write_execution_dry_run_manifest: Record<string, any>;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun["evidence"] & {
+    artifact_write_execution_final_write_execution_dry_run_event_id?: number | null;
+  };
+  artifact_write_execution_final_write_execution_dry_run_review: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_payload_hash?: string | null;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_final_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight: boolean;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview["evidence"] & {
+    artifact_write_execution_final_write_execution_dry_run_review_id?: number | null;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_payload_hash?: string | null;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_final_preflight: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval["evidence"] & {
+    artifact_write_execution_final_write_execution_final_approval_id?: number | null;
+  };
+  artifact_write_execution_final_write_execution_final_preflight: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_payload_hash?: string | null;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    preflight_only: boolean;
+    requires_manual_final_write_execution_final_dry_run: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight["evidence"] & {
+    artifact_write_execution_final_write_execution_final_preflight_event_id?: number | null;
+    artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_final_payload_hash?: string | null;
+  };
+  artifact_write_execution_final_write_execution_final_dry_run: {
+    allowed_next_stage: string;
+    expected_review_decision: string;
+    artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_final_write_execution_final_dry_run_manifest?: Record<string, any>;
+    artifact_write_execution_final_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_payload_hash?: string | null;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun["evidence"] & {
+    artifact_write_execution_final_write_execution_final_dry_run_event_id?: number | null;
+  };
+  artifact_write_execution_final_write_execution_final_dry_run_review: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_final_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_payload_hash?: string | null;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_final_final_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  approval: {
+    approved_by: string;
+    approval_decision: string;
+    approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight: boolean;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview["evidence"] & {
+    artifact_write_execution_final_write_execution_final_dry_run_review_id?: number | null;
+  };
+  approval_scope: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_final_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_payload_hash?: string | null;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_final_final_preflight: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  preflight: {
+    requested_by: string;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval["evidence"] & {
+    artifact_write_execution_final_write_execution_final_final_approval_id?: number | null;
+  };
+  artifact_write_execution_final_write_execution_final_final_preflight: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_final_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_payload_hash?: string | null;
+    artifact_write_execution_final_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_payload_hash?: string | null;
+    artifact_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_payload_hash?: string | null;
+    artifact_write_execution_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_payload_hash?: string | null;
+    artifact_write_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_payload_hash?: string | null;
+    planned_artifact_manifest_hash?: string | null;
+    final_artifact_manifest_hash?: string | null;
+    simulated_final_artifact_payload_hash?: string | null;
+    release_manifest_hash?: string | null;
+    release_payload_hash?: string | null;
+    artifact_plan_hash?: string | null;
+    model_summary_hash?: string | null;
+    sample_set_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    preflight_only: boolean;
+    requires_manual_final_write_execution_final_final_dry_run: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  dry_run: {
+    simulated_by: string;
+    confirmation_token_matched: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight["evidence"] & {
+    artifact_write_execution_final_write_execution_final_final_preflight_event_id?: number | null;
+    artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_final_final_payload_hash?: string | null;
+  };
+  artifact_write_execution_final_write_execution_final_final_dry_run: {
+    allowed_next_stage: string;
+    expected_review_decision: string;
+    artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_final_final_payload_hash?: string | null;
+    artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_final_payload_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    dry_run_only: boolean;
+    requires_manual_final_final_dry_run_review: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview = {
+  id?: number;
+  event_id?: number;
+  stage: string;
+  status: string;
+  package_id?: string | null;
+  review: {
+    reviewed_by: string;
+    review_decision: string;
+    accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval: boolean;
+    note?: string | null;
+    record_bodies_included: boolean;
+    review_only: boolean;
+    simulation_only: boolean;
+  };
+  evidence: Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun["evidence"] & {
+    artifact_write_execution_final_write_execution_final_final_dry_run_event_id?: number | null;
+  };
+  artifact_write_execution_final_write_execution_final_final_dry_run_review: {
+    allowed_next_stage: string;
+    expected_confirmation_token: string;
+    artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_final_final_payload_hash?: string | null;
+    artifact_write_execution_final_write_execution_final_dry_run_manifest_hash?: string | null;
+    simulated_artifact_write_execution_final_write_execution_final_payload_hash?: string | null;
+    learning_sample_count?: number | null;
+    artifact_write_allowed_now: boolean;
+    writes_model_artifact_now: boolean;
+    writes_file_now: boolean;
+    persists_model_body_now: boolean;
+    executes_training_now: boolean;
+    training_started_now: boolean;
+    model_artifact_written: boolean;
+    requires_manual_final_final_final_approval: boolean;
+  };
+  checks: Dataset2ManualEvidence["checks"];
+  summary: {
+    passed_check_count: number;
+    warning_check_count: number;
+    blocked_check_count: number;
+    next_required_action: string;
+  };
+  decision: Record<string, any>;
+  safety_summary: Record<string, boolean>;
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
 type MonitoringEvent = {
   id?: number;
   symbol: string;
@@ -6694,6 +12089,22 @@ type MonitoringEvent = {
   action?: string;
   allowed: boolean;
   summary: string;
+};
+
+type MonitoringQualityGate = {
+  symbol?: string;
+  quality_grade?: string;
+  quality_source?: string;
+  source?: string;
+  fallback_used?: boolean;
+  fallback_chain?: string[];
+  quote_time?: string;
+  quote_age_ms?: number | null;
+  staleness_ms?: number | null;
+  gap_status?: string;
+  missing_fields?: string[];
+  risk_blocked?: Array<Record<string, unknown>>;
+  suppress_actions?: boolean;
 };
 
 type MonitoringAlert = {
@@ -6712,6 +12123,10 @@ type MonitoringRun = {
   signals: Record<string, number>;
   events: MonitoringEvent[];
   alerts?: MonitoringAlert[];
+  quality_gates?: MonitoringQualityGate[];
+  quality_events_count?: number;
+  suppressed_by_quality_symbols?: string[];
+  quality_next_action?: string;
 };
 
 type MonitoringReview = {
@@ -6722,6 +12137,11 @@ type MonitoringReview = {
     alert_count: number;
     risk_blocked_count: number;
     diagnosis: string;
+    risk_blocked_reasons?: string[];
+    quality_gates?: MonitoringQualityGate[];
+    quality_events_count?: number;
+    suppressed_by_quality_symbols?: string[];
+    quality_next_action?: string;
     next_actions: string[];
   };
 };
@@ -6766,6 +12186,15 @@ type PhaseMatch = {
   };
 };
 
+type AutomationCycleStep = {
+  step_id: string;
+  name: string;
+  status: string;
+  duration_ms?: number;
+  reason?: string;
+  details?: Record<string, unknown>;
+};
+
 type AutomationCycle = {
   status: string;
   live_trading_enabled: boolean;
@@ -6773,6 +12202,24 @@ type AutomationCycle = {
   learning_report?: LearningReport | null;
   monitoring?: MonitoringRun;
   monitoring_review?: MonitoringReview;
+  quality_gates?: MonitoringQualityGate[];
+  quality_events_count?: number;
+  suppressed_by_quality_symbols?: string[];
+  quality_next_action?: string;
+  effective_cycle_params?: {
+    limit: number;
+    monitor_limit: number;
+    review_symbol: string;
+  };
+  effective_params?: {
+    limit: number;
+    monitor_limit: number;
+    review_symbol: string;
+  };
+  run_steps?: AutomationCycleStep[];
+  failed_steps?: AutomationCycleStep[];
+  next_action?: string;
+  duration_ms?: number;
 };
 
 type PotentialSearchItem = {
@@ -10200,6 +15647,225 @@ type AIModelAuditLog = {
   created_at?: string;
 };
 
+type SimCockpitAction = {
+  id: number;
+  verification_id?: number | null;
+  action_type: string;
+  status: string;
+  symbol?: string | null;
+  price?: number | null;
+  quantity?: number | null;
+  order_id?: string | null;
+  signal_source?: string | null;
+  blocked_reasons?: string[];
+  execution?: Record<string, any>;
+  created_at?: string;
+};
+
+type SimCockpitReadback = {
+  id: number;
+  action_id?: number | null;
+  readback_type: string;
+  status: string;
+  symbol?: string | null;
+  price?: number | null;
+  quantity?: number | null;
+  order_id?: string | null;
+  payload?: Record<string, any>;
+  created_at?: string;
+};
+
+type SimCockpitWindowDetection = {
+  status: string;
+  provider: string;
+  best_window?: Record<string, any> | null;
+  windows?: Record<string, any>[];
+  blocked_reasons?: string[];
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+  verification?: Record<string, any>;
+};
+
+type SimCockpitStatus = {
+  status: string;
+  stage: string;
+  simulation_actions_allowed: boolean;
+  full_auto_simulation_enabled: boolean;
+  real_trading_blocked: boolean;
+  live_trading_enabled: boolean;
+  default_execution_mode?: string;
+  allowed_execution_modes?: string[];
+  desktop_adapter?: Record<string, any>;
+  latest_verification?: Record<string, any> | null;
+  latest_actions?: SimCockpitAction[];
+  latest_readbacks?: SimCockpitReadback[];
+  safety?: Record<string, any>;
+};
+
+type SimCockpitCycleResult = {
+  run_id: number;
+  status: string;
+  summary: {
+    status: string;
+    verification_id?: number;
+    candidate_plan_count?: number;
+    attempted_count?: number;
+    executed_count?: number;
+    blocked_count?: number;
+    reason?: string;
+    simulation_only: boolean;
+    live_trading_enabled: boolean;
+  };
+};
+
+type Dataset2StageSummary = {
+  status: string;
+  stage: string;
+  staging_record_count: number;
+  sim_cockpit_action_count: number;
+  sim_cockpit_readback_count: number;
+  training_allowed: boolean;
+  dry_run_available: boolean;
+  model_artifact_write_enabled: boolean;
+  latest_event?: Record<string, any> | null;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2SimpleDryRun = {
+  status: string;
+  sample_candidate_count: number;
+  sample_set_hash: string;
+  action_counts: Record<string, number>;
+  status_counts: Record<string, number>;
+  training_executed: boolean;
+  model_artifact_written: boolean;
+  event_id?: number;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2TrainingStatus = {
+  status: string;
+  stage: string;
+  sample_candidate_count: number;
+  min_samples: number;
+  label_counts: Record<string, number>;
+  source_counts: Record<string, number>;
+  status_counts: Record<string, number>;
+  split: { policy: string; train_count: number; validation_count: number };
+  training_allowed: boolean;
+  blocked_reasons: string[];
+  latest_run?: Record<string, any> | null;
+  training_mode: string;
+  model_artifact_write_enabled: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type Dataset2ControlledTrainingRun = {
+  status: string;
+  stage: string;
+  sample_candidate_count: number;
+  sample_set_hash: string;
+  min_samples: number;
+  training_allowed: boolean;
+  blocked_reasons: string[];
+  label_counts: Record<string, number>;
+  source_counts: Record<string, number>;
+  status_counts: Record<string, number>;
+  split: { policy: string; train_count: number; validation_count: number };
+  training_mode: string;
+  training_executed: boolean;
+  model_artifact_written: boolean;
+  writes_learning_samples: boolean;
+  metrics: {
+    train_count: number;
+    validation_count: number;
+    validation_accuracy: number | null;
+    correct_validation_count: number;
+  };
+  event_id?: number;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type OffhourResearchSignal = {
+  symbol: string;
+  signal_date: string;
+  pattern_id: string;
+  action_label: string;
+  risk_level?: string;
+  score: number;
+  matched_tags?: string[];
+};
+
+type OffhourResearchRun = {
+  id?: number;
+  run_id?: number;
+  mode?: string;
+  status: string;
+  summary?: Record<string, any>;
+  potential_search?: {
+    total_scanned?: number;
+    stored_count?: number;
+    scored_count?: number;
+    top_scored_symbols?: string[];
+  };
+  strategy_replay?: {
+    signal_count?: number;
+    symbols?: string[];
+    action_counts?: Record<string, number>;
+    signals?: OffhourResearchSignal[];
+  };
+  backtest?: {
+    status?: string;
+    run_id?: number;
+    metrics?: Record<string, number>;
+  };
+  sandbox?: {
+    evaluated_count?: number;
+    pending_count?: number;
+    outcome_counts?: Record<string, number>;
+  };
+  model_candidate?: {
+    status?: string;
+    artifact_written?: boolean;
+    artifact_kind?: string;
+    artifact_hash?: string;
+  };
+  next_action?: string;
+  review_only?: boolean;
+  simulation_only?: boolean;
+  live_trading_enabled?: boolean;
+};
+
+type OffhourResearchCapabilities = {
+  mode: string;
+  supported_steps: string[];
+  artifact_policy: string;
+  dataset2: Record<string, any>;
+  forbidden_actions: string[];
+  review_only: boolean;
+  simulation_only: boolean;
+  live_trading_enabled: boolean;
+};
+
+type OffhourModelCandidate = {
+  status?: string;
+  artifact_written?: boolean;
+  run_id?: number;
+  artifact?: {
+    status?: string;
+    artifact_hash?: string;
+    artifact_kind?: string;
+    artifact_written?: boolean;
+  };
+  review_only?: boolean;
+  simulation_only?: boolean;
+  live_trading_enabled?: boolean;
+};
+
 const summary = ref<KnowledgeSummary | null>(null);
 const latestScan = ref<CandidateScan | null>(null);
 const discovery = ref<AutoDiscoveryResult | null>(null);
@@ -10209,7 +15875,18 @@ const plan = ref<SimulationPlan | null>(null);
 const analysis = ref<any | null>(null);
 const account = ref<SimulationAccount | null>(null);
 const automation = ref<AutomationRun | null>(null);
+const automationQualityGates = ref<MonitoringQualityGate[]>([]);
+const automationQualityEventsCount = ref<number | null>(null);
+const automationSuppressedByQualitySymbols = ref<string[]>([]);
+const automationQualityNextAction = ref<string | null>(null);
 const learningReport = ref<LearningReport | null>(null);
+const automationRunSteps = ref<AutomationCycleStep[]>([]);
+const automationFailedSteps = ref<AutomationCycleStep[]>([]);
+const automationNextAction = ref<string | null>(null);
+const automationDurationMs = ref<number | null>(null);
+const automationEffectiveCycleParams = ref<
+  (AutomationCycle["effective_cycle_params"] | AutomationCycle["effective_params"]) | null
+>(null);
 const dataset2Readiness = ref<Dataset2Readiness | null>(null);
 const dataset2Preview = ref<Dataset2Preview | null>(null);
 const dataset2CleanupPackage = ref<Dataset2CleanupPackage | null>(null);
@@ -10388,11 +16065,144 @@ const dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutio
   ref<Dataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionExecutionApproval[]>([]);
 const dataset2TrainingConvergenceReview = ref<Dataset2TrainingConvergenceReview | null>(null);
 const dataset2TrainingConvergenceReviews = ref<Dataset2TrainingConvergenceReview[]>([]);
+const dataset2StagingAutomatedCleanupApply = ref<Dataset2StagingAutomatedCleanupApply | null>(null);
+const dataset2StagingAutomatedCleanupApplications = ref<Dataset2StagingAutomatedCleanupApply[]>([]);
+const dataset2PostCleanupTrainingFreezeReview = ref<Dataset2PostCleanupTrainingFreezeReview | null>(null);
+const dataset2PostCleanupTrainingFreezeReviews = ref<Dataset2PostCleanupTrainingFreezeReview[]>([]);
+const dataset2LearningSamplePromotionPreflight = ref<Dataset2LearningSamplePromotionPreflight | null>(null);
+const dataset2LearningSamplePromotionPreflights = ref<Dataset2LearningSamplePromotionPreflight[]>([]);
+const dataset2LearningSamplePromotionApply = ref<Dataset2LearningSamplePromotionApply | null>(null);
+const dataset2LearningSamplePromotionApplications = ref<Dataset2LearningSamplePromotionApply[]>([]);
+const dataset2PostPromotionTrainingFreezeReview = ref<Dataset2PostPromotionTrainingFreezeReview | null>(null);
+const dataset2PostPromotionTrainingFreezeReviews = ref<Dataset2PostPromotionTrainingFreezeReview[]>([]);
+const dataset2TrainingRunPlan = ref<Dataset2TrainingRunPlan | null>(null);
+const dataset2TrainingRunPlans = ref<Dataset2TrainingRunPlan[]>([]);
+const dataset2TrainingExecutionApproval = ref<Dataset2TrainingExecutionApproval | null>(null);
+const dataset2TrainingExecutionApprovals = ref<Dataset2TrainingExecutionApproval[]>([]);
+const dataset2TrainingDryRun = ref<Dataset2TrainingDryRun | null>(null);
+const dataset2TrainingDryRuns = ref<Dataset2TrainingDryRun[]>([]);
+const dataset2TrainingDryRunReview = ref<Dataset2TrainingDryRunReview | null>(null);
+const dataset2TrainingDryRunReviews = ref<Dataset2TrainingDryRunReview[]>([]);
+const dataset2ControlledTrainingExecutionPlan = ref<Dataset2ControlledTrainingExecutionPlan | null>(null);
+const dataset2ControlledTrainingExecutionPlans = ref<Dataset2ControlledTrainingExecutionPlan[]>([]);
+const dataset2ControlledTrainingExecutionPreflight = ref<Dataset2ControlledTrainingExecutionPreflight | null>(null);
+const dataset2ControlledTrainingExecutionPreflights = ref<Dataset2ControlledTrainingExecutionPreflight[]>([]);
+const dataset2ControlledTrainingExecutionDryRun = ref<Dataset2ControlledTrainingExecutionDryRun | null>(null);
+const dataset2ControlledTrainingExecutionDryRuns = ref<Dataset2ControlledTrainingExecutionDryRun[]>([]);
+const dataset2ControlledTrainingExecutionDryRunReview = ref<Dataset2ControlledTrainingExecutionDryRunReview | null>(null);
+const dataset2ControlledTrainingExecutionDryRunReviews = ref<Dataset2ControlledTrainingExecutionDryRunReview[]>([]);
+const dataset2ControlledTrainingExecutionReleasePlan = ref<Dataset2ControlledTrainingExecutionReleasePlan | null>(null);
+const dataset2ControlledTrainingExecutionReleasePlans = ref<Dataset2ControlledTrainingExecutionReleasePlan[]>([]);
+const dataset2ControlledTrainingExecutionReleasePreflight = ref<Dataset2ControlledTrainingExecutionReleasePreflight | null>(null);
+const dataset2ControlledTrainingExecutionReleasePreflights = ref<Dataset2ControlledTrainingExecutionReleasePreflight[]>([]);
+const dataset2ControlledTrainingExecutionReleaseDryRun = ref<Dataset2ControlledTrainingExecutionReleaseDryRun | null>(null);
+const dataset2ControlledTrainingExecutionReleaseDryRuns = ref<Dataset2ControlledTrainingExecutionReleaseDryRun[]>([]);
+const dataset2ControlledTrainingExecutionReleaseDryRunReview = ref<Dataset2ControlledTrainingExecutionReleaseDryRunReview | null>(null);
+const dataset2ControlledTrainingExecutionReleaseDryRunReviews = ref<Dataset2ControlledTrainingExecutionReleaseDryRunReview[]>([]);
+const dataset2ControlledTrainingExecutionFinalApproval = ref<Dataset2ControlledTrainingExecutionFinalApproval | null>(null);
+const dataset2ControlledTrainingExecutionFinalApprovals = ref<Dataset2ControlledTrainingExecutionFinalApproval[]>([]);
+const dataset2ControlledTrainingExecutionFinalPreflight = ref<Dataset2ControlledTrainingExecutionFinalPreflight | null>(null);
+const dataset2ControlledTrainingExecutionFinalPreflights = ref<Dataset2ControlledTrainingExecutionFinalPreflight[]>([]);
+const dataset2ControlledTrainingExecutionFinalDryRun = ref<Dataset2ControlledTrainingExecutionFinalDryRun | null>(null);
+const dataset2ControlledTrainingExecutionFinalDryRuns = ref<Dataset2ControlledTrainingExecutionFinalDryRun[]>([]);
+const dataset2ControlledTrainingExecutionFinalDryRunReview = ref<Dataset2ControlledTrainingExecutionFinalDryRunReview | null>(null);
+const dataset2ControlledTrainingExecutionFinalDryRunReviews = ref<Dataset2ControlledTrainingExecutionFinalDryRunReview[]>([]);
+const dataset2ControlledTrainingExecutionRunApproval = ref<Dataset2ControlledTrainingExecutionRunApproval | null>(null);
+const dataset2ControlledTrainingExecutionRunApprovals = ref<Dataset2ControlledTrainingExecutionRunApproval[]>([]);
+const dataset2ControlledTrainingExecutionRunPreflight = ref<Dataset2ControlledTrainingExecutionRunPreflight | null>(null);
+const dataset2ControlledTrainingExecutionRunPreflights = ref<Dataset2ControlledTrainingExecutionRunPreflight[]>([]);
+const dataset2ControlledTrainingExecutionRun = ref<Dataset2ControlledTrainingExecutionRun | null>(null);
+const dataset2ControlledTrainingExecutionRuns = ref<Dataset2ControlledTrainingExecutionRun[]>([]);
+const dataset2ControlledTrainingExecutionRunReview = ref<Dataset2ControlledTrainingExecutionRunReview | null>(null);
+const dataset2ControlledTrainingExecutionRunReviews = ref<Dataset2ControlledTrainingExecutionRunReview[]>([]);
+const dataset2ControlledTrainingArtifactPlan = ref<Dataset2ControlledTrainingArtifactPlan | null>(null);
+const dataset2ControlledTrainingArtifactPlans = ref<Dataset2ControlledTrainingArtifactPlan[]>([]);
+const dataset2ControlledTrainingArtifactPlanApproval = ref<Dataset2ControlledTrainingArtifactPlanApproval | null>(null);
+const dataset2ControlledTrainingArtifactPlanApprovals = ref<Dataset2ControlledTrainingArtifactPlanApproval[]>([]);
+const dataset2ControlledTrainingArtifactPreflight = ref<Dataset2ControlledTrainingArtifactPreflight | null>(null);
+const dataset2ControlledTrainingArtifactPreflights = ref<Dataset2ControlledTrainingArtifactPreflight[]>([]);
+const dataset2ControlledTrainingArtifactDryRun = ref<Dataset2ControlledTrainingArtifactDryRun | null>(null);
+const dataset2ControlledTrainingArtifactDryRuns = ref<Dataset2ControlledTrainingArtifactDryRun[]>([]);
+const dataset2ControlledTrainingArtifactDryRunReview = ref<Dataset2ControlledTrainingArtifactDryRunReview | null>(null);
+const dataset2ControlledTrainingArtifactDryRunReviews = ref<Dataset2ControlledTrainingArtifactDryRunReview[]>([]);
+const dataset2ControlledTrainingArtifactReleaseApproval = ref<Dataset2ControlledTrainingArtifactReleaseApproval | null>(null);
+const dataset2ControlledTrainingArtifactReleaseApprovals = ref<Dataset2ControlledTrainingArtifactReleaseApproval[]>([]);
+const dataset2ControlledTrainingArtifactReleasePreflight = ref<Dataset2ControlledTrainingArtifactReleasePreflight | null>(null);
+const dataset2ControlledTrainingArtifactReleasePreflights = ref<Dataset2ControlledTrainingArtifactReleasePreflight[]>([]);
+const dataset2ControlledTrainingArtifactReleaseDryRun = ref<Dataset2ControlledTrainingArtifactReleaseDryRun | null>(null);
+const dataset2ControlledTrainingArtifactReleaseDryRuns = ref<Dataset2ControlledTrainingArtifactReleaseDryRun[]>([]);
+const dataset2ControlledTrainingArtifactReleaseDryRunReview = ref<Dataset2ControlledTrainingArtifactReleaseDryRunReview | null>(null);
+const dataset2ControlledTrainingArtifactReleaseDryRunReviews = ref<Dataset2ControlledTrainingArtifactReleaseDryRunReview[]>([]);
+const dataset2ControlledTrainingArtifactFinalApproval = ref<Dataset2ControlledTrainingArtifactFinalApproval | null>(null);
+const dataset2ControlledTrainingArtifactFinalApprovals = ref<Dataset2ControlledTrainingArtifactFinalApproval[]>([]);
+const dataset2ControlledTrainingArtifactFinalPreflight = ref<Dataset2ControlledTrainingArtifactFinalPreflight | null>(null);
+const dataset2ControlledTrainingArtifactFinalPreflights = ref<Dataset2ControlledTrainingArtifactFinalPreflight[]>([]);
+const dataset2ControlledTrainingArtifactFinalDryRun = ref<Dataset2ControlledTrainingArtifactFinalDryRun | null>(null);
+const dataset2ControlledTrainingArtifactFinalDryRuns = ref<Dataset2ControlledTrainingArtifactFinalDryRun[]>([]);
+const dataset2ControlledTrainingArtifactFinalDryRunReview = ref<Dataset2ControlledTrainingArtifactFinalDryRunReview | null>(null);
+const dataset2ControlledTrainingArtifactFinalDryRunReviews = ref<Dataset2ControlledTrainingArtifactFinalDryRunReview[]>([]);
+const dataset2ControlledTrainingArtifactWritePreflight = ref<Dataset2ControlledTrainingArtifactWritePreflight | null>(null);
+const dataset2ControlledTrainingArtifactWritePreflights = ref<Dataset2ControlledTrainingArtifactWritePreflight[]>([]);
+const dataset2ControlledTrainingArtifactWriteDryRun = ref<Dataset2ControlledTrainingArtifactWriteDryRun | null>(null);
+const dataset2ControlledTrainingArtifactWriteDryRuns = ref<Dataset2ControlledTrainingArtifactWriteDryRun[]>([]);
+const dataset2ControlledTrainingArtifactWriteDryRunReview = ref<Dataset2ControlledTrainingArtifactWriteDryRunReview | null>(null);
+const dataset2ControlledTrainingArtifactWriteDryRunReviews = ref<Dataset2ControlledTrainingArtifactWriteDryRunReview[]>([]);
+const dataset2ControlledTrainingArtifactWriteApproval = ref<Dataset2ControlledTrainingArtifactWriteApproval | null>(null);
+const dataset2ControlledTrainingArtifactWriteApprovals = ref<Dataset2ControlledTrainingArtifactWriteApproval[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionPreflight = ref<Dataset2ControlledTrainingArtifactWriteExecutionPreflight | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionPreflights = ref<Dataset2ControlledTrainingArtifactWriteExecutionPreflight[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionDryRun = ref<Dataset2ControlledTrainingArtifactWriteExecutionDryRun | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionDryRuns = ref<Dataset2ControlledTrainingArtifactWriteExecutionDryRun[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionDryRunReview = ref<Dataset2ControlledTrainingArtifactWriteExecutionDryRunReview | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionDryRunReviews = ref<Dataset2ControlledTrainingArtifactWriteExecutionDryRunReview[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalApproval = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalApproval | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalApprovals = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalApproval[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalPreflights = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalDryRuns = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviews = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovals = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflights = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRuns = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviews = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovals = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflights = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRuns = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviews = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovals = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflights = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRuns = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviews = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovals = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflights = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRuns = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun[]>([]);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview | null>(null);
+const dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReviews = ref<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview[]>([]);
 const monitoring = ref<MonitoringRun | null>(null);
 const monitoringReview = ref<MonitoringReview | null>(null);
 const phaseReplays = ref<PhaseReplay[]>([]);
 const phaseMatch = ref<PhaseMatch | null>(null);
 const potentialSearch = ref<PotentialSearchRun | null>(null);
+const offhourResearchCapabilities = ref<OffhourResearchCapabilities | null>(null);
+const offhourResearchLatest = ref<OffhourResearchRun | null>(null);
+const offhourModelCandidate = ref<OffhourModelCandidate | null>(null);
 const agentCapabilities = ref<AgentCapabilities | null>(null);
 const agentTasks = ref<AgentTask[]>([]);
 const agentAudit = ref<any[]>([]);
@@ -10446,6 +16256,7 @@ const dataset2Loading = ref(false);
 const phaseReplayLoading = ref(false);
 const phaseMatchLoading = ref(false);
 const potentialSearchLoading = ref(false);
+const offhourResearchLoading = ref(false);
 const agentTaskLoading = ref(false);
 const tradeGatewayLoading = ref(false);
 const agentLearningSamples = ref<AgentLearningSampleItem[]>([]);
@@ -10531,17 +16342,27 @@ const experienceStrategyPerformance = ref<StrategyPerformanceSnapshot[]>([]);
 const experienceCodeEvolution = ref<CodeEvolutionRecord[]>([]);
 const aiModelCapabilities = ref<AIModelCapabilities | null>(null);
 const aiModelAuditLogs = ref<AIModelAuditLog[]>([]);
+const simCockpitStatus = ref<SimCockpitStatus | null>(null);
+const simCockpitActions = ref<SimCockpitAction[]>([]);
+const simCockpitReadbacks = ref<SimCockpitReadback[]>([]);
+const simCockpitWindowDetection = ref<SimCockpitWindowDetection | null>(null);
+const simCockpitCycle = ref<SimCockpitCycleResult | null>(null);
+const simCockpitDataset2Stage = ref<Dataset2StageSummary | null>(null);
+const simCockpitDataset2DryRun = ref<Dataset2SimpleDryRun | null>(null);
+const simCockpitDataset2TrainingStatus = ref<Dataset2TrainingStatus | null>(null);
+const simCockpitDataset2TrainingRun = ref<Dataset2ControlledTrainingRun | null>(null);
 const experienceLoading = ref(false);
 const codeEvolutionLoading = ref(false);
 const aiModelLoading = ref(false);
+const simCockpitLoading = ref(false);
 const v15Loading = ref(false);
 const smallSampleThreshold = 10;
 const error = ref("");
 
 const statusText = computed(() => {
   if (error.value) return error.value;
-  if (latestScan.value) return "本地候选池已加载，实盘权限保持关闭";
-  return "等待候选池扫描";
+  if (latestScan.value) return "鏈湴鍊欓€夋睜宸插姞杞斤紝瀹炵洏鏉冮檺淇濇寔鍏抽棴";
+  return "绛夊緟鍊欓€夋睜鎵弿";
 });
 
 const topCandidates = computed(() => {
@@ -10573,7 +16394,7 @@ const codeEvolutionStatusCount = computed(() => {
 });
 
 const reviewText = computed(() => {
-  if (!latestScan.value) return "AI可以提出权重调整，但必须经过收益、最大回撤、胜率、盈亏比验证。";
+  if (!latestScan.value) return "AI 可以提出权重调整，但必须经过收益、最大回撤、胜率、盈亏比验证。";
   return `最近扫描产生 ${latestScan.value.strong_count} 个强候选、${latestScan.value.watch_count} 个观察候选；下一步可进入模拟交易计划生成。`;
 });
 
@@ -10581,6 +16402,11 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) throw new Error(`${url} returned ${response.status}`);
   return response.json() as Promise<T>;
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "N/A";
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 async function loadSummary() {
@@ -13277,6 +19103,2921 @@ async function loadDataset2TrainingConvergenceReviews() {
   }
 }
 
+async function applyDataset2StagingAutomatedCleanup() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2StagingAutomatedCleanupApply.value = await fetchJson<Dataset2StagingAutomatedCleanupApply>(
+      "/api/learning/dataset2/staging/apply-automated-cleanup",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          applied_by: "dashboard",
+          confirmation_token: "APPLY_DATASET2_STAGING_AUTOMATED_CLEANUP",
+          note: "V5.6-P59 deterministic staging cleanup only"
+        })
+      }
+    );
+    await Promise.all([
+      loadDataset2Staging(),
+      loadDataset2StagingAutomatedCleanupApplications()
+    ]);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 staging automated cleanup failed";
+    dataset2StagingAutomatedCleanupApply.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2StagingAutomatedCleanupApplications() {
+  try {
+    dataset2StagingAutomatedCleanupApplications.value = await fetchJson<Dataset2StagingAutomatedCleanupApply[]>(
+      "/api/learning/dataset2/staging/automated-cleanup-applications?limit=5"
+    );
+    dataset2StagingAutomatedCleanupApply.value =
+      dataset2StagingAutomatedCleanupApplications.value[0] ?? dataset2StagingAutomatedCleanupApply.value;
+  } catch {
+    dataset2StagingAutomatedCleanupApplications.value = [];
+  }
+}
+
+async function reviewDataset2PostCleanupTrainingFreeze() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2PostCleanupTrainingFreezeReview.value = await fetchJson<Dataset2PostCleanupTrainingFreezeReview>(
+      "/api/learning/dataset2/staging/post-cleanup-training-freeze-review",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          reviewed_by: "dashboard",
+          note: "V5.6-P60 post-cleanup training freeze review"
+        })
+      }
+    );
+    await loadDataset2PostCleanupTrainingFreezeReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 post-cleanup freeze review failed";
+    dataset2PostCleanupTrainingFreezeReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2PostCleanupTrainingFreezeReviews() {
+  try {
+    dataset2PostCleanupTrainingFreezeReviews.value = await fetchJson<Dataset2PostCleanupTrainingFreezeReview[]>(
+      "/api/learning/dataset2/staging/post-cleanup-training-freeze-reviews?limit=5"
+    );
+    dataset2PostCleanupTrainingFreezeReview.value =
+      dataset2PostCleanupTrainingFreezeReviews.value[0] ?? dataset2PostCleanupTrainingFreezeReview.value;
+  } catch {
+    dataset2PostCleanupTrainingFreezeReviews.value = [];
+  }
+}
+
+async function planDataset2LearningSamplePromotionPreflight() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2LearningSamplePromotionPreflight.value = await fetchJson<Dataset2LearningSamplePromotionPreflight>(
+      "/api/learning/dataset2/staging/learning-sample-promotion-preflight",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          planned_by: "dashboard",
+          note: "V5.6-P61 learning sample promotion preflight only"
+        })
+      }
+    );
+    await loadDataset2LearningSamplePromotionPreflights();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 promotion preflight failed";
+    dataset2LearningSamplePromotionPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2LearningSamplePromotionPreflights() {
+  try {
+    dataset2LearningSamplePromotionPreflights.value = await fetchJson<Dataset2LearningSamplePromotionPreflight[]>(
+      "/api/learning/dataset2/staging/learning-sample-promotion-preflights?limit=5"
+    );
+    dataset2LearningSamplePromotionPreflight.value =
+      dataset2LearningSamplePromotionPreflights.value[0] ?? dataset2LearningSamplePromotionPreflight.value;
+  } catch {
+    dataset2LearningSamplePromotionPreflights.value = [];
+  }
+}
+
+async function applyDataset2LearningSamplePromotion() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2LearningSamplePromotionApply.value = await fetchJson<Dataset2LearningSamplePromotionApply>(
+      "/api/learning/dataset2/staging/apply-learning-sample-promotion",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          preflight_event_id: dataset2LearningSamplePromotionPreflight.value?.event_id ?? dataset2LearningSamplePromotionPreflight.value?.id,
+          promoted_by: "dashboard",
+          confirmation_token: "PROMOTE_DATASET2_LEARNING_SAMPLES",
+          note: "V5.6-P62 controlled Dataset2 learning sample promotion"
+        })
+      }
+    );
+    await Promise.all([
+      loadLearningReport(),
+      loadDataset2LearningSamplePromotionApplications()
+    ]);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 promotion apply failed";
+    dataset2LearningSamplePromotionApply.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2LearningSamplePromotionApplications() {
+  try {
+    dataset2LearningSamplePromotionApplications.value = await fetchJson<Dataset2LearningSamplePromotionApply[]>(
+      "/api/learning/dataset2/staging/learning-sample-promotion-applications?limit=5"
+    );
+    dataset2LearningSamplePromotionApply.value =
+      dataset2LearningSamplePromotionApplications.value[0] ?? dataset2LearningSamplePromotionApply.value;
+  } catch {
+    dataset2LearningSamplePromotionApplications.value = [];
+  }
+}
+
+async function reviewDataset2PostPromotionTrainingFreeze() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2PostPromotionTrainingFreezeReview.value = await fetchJson<Dataset2PostPromotionTrainingFreezeReview>(
+      "/api/learning/dataset2/staging/post-promotion-training-freeze-review",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          reviewed_by: "dashboard",
+          note: "V5.6-P63 post-promotion training freeze review"
+        })
+      }
+    );
+    await loadDataset2PostPromotionTrainingFreezeReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 post-promotion freeze review failed";
+    dataset2PostPromotionTrainingFreezeReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2PostPromotionTrainingFreezeReviews() {
+  try {
+    dataset2PostPromotionTrainingFreezeReviews.value = await fetchJson<Dataset2PostPromotionTrainingFreezeReview[]>(
+      "/api/learning/dataset2/staging/post-promotion-training-freeze-reviews?limit=5"
+    );
+    dataset2PostPromotionTrainingFreezeReview.value =
+      dataset2PostPromotionTrainingFreezeReviews.value[0] ?? dataset2PostPromotionTrainingFreezeReview.value;
+  } catch {
+    dataset2PostPromotionTrainingFreezeReviews.value = [];
+  }
+}
+
+async function planDataset2TrainingRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2TrainingRunPlan.value = await fetchJson<Dataset2TrainingRunPlan>(
+      "/api/learning/dataset2/training-run-plan",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          planned_by: "dashboard",
+          note: "V5.6-P64 Dataset2 training run plan only"
+        })
+      }
+    );
+    await loadDataset2TrainingRunPlans();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 training run plan failed";
+    dataset2TrainingRunPlan.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2TrainingRunPlans() {
+  try {
+    dataset2TrainingRunPlans.value = await fetchJson<Dataset2TrainingRunPlan[]>(
+      "/api/learning/dataset2/training-run-plans?limit=5"
+    );
+    dataset2TrainingRunPlan.value = dataset2TrainingRunPlans.value[0] ?? dataset2TrainingRunPlan.value;
+  } catch {
+    dataset2TrainingRunPlans.value = [];
+  }
+}
+
+async function approveDataset2TrainingExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2TrainingExecutionApproval.value = await fetchJson<Dataset2TrainingExecutionApproval>(
+      "/api/learning/dataset2/training-execution-approval",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          training_plan_id: dataset2TrainingRunPlan.value?.training_plan.plan_id ?? null,
+          approved_by: "dashboard",
+          confirmation_token: "APPROVE_DATASET2_TRAINING_EXECUTION",
+          note: "V5.6-P65 approve Dataset2 training dry-run metadata only"
+        })
+      }
+    );
+    await loadDataset2TrainingExecutionApprovals();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 training execution approval failed";
+    dataset2TrainingExecutionApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2TrainingExecutionApprovals() {
+  try {
+    dataset2TrainingExecutionApprovals.value = await fetchJson<Dataset2TrainingExecutionApproval[]>(
+      "/api/learning/dataset2/training-execution-approvals?limit=5"
+    );
+    dataset2TrainingExecutionApproval.value =
+      dataset2TrainingExecutionApprovals.value[0] ?? dataset2TrainingExecutionApproval.value;
+  } catch {
+    dataset2TrainingExecutionApprovals.value = [];
+  }
+}
+
+async function runDataset2TrainingDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2TrainingDryRun.value = await fetchJson<Dataset2TrainingDryRun>(
+      "/api/learning/dataset2/training-dry-run",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          training_plan_id: dataset2TrainingExecutionApproval.value?.evidence.training_plan_id ?? dataset2TrainingRunPlan.value?.training_plan.plan_id ?? null,
+          approval_event_id: dataset2TrainingExecutionApproval.value?.event_id ?? dataset2TrainingExecutionApproval.value?.id ?? null,
+          run_by: "dashboard",
+          note: "V5.6-P66 Dataset2 training dry-run evidence only"
+        })
+      }
+    );
+    await loadDataset2TrainingDryRuns();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 training dry-run failed";
+    dataset2TrainingDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2TrainingDryRuns() {
+  try {
+    dataset2TrainingDryRuns.value = await fetchJson<Dataset2TrainingDryRun[]>(
+      "/api/learning/dataset2/training-dry-runs?limit=5"
+    );
+    dataset2TrainingDryRun.value = dataset2TrainingDryRuns.value[0] ?? dataset2TrainingDryRun.value;
+  } catch {
+    dataset2TrainingDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2TrainingDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2TrainingDryRunReview.value = await fetchJson<Dataset2TrainingDryRunReview>(
+      "/api/learning/dataset2/training-dry-run-review",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          dry_run_event_id: dataset2TrainingDryRun.value?.event_id ?? dataset2TrainingDryRun.value?.id ?? null,
+          reviewed_by: "dashboard",
+          note: "V5.6-P67 Dataset2 dry-run result review only"
+        })
+      }
+    );
+    await loadDataset2TrainingDryRunReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 training dry-run review failed";
+    dataset2TrainingDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2TrainingDryRunReviews() {
+  try {
+    dataset2TrainingDryRunReviews.value = await fetchJson<Dataset2TrainingDryRunReview[]>(
+      "/api/learning/dataset2/training-dry-run-reviews?limit=5"
+    );
+    dataset2TrainingDryRunReview.value =
+      dataset2TrainingDryRunReviews.value[0] ?? dataset2TrainingDryRunReview.value;
+  } catch {
+    dataset2TrainingDryRunReviews.value = [];
+  }
+}
+
+async function planDataset2ControlledTrainingExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionPlan.value = await fetchJson<Dataset2ControlledTrainingExecutionPlan>(
+      "/api/learning/dataset2/controlled-training-execution-plan",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          dry_run_review_id: dataset2TrainingDryRunReview.value?.event_id ?? dataset2TrainingDryRunReview.value?.id ?? null,
+          planned_by: "dashboard",
+          note: "V5.6-P68 controlled Dataset2 training execution plan only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionPlans();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution plan failed";
+    dataset2ControlledTrainingExecutionPlan.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionPlans() {
+  try {
+    dataset2ControlledTrainingExecutionPlans.value = await fetchJson<Dataset2ControlledTrainingExecutionPlan[]>(
+      "/api/learning/dataset2/controlled-training-execution-plans?limit=5"
+    );
+    dataset2ControlledTrainingExecutionPlan.value =
+      dataset2ControlledTrainingExecutionPlans.value[0] ?? dataset2ControlledTrainingExecutionPlan.value;
+  } catch {
+    dataset2ControlledTrainingExecutionPlans.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionPreflight.value = await fetchJson<Dataset2ControlledTrainingExecutionPreflight>(
+      "/api/learning/dataset2/controlled-training-execution-preflight",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          execution_plan_id: dataset2ControlledTrainingExecutionPlan.value?.execution_plan.plan_id ?? null,
+          execution_plan_event_id: dataset2ControlledTrainingExecutionPlan.value?.event_id ?? dataset2ControlledTrainingExecutionPlan.value?.id ?? null,
+          requested_by: "dashboard",
+          confirmation_token: "PREPARE_DATASET2_CONTROLLED_TRAINING_EXECUTION",
+          note: "V5.6-P69 controlled Dataset2 training execution preflight only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionPreflights();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution preflight failed";
+    dataset2ControlledTrainingExecutionPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionPreflights() {
+  try {
+    dataset2ControlledTrainingExecutionPreflights.value = await fetchJson<Dataset2ControlledTrainingExecutionPreflight[]>(
+      "/api/learning/dataset2/controlled-training-execution-preflights?limit=5"
+    );
+    dataset2ControlledTrainingExecutionPreflight.value =
+      dataset2ControlledTrainingExecutionPreflights.value[0] ?? dataset2ControlledTrainingExecutionPreflight.value;
+  } catch {
+    dataset2ControlledTrainingExecutionPreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionDryRun.value = await fetchJson<Dataset2ControlledTrainingExecutionDryRun>(
+      "/api/learning/dataset2/controlled-training-execution-dry-run",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          preflight_event_id: dataset2ControlledTrainingExecutionPreflight.value?.event_id ?? dataset2ControlledTrainingExecutionPreflight.value?.id ?? null,
+          simulated_by: "dashboard",
+          note: "V5.6-P70 controlled Dataset2 training execution dry-run only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionDryRuns();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution dry-run failed";
+    dataset2ControlledTrainingExecutionDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionDryRuns() {
+  try {
+    dataset2ControlledTrainingExecutionDryRuns.value = await fetchJson<Dataset2ControlledTrainingExecutionDryRun[]>(
+      "/api/learning/dataset2/controlled-training-execution-dry-runs?limit=5"
+    );
+    dataset2ControlledTrainingExecutionDryRun.value =
+      dataset2ControlledTrainingExecutionDryRuns.value[0] ?? dataset2ControlledTrainingExecutionDryRun.value;
+  } catch {
+    dataset2ControlledTrainingExecutionDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingExecutionDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionDryRunReview.value = await fetchJson<Dataset2ControlledTrainingExecutionDryRunReview>(
+      "/api/learning/dataset2/controlled-training-execution-dry-run-review",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          dry_run_event_id: dataset2ControlledTrainingExecutionDryRun.value?.event_id ?? dataset2ControlledTrainingExecutionDryRun.value?.id ?? null,
+          reviewed_by: "dashboard",
+          review_decision: "accepted_for_controlled_dataset2_training_execution_release_plan",
+          note: "V5.6-P71 controlled Dataset2 training execution dry-run review only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionDryRunReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution dry-run review failed";
+    dataset2ControlledTrainingExecutionDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionDryRunReviews() {
+  try {
+    dataset2ControlledTrainingExecutionDryRunReviews.value = await fetchJson<Dataset2ControlledTrainingExecutionDryRunReview[]>(
+      "/api/learning/dataset2/controlled-training-execution-dry-run-reviews?limit=5"
+    );
+    dataset2ControlledTrainingExecutionDryRunReview.value =
+      dataset2ControlledTrainingExecutionDryRunReviews.value[0] ?? dataset2ControlledTrainingExecutionDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingExecutionDryRunReviews.value = [];
+  }
+}
+
+async function planDataset2ControlledTrainingExecutionRelease() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionReleasePlan.value = await fetchJson<Dataset2ControlledTrainingExecutionReleasePlan>(
+      "/api/learning/dataset2/controlled-training-execution-release-plan",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          dry_run_review_id: dataset2ControlledTrainingExecutionDryRunReview.value?.event_id ?? dataset2ControlledTrainingExecutionDryRunReview.value?.id ?? null,
+          planned_by: "dashboard",
+          note: "V5.6-P72 controlled Dataset2 training release plan only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionReleasePlans();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution release plan failed";
+    dataset2ControlledTrainingExecutionReleasePlan.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionReleasePlans() {
+  try {
+    dataset2ControlledTrainingExecutionReleasePlans.value = await fetchJson<Dataset2ControlledTrainingExecutionReleasePlan[]>(
+      "/api/learning/dataset2/controlled-training-execution-release-plans?limit=5"
+    );
+    dataset2ControlledTrainingExecutionReleasePlan.value =
+      dataset2ControlledTrainingExecutionReleasePlans.value[0] ?? dataset2ControlledTrainingExecutionReleasePlan.value;
+  } catch {
+    dataset2ControlledTrainingExecutionReleasePlans.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingExecutionRelease() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionReleasePreflight.value = await fetchJson<Dataset2ControlledTrainingExecutionReleasePreflight>(
+      "/api/learning/dataset2/controlled-training-execution-release-preflight",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          release_plan_event_id: dataset2ControlledTrainingExecutionReleasePlan.value?.event_id ?? dataset2ControlledTrainingExecutionReleasePlan.value?.id ?? null,
+          requested_by: "dashboard",
+          confirmation_token: "PREPARE_DATASET2_CONTROLLED_TRAINING_RELEASE_PREFLIGHT",
+          note: "V5.6-P73 controlled Dataset2 training release preflight only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionReleasePreflights();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution release preflight failed";
+    dataset2ControlledTrainingExecutionReleasePreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionReleasePreflights() {
+  try {
+    dataset2ControlledTrainingExecutionReleasePreflights.value = await fetchJson<Dataset2ControlledTrainingExecutionReleasePreflight[]>(
+      "/api/learning/dataset2/controlled-training-execution-release-preflights?limit=5"
+    );
+    dataset2ControlledTrainingExecutionReleasePreflight.value =
+      dataset2ControlledTrainingExecutionReleasePreflights.value[0] ?? dataset2ControlledTrainingExecutionReleasePreflight.value;
+  } catch {
+    dataset2ControlledTrainingExecutionReleasePreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingExecutionRelease() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionReleaseDryRun.value = await fetchJson<Dataset2ControlledTrainingExecutionReleaseDryRun>(
+      "/api/learning/dataset2/controlled-training-execution-release-dry-run",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          release_preflight_event_id: dataset2ControlledTrainingExecutionReleasePreflight.value?.event_id ?? dataset2ControlledTrainingExecutionReleasePreflight.value?.id ?? null,
+          simulated_by: "dashboard",
+          note: "V5.6-P74 controlled Dataset2 training release dry-run only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionReleaseDryRuns();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution release dry-run failed";
+    dataset2ControlledTrainingExecutionReleaseDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionReleaseDryRuns() {
+  try {
+    dataset2ControlledTrainingExecutionReleaseDryRuns.value = await fetchJson<Dataset2ControlledTrainingExecutionReleaseDryRun[]>(
+      "/api/learning/dataset2/controlled-training-execution-release-dry-runs?limit=5"
+    );
+    dataset2ControlledTrainingExecutionReleaseDryRun.value =
+      dataset2ControlledTrainingExecutionReleaseDryRuns.value[0] ?? dataset2ControlledTrainingExecutionReleaseDryRun.value;
+  } catch {
+    dataset2ControlledTrainingExecutionReleaseDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingExecutionReleaseDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionReleaseDryRunReview.value = await fetchJson<Dataset2ControlledTrainingExecutionReleaseDryRunReview>(
+      "/api/learning/dataset2/controlled-training-execution-release-dry-run-review",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          release_dry_run_event_id: dataset2ControlledTrainingExecutionReleaseDryRun.value?.event_id ?? dataset2ControlledTrainingExecutionReleaseDryRun.value?.id ?? null,
+          reviewed_by: "dashboard",
+          review_decision: "accepted_for_controlled_dataset2_training_execution_final_approval",
+          note: "V5.6-P75 controlled Dataset2 training release dry-run review only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionReleaseDryRunReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution release dry-run review failed";
+    dataset2ControlledTrainingExecutionReleaseDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionReleaseDryRunReviews() {
+  try {
+    dataset2ControlledTrainingExecutionReleaseDryRunReviews.value = await fetchJson<Dataset2ControlledTrainingExecutionReleaseDryRunReview[]>(
+      "/api/learning/dataset2/controlled-training-execution-release-dry-run-reviews?limit=5"
+    );
+    dataset2ControlledTrainingExecutionReleaseDryRunReview.value =
+      dataset2ControlledTrainingExecutionReleaseDryRunReviews.value[0] ?? dataset2ControlledTrainingExecutionReleaseDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingExecutionReleaseDryRunReviews.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingExecutionFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionFinalApproval.value = await fetchJson<Dataset2ControlledTrainingExecutionFinalApproval>(
+      "/api/learning/dataset2/controlled-training-execution-final-approval",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          release_dry_run_review_id: dataset2ControlledTrainingExecutionReleaseDryRunReview.value?.event_id ?? dataset2ControlledTrainingExecutionReleaseDryRunReview.value?.id ?? null,
+          approved_by: "dashboard",
+          approval_decision: "approved_for_controlled_dataset2_training_execution_final_preflight",
+          confirmation_token: "APPROVE_DATASET2_CONTROLLED_TRAINING_FINAL_EXECUTION",
+          note: "V5.6-P76 controlled Dataset2 training final approval metadata only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionFinalApprovals();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution final approval failed";
+    dataset2ControlledTrainingExecutionFinalApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionFinalApprovals() {
+  try {
+    dataset2ControlledTrainingExecutionFinalApprovals.value = await fetchJson<Dataset2ControlledTrainingExecutionFinalApproval[]>(
+      "/api/learning/dataset2/controlled-training-execution-final-approvals?limit=5"
+    );
+    dataset2ControlledTrainingExecutionFinalApproval.value =
+      dataset2ControlledTrainingExecutionFinalApprovals.value[0] ?? dataset2ControlledTrainingExecutionFinalApproval.value;
+  } catch {
+    dataset2ControlledTrainingExecutionFinalApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingExecutionFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionFinalPreflight.value = await fetchJson<Dataset2ControlledTrainingExecutionFinalPreflight>(
+      "/api/learning/dataset2/controlled-training-execution-final-preflight",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          final_approval_id: dataset2ControlledTrainingExecutionFinalApproval.value?.event_id ?? dataset2ControlledTrainingExecutionFinalApproval.value?.id ?? null,
+          requested_by: "dashboard",
+          confirmation_token: "PREPARE_DATASET2_CONTROLLED_TRAINING_FINAL_PREFLIGHT",
+          note: "V5.6-P77 controlled Dataset2 training final preflight metadata only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionFinalPreflights();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution final preflight failed";
+    dataset2ControlledTrainingExecutionFinalPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionFinalPreflights() {
+  try {
+    dataset2ControlledTrainingExecutionFinalPreflights.value = await fetchJson<Dataset2ControlledTrainingExecutionFinalPreflight[]>(
+      "/api/learning/dataset2/controlled-training-execution-final-preflights?limit=5"
+    );
+    dataset2ControlledTrainingExecutionFinalPreflight.value =
+      dataset2ControlledTrainingExecutionFinalPreflights.value[0] ?? dataset2ControlledTrainingExecutionFinalPreflight.value;
+  } catch {
+    dataset2ControlledTrainingExecutionFinalPreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingExecutionFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionFinalDryRun.value = await fetchJson<Dataset2ControlledTrainingExecutionFinalDryRun>(
+      "/api/learning/dataset2/controlled-training-execution-final-dry-run",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          final_preflight_event_id: dataset2ControlledTrainingExecutionFinalPreflight.value?.event_id ?? dataset2ControlledTrainingExecutionFinalPreflight.value?.id ?? null,
+          simulated_by: "dashboard",
+          confirmation_token: "RUN_DATASET2_CONTROLLED_TRAINING_FINAL_DRY_RUN",
+          note: "V5.6-P78 controlled Dataset2 training final dry-run metadata only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionFinalDryRuns();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution final dry-run failed";
+    dataset2ControlledTrainingExecutionFinalDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionFinalDryRuns() {
+  try {
+    dataset2ControlledTrainingExecutionFinalDryRuns.value = await fetchJson<Dataset2ControlledTrainingExecutionFinalDryRun[]>(
+      "/api/learning/dataset2/controlled-training-execution-final-dry-runs?limit=5"
+    );
+    dataset2ControlledTrainingExecutionFinalDryRun.value =
+      dataset2ControlledTrainingExecutionFinalDryRuns.value[0] ?? dataset2ControlledTrainingExecutionFinalDryRun.value;
+  } catch {
+    dataset2ControlledTrainingExecutionFinalDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingExecutionFinalDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionFinalDryRunReview.value = await fetchJson<Dataset2ControlledTrainingExecutionFinalDryRunReview>(
+      "/api/learning/dataset2/controlled-training-execution-final-dry-run-review",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          final_dry_run_event_id: dataset2ControlledTrainingExecutionFinalDryRun.value?.event_id ?? dataset2ControlledTrainingExecutionFinalDryRun.value?.id ?? null,
+          reviewed_by: "dashboard",
+          review_decision: "accepted_for_controlled_dataset2_training_execution_run_approval",
+          note: "V5.6-P79 controlled Dataset2 training final dry-run review metadata only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionFinalDryRunReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution final dry-run review failed";
+    dataset2ControlledTrainingExecutionFinalDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionFinalDryRunReviews() {
+  try {
+    dataset2ControlledTrainingExecutionFinalDryRunReviews.value = await fetchJson<Dataset2ControlledTrainingExecutionFinalDryRunReview[]>(
+      "/api/learning/dataset2/controlled-training-execution-final-dry-run-reviews?limit=5"
+    );
+    dataset2ControlledTrainingExecutionFinalDryRunReview.value =
+      dataset2ControlledTrainingExecutionFinalDryRunReviews.value[0] ?? dataset2ControlledTrainingExecutionFinalDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingExecutionFinalDryRunReviews.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingExecutionRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionRunApproval.value = await fetchJson<Dataset2ControlledTrainingExecutionRunApproval>(
+      "/api/learning/dataset2/controlled-training-execution-run-approval",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          final_dry_run_review_id:
+            dataset2ControlledTrainingExecutionFinalDryRunReview.value?.event_id ??
+            dataset2ControlledTrainingExecutionFinalDryRunReview.value?.id ??
+            null,
+          approved_by: "dashboard",
+          approval_decision: "approved_for_controlled_dataset2_training_execution_run_preflight",
+          confirmation_token: "APPROVE_DATASET2_CONTROLLED_TRAINING_EXECUTION_RUN",
+          note: "V5.6-P80 controlled Dataset2 training run approval metadata only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionRunApprovals();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution run approval failed";
+    dataset2ControlledTrainingExecutionRunApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionRunApprovals() {
+  try {
+    dataset2ControlledTrainingExecutionRunApprovals.value = await fetchJson<Dataset2ControlledTrainingExecutionRunApproval[]>(
+      "/api/learning/dataset2/controlled-training-execution-run-approvals?limit=5"
+    );
+    dataset2ControlledTrainingExecutionRunApproval.value =
+      dataset2ControlledTrainingExecutionRunApprovals.value[0] ?? dataset2ControlledTrainingExecutionRunApproval.value;
+  } catch {
+    dataset2ControlledTrainingExecutionRunApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingExecutionRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionRunPreflight.value = await fetchJson<Dataset2ControlledTrainingExecutionRunPreflight>(
+      "/api/learning/dataset2/controlled-training-execution-run-preflight",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          run_approval_id:
+            dataset2ControlledTrainingExecutionRunApproval.value?.event_id ??
+            dataset2ControlledTrainingExecutionRunApproval.value?.id ??
+            null,
+          requested_by: "dashboard",
+          confirmation_token: "PREPARE_DATASET2_CONTROLLED_TRAINING_EXECUTION_RUN_PREFLIGHT",
+          note: "V5.6-P81 controlled Dataset2 training run preflight metadata only"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionRunPreflights();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution run preflight failed";
+    dataset2ControlledTrainingExecutionRunPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionRunPreflights() {
+  try {
+    dataset2ControlledTrainingExecutionRunPreflights.value = await fetchJson<Dataset2ControlledTrainingExecutionRunPreflight[]>(
+      "/api/learning/dataset2/controlled-training-execution-run-preflights?limit=5"
+    );
+    dataset2ControlledTrainingExecutionRunPreflight.value =
+      dataset2ControlledTrainingExecutionRunPreflights.value[0] ?? dataset2ControlledTrainingExecutionRunPreflight.value;
+  } catch {
+    dataset2ControlledTrainingExecutionRunPreflights.value = [];
+  }
+}
+
+async function runDataset2ControlledTrainingExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionRun.value = await fetchJson<Dataset2ControlledTrainingExecutionRun>(
+      "/api/learning/dataset2/controlled-training-execution-run",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          run_preflight_event_id:
+            dataset2ControlledTrainingExecutionRunPreflight.value?.event_id ??
+            dataset2ControlledTrainingExecutionRunPreflight.value?.id ??
+            null,
+          run_by: "dashboard",
+          confirmation_token: "RUN_DATASET2_CONTROLLED_TRAINING_EXECUTION",
+          note: "V5.6-P82 controlled in-memory Dataset2 training execution without model artifact"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionRuns();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution run failed";
+    dataset2ControlledTrainingExecutionRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionRuns() {
+  try {
+    dataset2ControlledTrainingExecutionRuns.value = await fetchJson<Dataset2ControlledTrainingExecutionRun[]>(
+      "/api/learning/dataset2/controlled-training-execution-runs?limit=5"
+    );
+    dataset2ControlledTrainingExecutionRun.value =
+      dataset2ControlledTrainingExecutionRuns.value[0] ?? dataset2ControlledTrainingExecutionRun.value;
+  } catch {
+    dataset2ControlledTrainingExecutionRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingExecutionRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingExecutionRunReview.value = await fetchJson<Dataset2ControlledTrainingExecutionRunReview>(
+      "/api/learning/dataset2/controlled-training-execution-run-review",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          run_event_id:
+            dataset2ControlledTrainingExecutionRun.value?.event_id ??
+            dataset2ControlledTrainingExecutionRun.value?.id ??
+            null,
+          reviewed_by: "dashboard",
+          review_decision: "accepted_for_controlled_dataset2_training_artifact_plan",
+          note: "V5.6-P83 controlled Dataset2 training run review; no model artifact or file write"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingExecutionRunReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training execution run review failed";
+    dataset2ControlledTrainingExecutionRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingExecutionRunReviews() {
+  try {
+    dataset2ControlledTrainingExecutionRunReviews.value = await fetchJson<Dataset2ControlledTrainingExecutionRunReview[]>(
+      "/api/learning/dataset2/controlled-training-execution-run-reviews?limit=5"
+    );
+    dataset2ControlledTrainingExecutionRunReview.value =
+      dataset2ControlledTrainingExecutionRunReviews.value[0] ?? dataset2ControlledTrainingExecutionRunReview.value;
+  } catch {
+    dataset2ControlledTrainingExecutionRunReviews.value = [];
+  }
+}
+
+async function planDataset2ControlledTrainingArtifact() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingArtifactPlan.value = await fetchJson<Dataset2ControlledTrainingArtifactPlan>(
+      "/api/learning/dataset2/controlled-training-artifact-plan",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          run_review_id:
+            dataset2ControlledTrainingExecutionRunReview.value?.event_id ??
+            dataset2ControlledTrainingExecutionRunReview.value?.id ??
+            null,
+          planned_by: "dashboard",
+          note: "V5.6-P84 metadata-only Dataset2 training artifact plan; no artifact or file write"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingArtifactPlans();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training artifact plan failed";
+    dataset2ControlledTrainingArtifactPlan.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactPlans() {
+  try {
+    dataset2ControlledTrainingArtifactPlans.value = await fetchJson<Dataset2ControlledTrainingArtifactPlan[]>(
+      "/api/learning/dataset2/controlled-training-artifact-plans?limit=5"
+    );
+    dataset2ControlledTrainingArtifactPlan.value =
+      dataset2ControlledTrainingArtifactPlans.value[0] ?? dataset2ControlledTrainingArtifactPlan.value;
+  } catch {
+    dataset2ControlledTrainingArtifactPlans.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingArtifactPlan() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingArtifactPlanApproval.value = await fetchJson<Dataset2ControlledTrainingArtifactPlanApproval>(
+      "/api/learning/dataset2/controlled-training-artifact-plan-approval",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          artifact_plan_event_id:
+            dataset2ControlledTrainingArtifactPlan.value?.event_id ??
+            dataset2ControlledTrainingArtifactPlan.value?.id ??
+            null,
+          approved_by: "dashboard",
+          approval_decision: "approved_for_controlled_dataset2_training_artifact_plan_preflight",
+          confirmation_token: "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_PLAN",
+          note: "V5.6-P85 metadata-only Dataset2 artifact plan approval; no artifact or file write"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingArtifactPlanApprovals();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training artifact approval failed";
+    dataset2ControlledTrainingArtifactPlanApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactPlanApprovals() {
+  try {
+    dataset2ControlledTrainingArtifactPlanApprovals.value = await fetchJson<Dataset2ControlledTrainingArtifactPlanApproval[]>(
+      "/api/learning/dataset2/controlled-training-artifact-plan-approvals?limit=5"
+    );
+    dataset2ControlledTrainingArtifactPlanApproval.value =
+      dataset2ControlledTrainingArtifactPlanApprovals.value[0] ?? dataset2ControlledTrainingArtifactPlanApproval.value;
+  } catch {
+    dataset2ControlledTrainingArtifactPlanApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingArtifact() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingArtifactPreflight.value = await fetchJson<Dataset2ControlledTrainingArtifactPreflight>(
+      "/api/learning/dataset2/controlled-training-artifact-preflight",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          artifact_plan_approval_id:
+            dataset2ControlledTrainingArtifactPlanApproval.value?.event_id ??
+            dataset2ControlledTrainingArtifactPlanApproval.value?.id ??
+            null,
+          requested_by: "dashboard",
+          confirmation_token: "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_PREFLIGHT",
+          note: "V5.6-P86 metadata-only Dataset2 artifact preflight; no artifact or file write"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingArtifactPreflights();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training artifact preflight failed";
+    dataset2ControlledTrainingArtifactPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactPreflights() {
+  try {
+    dataset2ControlledTrainingArtifactPreflights.value = await fetchJson<Dataset2ControlledTrainingArtifactPreflight[]>(
+      "/api/learning/dataset2/controlled-training-artifact-preflights?limit=5"
+    );
+    dataset2ControlledTrainingArtifactPreflight.value =
+      dataset2ControlledTrainingArtifactPreflights.value[0] ?? dataset2ControlledTrainingArtifactPreflight.value;
+  } catch {
+    dataset2ControlledTrainingArtifactPreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingArtifact() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingArtifactDryRun.value = await fetchJson<Dataset2ControlledTrainingArtifactDryRun>(
+      "/api/learning/dataset2/controlled-training-artifact-dry-run",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          artifact_preflight_event_id:
+            dataset2ControlledTrainingArtifactPreflight.value?.event_id ??
+            dataset2ControlledTrainingArtifactPreflight.value?.id ??
+            null,
+          simulated_by: "dashboard",
+          confirmation_token: "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_DRY_RUN",
+          note: "V5.6-P87 Dataset2 artifact dry-run; no model artifact, file, or training write"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingArtifactDryRuns();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training artifact dry-run failed";
+    dataset2ControlledTrainingArtifactDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactDryRuns() {
+  try {
+    dataset2ControlledTrainingArtifactDryRuns.value = await fetchJson<Dataset2ControlledTrainingArtifactDryRun[]>(
+      "/api/learning/dataset2/controlled-training-artifact-dry-runs?limit=5"
+    );
+    dataset2ControlledTrainingArtifactDryRun.value =
+      dataset2ControlledTrainingArtifactDryRuns.value[0] ?? dataset2ControlledTrainingArtifactDryRun.value;
+  } catch {
+    dataset2ControlledTrainingArtifactDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingArtifactDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingArtifactDryRunReview.value = await fetchJson<Dataset2ControlledTrainingArtifactDryRunReview>(
+      "/api/learning/dataset2/controlled-training-artifact-dry-run-review",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          artifact_dry_run_event_id:
+            dataset2ControlledTrainingArtifactDryRun.value?.event_id ??
+            dataset2ControlledTrainingArtifactDryRun.value?.id ??
+            null,
+          reviewed_by: "dashboard",
+          review_decision: "accepted_for_controlled_dataset2_training_artifact_release_approval",
+          note: "V5.6-P88 review-only Dataset2 artifact dry-run evidence; no artifact or file write"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingArtifactDryRunReviews();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training artifact dry-run review failed";
+    dataset2ControlledTrainingArtifactDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactDryRunReviews() {
+  try {
+    dataset2ControlledTrainingArtifactDryRunReviews.value = await fetchJson<Dataset2ControlledTrainingArtifactDryRunReview[]>(
+      "/api/learning/dataset2/controlled-training-artifact-dry-run-reviews?limit=5"
+    );
+    dataset2ControlledTrainingArtifactDryRunReview.value =
+      dataset2ControlledTrainingArtifactDryRunReviews.value[0] ?? dataset2ControlledTrainingArtifactDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingArtifactDryRunReviews.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingArtifactRelease() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingArtifactReleaseApproval.value = await fetchJson<Dataset2ControlledTrainingArtifactReleaseApproval>(
+      "/api/learning/dataset2/controlled-training-artifact-release-approval",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          artifact_dry_run_review_id:
+            dataset2ControlledTrainingArtifactDryRunReview.value?.event_id ??
+            dataset2ControlledTrainingArtifactDryRunReview.value?.id ??
+            null,
+          approved_by: "dashboard",
+          approval_decision: "approved_for_controlled_dataset2_training_artifact_release_preflight",
+          confirmation_token: "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE",
+          note: "V5.6-P89 metadata-only Dataset2 artifact release approval; no artifact or file write"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingArtifactReleaseApprovals();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training artifact release approval failed";
+    dataset2ControlledTrainingArtifactReleaseApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactReleaseApprovals() {
+  try {
+    dataset2ControlledTrainingArtifactReleaseApprovals.value = await fetchJson<Dataset2ControlledTrainingArtifactReleaseApproval[]>(
+      "/api/learning/dataset2/controlled-training-artifact-release-approvals?limit=5"
+    );
+    dataset2ControlledTrainingArtifactReleaseApproval.value =
+      dataset2ControlledTrainingArtifactReleaseApprovals.value[0] ?? dataset2ControlledTrainingArtifactReleaseApproval.value;
+  } catch {
+    dataset2ControlledTrainingArtifactReleaseApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingArtifactRelease() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingArtifactReleasePreflight.value = await fetchJson<Dataset2ControlledTrainingArtifactReleasePreflight>(
+      "/api/learning/dataset2/controlled-training-artifact-release-preflight",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          artifact_release_approval_id:
+            dataset2ControlledTrainingArtifactReleaseApproval.value?.event_id ??
+            dataset2ControlledTrainingArtifactReleaseApproval.value?.id ??
+            null,
+          requested_by: "dashboard",
+          confirmation_token: "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE_PREFLIGHT",
+          note: "V5.6-P90 metadata-only Dataset2 artifact release preflight; no artifact or file write"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingArtifactReleasePreflights();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training artifact release preflight failed";
+    dataset2ControlledTrainingArtifactReleasePreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactReleasePreflights() {
+  try {
+    dataset2ControlledTrainingArtifactReleasePreflights.value = await fetchJson<Dataset2ControlledTrainingArtifactReleasePreflight[]>(
+      "/api/learning/dataset2/controlled-training-artifact-release-preflights?limit=5"
+    );
+    dataset2ControlledTrainingArtifactReleasePreflight.value =
+      dataset2ControlledTrainingArtifactReleasePreflights.value[0] ?? dataset2ControlledTrainingArtifactReleasePreflight.value;
+  } catch {
+    dataset2ControlledTrainingArtifactReleasePreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingArtifactRelease() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    dataset2ControlledTrainingArtifactReleaseDryRun.value = await fetchJson<Dataset2ControlledTrainingArtifactReleaseDryRun>(
+      "/api/learning/dataset2/controlled-training-artifact-release-dry-run",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          artifact_release_preflight_event_id:
+            dataset2ControlledTrainingArtifactReleasePreflight.value?.event_id ??
+            dataset2ControlledTrainingArtifactReleasePreflight.value?.id ??
+            null,
+          simulated_by: "dashboard",
+          confirmation_token: "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE_DRY_RUN",
+          note: "V5.6-P91 Dataset2 artifact release dry-run; no model artifact, file, or training write"
+        })
+      }
+    );
+    await loadDataset2ControlledTrainingArtifactReleaseDryRuns();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training artifact release dry-run failed";
+    dataset2ControlledTrainingArtifactReleaseDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactReleaseDryRuns() {
+  try {
+    dataset2ControlledTrainingArtifactReleaseDryRuns.value = await fetchJson<Dataset2ControlledTrainingArtifactReleaseDryRun[]>(
+      "/api/learning/dataset2/controlled-training-artifact-release-dry-runs?limit=5"
+    );
+    dataset2ControlledTrainingArtifactReleaseDryRun.value =
+      dataset2ControlledTrainingArtifactReleaseDryRuns.value[0] ?? dataset2ControlledTrainingArtifactReleaseDryRun.value;
+  } catch {
+    dataset2ControlledTrainingArtifactReleaseDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingArtifactReleaseDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactReleaseDryRun.value?.event_id &&
+      !dataset2ControlledTrainingArtifactReleaseDryRun.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactReleaseDryRuns();
+    }
+    dataset2ControlledTrainingArtifactReleaseDryRunReview.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactReleaseDryRunReview>(
+        "/api/learning/dataset2/controlled-training-artifact-release-dry-run-review",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_release_dry_run_event_id:
+              dataset2ControlledTrainingArtifactReleaseDryRun.value?.event_id ??
+              dataset2ControlledTrainingArtifactReleaseDryRun.value?.id ??
+              null,
+            reviewed_by: "dashboard",
+            review_decision: "accepted_for_controlled_dataset2_training_artifact_final_approval",
+            note: "V5.6-P92 review-only Dataset2 artifact release dry-run evidence; no artifact or file write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactReleaseDryRunReviews();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact release dry-run review failed";
+    dataset2ControlledTrainingArtifactReleaseDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactReleaseDryRunReviews() {
+  try {
+    dataset2ControlledTrainingArtifactReleaseDryRunReviews.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactReleaseDryRunReview[]>(
+        "/api/learning/dataset2/controlled-training-artifact-release-dry-run-reviews?limit=5"
+      );
+    dataset2ControlledTrainingArtifactReleaseDryRunReview.value =
+      dataset2ControlledTrainingArtifactReleaseDryRunReviews.value[0] ??
+      dataset2ControlledTrainingArtifactReleaseDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingArtifactReleaseDryRunReviews.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingArtifactFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactReleaseDryRunReview.value?.event_id &&
+      !dataset2ControlledTrainingArtifactReleaseDryRunReview.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactReleaseDryRunReviews();
+    }
+    dataset2ControlledTrainingArtifactFinalApproval.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactFinalApproval>(
+        "/api/learning/dataset2/controlled-training-artifact-final-approval",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_release_dry_run_review_id:
+              dataset2ControlledTrainingArtifactReleaseDryRunReview.value?.event_id ??
+              dataset2ControlledTrainingArtifactReleaseDryRunReview.value?.id ??
+              null,
+            approved_by: "dashboard",
+            approval_decision: "approved_for_controlled_dataset2_training_artifact_final_preflight",
+            confirmation_token: "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL",
+            note: "V5.6-P93 metadata-only Dataset2 artifact final approval; no artifact, file, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactFinalApprovals();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact final approval failed";
+    dataset2ControlledTrainingArtifactFinalApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactFinalApprovals() {
+  try {
+    dataset2ControlledTrainingArtifactFinalApprovals.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactFinalApproval[]>(
+        "/api/learning/dataset2/controlled-training-artifact-final-approvals?limit=5"
+      );
+    dataset2ControlledTrainingArtifactFinalApproval.value =
+      dataset2ControlledTrainingArtifactFinalApprovals.value[0] ??
+      dataset2ControlledTrainingArtifactFinalApproval.value;
+  } catch {
+    dataset2ControlledTrainingArtifactFinalApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingArtifactFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactFinalApproval.value?.event_id &&
+      !dataset2ControlledTrainingArtifactFinalApproval.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactFinalApprovals();
+    }
+    dataset2ControlledTrainingArtifactFinalPreflight.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactFinalPreflight>(
+        "/api/learning/dataset2/controlled-training-artifact-final-preflight",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_final_approval_id:
+              dataset2ControlledTrainingArtifactFinalApproval.value?.event_id ??
+              dataset2ControlledTrainingArtifactFinalApproval.value?.id ??
+              null,
+            requested_by: "dashboard",
+            confirmation_token: "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL_PREFLIGHT",
+            note: "V5.6-P94 metadata-only Dataset2 artifact final preflight; no artifact, file, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactFinalPreflights();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact final preflight failed";
+    dataset2ControlledTrainingArtifactFinalPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactFinalPreflights() {
+  try {
+    dataset2ControlledTrainingArtifactFinalPreflights.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactFinalPreflight[]>(
+        "/api/learning/dataset2/controlled-training-artifact-final-preflights?limit=5"
+      );
+    dataset2ControlledTrainingArtifactFinalPreflight.value =
+      dataset2ControlledTrainingArtifactFinalPreflights.value[0] ??
+      dataset2ControlledTrainingArtifactFinalPreflight.value;
+  } catch {
+    dataset2ControlledTrainingArtifactFinalPreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingArtifactFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactFinalPreflight.value?.event_id &&
+      !dataset2ControlledTrainingArtifactFinalPreflight.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactFinalPreflights();
+    }
+    dataset2ControlledTrainingArtifactFinalDryRun.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactFinalDryRun>(
+        "/api/learning/dataset2/controlled-training-artifact-final-dry-run",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_final_preflight_event_id:
+              dataset2ControlledTrainingArtifactFinalPreflight.value?.event_id ??
+              dataset2ControlledTrainingArtifactFinalPreflight.value?.id ??
+              null,
+            simulated_by: "dashboard",
+            confirmation_token: "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL_DRY_RUN",
+            note: "V5.6-P95 metadata-only Dataset2 artifact final dry-run; no artifact, file, model-body, sample, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactFinalDryRuns();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact final dry-run failed";
+    dataset2ControlledTrainingArtifactFinalDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactFinalDryRuns() {
+  try {
+    dataset2ControlledTrainingArtifactFinalDryRuns.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactFinalDryRun[]>(
+        "/api/learning/dataset2/controlled-training-artifact-final-dry-runs?limit=5"
+      );
+    dataset2ControlledTrainingArtifactFinalDryRun.value =
+      dataset2ControlledTrainingArtifactFinalDryRuns.value[0] ??
+      dataset2ControlledTrainingArtifactFinalDryRun.value;
+  } catch {
+    dataset2ControlledTrainingArtifactFinalDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingArtifactFinalDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactFinalDryRun.value?.event_id &&
+      !dataset2ControlledTrainingArtifactFinalDryRun.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactFinalDryRuns();
+    }
+    dataset2ControlledTrainingArtifactFinalDryRunReview.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactFinalDryRunReview>(
+        "/api/learning/dataset2/controlled-training-artifact-final-dry-run-review",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_final_dry_run_event_id:
+              dataset2ControlledTrainingArtifactFinalDryRun.value?.event_id ??
+              dataset2ControlledTrainingArtifactFinalDryRun.value?.id ??
+              null,
+            reviewed_by: "dashboard",
+            review_decision: "accepted_for_controlled_dataset2_training_artifact_write_preflight",
+            note: "V5.6-P96 review-only Dataset2 artifact final dry-run review; no artifact, file, model-body, sample, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactFinalDryRunReviews();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact final dry-run review failed";
+    dataset2ControlledTrainingArtifactFinalDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactFinalDryRunReviews() {
+  try {
+    dataset2ControlledTrainingArtifactFinalDryRunReviews.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactFinalDryRunReview[]>(
+        "/api/learning/dataset2/controlled-training-artifact-final-dry-run-reviews?limit=5"
+      );
+    dataset2ControlledTrainingArtifactFinalDryRunReview.value =
+      dataset2ControlledTrainingArtifactFinalDryRunReviews.value[0] ??
+      dataset2ControlledTrainingArtifactFinalDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingArtifactFinalDryRunReviews.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingArtifactWrite() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactFinalDryRunReview.value?.event_id &&
+      !dataset2ControlledTrainingArtifactFinalDryRunReview.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactFinalDryRunReviews();
+    }
+    dataset2ControlledTrainingArtifactWritePreflight.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWritePreflight>(
+        "/api/learning/dataset2/controlled-training-artifact-write-preflight",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_final_dry_run_review_id:
+              dataset2ControlledTrainingArtifactFinalDryRunReview.value?.event_id ??
+              dataset2ControlledTrainingArtifactFinalDryRunReview.value?.id ??
+              null,
+            requested_by: "dashboard",
+            confirmation_token: "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_PREFLIGHT",
+            note: "V5.6-P97 preflight-only Dataset2 artifact write preparation; no artifact, file, model-body, sample, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWritePreflights();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write preflight failed";
+    dataset2ControlledTrainingArtifactWritePreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWritePreflights() {
+  try {
+    dataset2ControlledTrainingArtifactWritePreflights.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWritePreflight[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-preflights?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWritePreflight.value =
+      dataset2ControlledTrainingArtifactWritePreflights.value[0] ??
+      dataset2ControlledTrainingArtifactWritePreflight.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWritePreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingArtifactWrite() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWritePreflight.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWritePreflight.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWritePreflights();
+    }
+    dataset2ControlledTrainingArtifactWriteDryRun.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteDryRun>(
+        "/api/learning/dataset2/controlled-training-artifact-write-dry-run",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_preflight_event_id:
+              dataset2ControlledTrainingArtifactWritePreflight.value?.event_id ??
+              dataset2ControlledTrainingArtifactWritePreflight.value?.id ??
+              null,
+            simulated_by: "dashboard",
+            confirmation_token: "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_DRY_RUN",
+            note: "V5.6-P98 dry-run-only Dataset2 artifact write simulation; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteDryRuns();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write dry-run failed";
+    dataset2ControlledTrainingArtifactWriteDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteDryRuns() {
+  try {
+    dataset2ControlledTrainingArtifactWriteDryRuns.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteDryRun[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-dry-runs?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteDryRun.value =
+      dataset2ControlledTrainingArtifactWriteDryRuns.value[0] ??
+      dataset2ControlledTrainingArtifactWriteDryRun.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingArtifactWriteDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteDryRun.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteDryRun.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteDryRuns();
+    }
+    dataset2ControlledTrainingArtifactWriteDryRunReview.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteDryRunReview>(
+        "/api/learning/dataset2/controlled-training-artifact-write-dry-run-review",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_dry_run_event_id:
+              dataset2ControlledTrainingArtifactWriteDryRun.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteDryRun.value?.id ??
+              null,
+            reviewed_by: "dashboard",
+            review_decision: "accepted_for_controlled_dataset2_training_artifact_write_approval",
+            note: "V5.6-P99 review-only Dataset2 artifact write dry-run review; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteDryRunReviews();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write dry-run review failed";
+    dataset2ControlledTrainingArtifactWriteDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteDryRunReviews() {
+  try {
+    dataset2ControlledTrainingArtifactWriteDryRunReviews.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteDryRunReview[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-dry-run-reviews?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteDryRunReview.value =
+      dataset2ControlledTrainingArtifactWriteDryRunReviews.value[0] ??
+      dataset2ControlledTrainingArtifactWriteDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteDryRunReviews.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingArtifactWrite() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteDryRunReview.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteDryRunReview.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteDryRunReviews();
+    }
+    dataset2ControlledTrainingArtifactWriteApproval.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteApproval>(
+        "/api/learning/dataset2/controlled-training-artifact-write-approval",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_dry_run_review_id:
+              dataset2ControlledTrainingArtifactWriteDryRunReview.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteDryRunReview.value?.id ??
+              null,
+            approved_by: "dashboard",
+            approval_decision: "approved_for_controlled_dataset2_training_artifact_write_execution_preflight",
+            confirmation_token: "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE",
+            note: "V5.6-P100 metadata-only Dataset2 artifact write approval; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteApprovals();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write approval failed";
+    dataset2ControlledTrainingArtifactWriteApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteApprovals() {
+  try {
+    dataset2ControlledTrainingArtifactWriteApprovals.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteApproval[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-approvals?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteApproval.value =
+      dataset2ControlledTrainingArtifactWriteApprovals.value[0] ??
+      dataset2ControlledTrainingArtifactWriteApproval.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingArtifactWriteExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteApproval.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteApproval.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteApprovals();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionPreflight.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionPreflight>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-preflight",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_approval_id:
+              dataset2ControlledTrainingArtifactWriteApproval.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteApproval.value?.id ??
+              null,
+            requested_by: "dashboard",
+            confirmation_token: "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_PREFLIGHT",
+            note: "V5.6-P101 metadata-only Dataset2 artifact write execution preflight; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionPreflights();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution preflight failed";
+    dataset2ControlledTrainingArtifactWriteExecutionPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionPreflights() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionPreflights.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionPreflight[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-preflights?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionPreflight.value =
+      dataset2ControlledTrainingArtifactWriteExecutionPreflights.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionPreflight.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionPreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingArtifactWriteExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionPreflight.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionPreflight.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionPreflights();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionDryRun.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionDryRun>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-dry-run",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_preflight_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionPreflight.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionPreflight.value?.id ??
+              null,
+            simulated_by: "dashboard",
+            confirmation_token: "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_DRY_RUN",
+            note: "V5.6-P102 metadata-only Dataset2 artifact write execution dry-run; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionDryRuns();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution dry-run failed";
+    dataset2ControlledTrainingArtifactWriteExecutionDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionDryRuns() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionDryRuns.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionDryRun[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-dry-runs?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionDryRun.value =
+      dataset2ControlledTrainingArtifactWriteExecutionDryRuns.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionDryRun.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingArtifactWriteExecutionDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionDryRun.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionDryRun.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionDryRuns();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionDryRunReview>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-dry-run-review",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_dry_run_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionDryRun.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionDryRun.value?.id ??
+              null,
+            reviewed_by: "dashboard",
+            review_decision: "accepted_for_controlled_dataset2_training_artifact_write_execution_final_approval",
+            note: "V5.6-P103 review-only Dataset2 artifact write execution dry-run review; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionDryRunReviews();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution dry-run review failed";
+    dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionDryRunReviews() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionDryRunReviews.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionDryRunReview[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-dry-run-reviews?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.value =
+      dataset2ControlledTrainingArtifactWriteExecutionDryRunReviews.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionDryRunReviews.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingArtifactWriteExecutionFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionDryRunReviews();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalApproval>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-approval",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_dry_run_review_id:
+              dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionDryRunReview.value?.id ??
+              null,
+            approved_by: "dashboard",
+            approval_decision: "approved_for_controlled_dataset2_training_artifact_write_execution_final_preflight",
+            confirmation_token: "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL",
+            note: "V5.6-P104 metadata-only Dataset2 artifact write execution final approval; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalApprovals();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final approval failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalApprovals() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalApprovals.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalApproval[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-approvals?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalApprovals.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingArtifactWriteExecutionFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalApprovals();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-preflight",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_approval_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalApproval.value?.id ??
+              null,
+            requested_by: "dashboard",
+            confirmation_token: "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_PREFLIGHT",
+            note: "V5.6-P105 metadata-only Dataset2 artifact write execution final preflight; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalPreflights();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final preflight failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalPreflights() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalPreflights.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-preflights?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalPreflights.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalPreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingArtifactWriteExecutionFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalPreflights();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-dry-run",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_preflight_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalPreflight.value?.id ??
+              null,
+            simulated_by: "dashboard",
+            confirmation_token: "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_DRY_RUN",
+            note: "V5.6-P106 metadata-only Dataset2 artifact write execution final dry-run; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalDryRuns();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final dry-run failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalDryRuns() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalDryRuns.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-dry-runs?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalDryRuns.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingArtifactWriteExecutionFinalDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalDryRuns();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-dry-run-review",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_dry_run_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalDryRun.value?.id ??
+              null,
+            reviewed_by: "dashboard",
+            review_decision: "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_approval",
+            note: "V5.6-P107 review-only Dataset2 artifact write execution final dry-run review; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviews();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final dry-run review failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviews() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviews.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-dry-run-reviews?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviews.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviews.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingArtifactWriteExecutionFinalWrite() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviews();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-approval",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_dry_run_review_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReview.value?.id ??
+              null,
+            approved_by: "dashboard",
+            approval_decision:
+              "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_preflight",
+            confirmation_token:
+              "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE",
+            note: "V5.6-P108 metadata-only Dataset2 artifact write execution final write approval; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovals();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write approval failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovals() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovals.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-approvals?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovals.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingArtifactWriteExecutionFinalWrite() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovals();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-preflight",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_approval_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteApproval.value?.id ??
+              null,
+            requested_by: "dashboard",
+            confirmation_token:
+              "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_PREFLIGHT",
+            note: "V5.6-P109 metadata-only Dataset2 artifact write execution final write preflight; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflights();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write preflight failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflights() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflights.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-preflights?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflights.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingArtifactWriteExecutionFinalWrite() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflights();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-run",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_preflight_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflight.value?.id ??
+              null,
+            simulated_by: "dashboard",
+            confirmation_token:
+              "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_DRY_RUN",
+            note: "V5.6-P110 metadata-only Dataset2 artifact write execution final write dry-run; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRuns();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write dry-run failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRuns() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRuns.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-runs?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRuns.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRuns();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-run-review",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_dry_run_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRun.value?.id ??
+              null,
+            reviewed_by: "dashboard",
+            review_decision:
+              "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval",
+            note: "V5.6-P111 metadata-only Dataset2 artifact write execution final write dry-run review; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviews();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write dry-run review failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviews() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviews.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-run-reviews?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviews.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviews.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviews();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-approval",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_dry_run_review_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReview.value?.id ??
+              null,
+            approved_by: "dashboard",
+            approval_decision:
+              "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight",
+            confirmation_token:
+              "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION",
+            note: "V5.6-P112 metadata-only Dataset2 artifact write execution final write execution approval; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovals();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution approval failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovals() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovals.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-approvals?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovals.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovals();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-preflight",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_approval_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApproval.value?.id ??
+              null,
+            requested_by: "dashboard",
+            confirmation_token:
+              "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_PREFLIGHT",
+            note: "V5.6-P113 metadata-only Dataset2 artifact write execution final write execution preflight; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflights();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution preflight failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflights() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflights.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-preflights?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflights.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecution() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.value?.event_id &&
+      !dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.value?.id
+    ) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflights();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-run",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_preflight_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflight.value?.id ??
+              null,
+            simulated_by: "dashboard",
+            confirmation_token:
+              "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_DRY_RUN",
+            note: "V5.6-P114 metadata-only Dataset2 artifact write execution final write execution dry-run; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRuns();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution dry-run failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRuns() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRuns.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-runs?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRuns.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.value) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRuns();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-run-review",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_dry_run_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRun.value?.id ??
+              null,
+            reviewed_by: "dashboard",
+            review_decision:
+              "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval",
+            note: "V5.6-P115 metadata-only Dataset2 artifact write execution final write execution dry-run review; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviews();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution dry-run review failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviews() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviews.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-run-reviews?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviews.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviews.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.value) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviews();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-approval",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_dry_run_review_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReview.value?.id ??
+              null,
+            approved_by: "dashboard",
+            approval_decision:
+              "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight",
+            confirmation_token:
+              "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL",
+            note: "V5.6-P116 metadata-only Dataset2 artifact write execution final write execution final approval; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovals();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution final approval failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovals() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovals.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-approvals?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovals.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.value) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovals();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-preflight",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_final_approval_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApproval.value?.id ??
+              null,
+            requested_by: "dashboard",
+            confirmation_token:
+              "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_PREFLIGHT",
+            note: "V5.6-P117 metadata-only Dataset2 artifact write execution final write execution final preflight; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflights();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution final preflight failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflights() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflights.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-preflights?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflights.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.value) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflights();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-run",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_final_preflight_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflight.value?.id ??
+              null,
+            simulated_by: "dashboard",
+            confirmation_token:
+              "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_DRY_RUN",
+            note: "V5.6-P118 metadata-only Dataset2 artifact write execution final write execution final dry-run; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRuns();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution final dry-run failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRuns() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRuns.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-runs?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRuns.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.value) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRuns();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-run-review",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_final_dry_run_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRun.value?.id ??
+              null,
+            reviewed_by: "dashboard",
+            review_decision:
+              "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval",
+            note: "V5.6-P119 metadata-only Dataset2 artifact write execution final write execution final dry-run review; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviews();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution final dry-run review failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviews() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviews.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-run-reviews?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviews.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviews.value = [];
+  }
+}
+
+async function approveDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.value) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviews();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-approval",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_final_dry_run_review_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReview.value?.id ??
+              null,
+            approved_by: "dashboard",
+            approval_decision:
+              "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight",
+            confirmation_token:
+              "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL",
+            note: "V5.6-P120 metadata-only Dataset2 artifact write execution final write execution final final approval; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovals();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution final final approval failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovals() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovals.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-approvals?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovals.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovals.value = [];
+  }
+}
+
+async function preflightDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.value) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovals();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-preflight",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_final_final_approval_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApproval.value?.id ??
+              null,
+            requested_by: "dashboard",
+            confirmation_token:
+              "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_PREFLIGHT",
+            note: "V5.6-P121 metadata-only Dataset2 artifact write execution final write execution final final preflight; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflights();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution final final preflight failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflights() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflights.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-preflights?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflights.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflights.value = [];
+  }
+}
+
+async function dryRunDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinal() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.value) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflights();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_final_final_preflight_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflight.value?.id ??
+              null,
+            simulated_by: "dashboard",
+            confirmation_token:
+              "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_DRY_RUN",
+            note: "V5.6-P122 metadata-only Dataset2 artifact write execution final write execution final final dry-run; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRuns();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution final final dry-run failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRuns() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRuns.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-runs?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRuns.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRuns.value = [];
+  }
+}
+
+async function reviewDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun() {
+  dataset2Loading.value = true;
+  error.value = "";
+  try {
+    if (!dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.value) {
+      await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRuns();
+    }
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run-review",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            artifact_write_execution_final_write_execution_final_final_dry_run_event_id:
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.value?.event_id ??
+              dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRun.value?.id ??
+              null,
+            reviewed_by: "dashboard",
+            review_decision:
+              "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval",
+            note: "V5.6-P123 metadata-only Dataset2 artifact write execution final write execution final final dry-run review; no artifact, file, model-body, sample, source, or training write"
+          })
+        }
+      );
+    await loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReviews();
+  } catch (err) {
+    error.value =
+      err instanceof Error
+        ? err.message
+        : "Dataset2 controlled training artifact write execution final write execution final final dry-run review failed";
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.value = null;
+  } finally {
+    dataset2Loading.value = false;
+  }
+}
+
+async function loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReviews() {
+  try {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReviews.value =
+      await fetchJson<Dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview[]>(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run-reviews?limit=5"
+      );
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.value =
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReviews.value[0] ??
+      dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReview.value;
+  } catch {
+    dataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReviews.value = [];
+  }
+}
+
 async function loadMonitoring() {
   try {
     const session = await fetchJson<{ summary?: MonitoringRun }>("/api/monitoring/sessions/latest");
@@ -13320,7 +22061,7 @@ async function runScan() {
     await loadLifecycleSummary();
     await loadScores();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "扫描失败";
+    error.value = err instanceof Error ? err.message : "鎵弿澶辫触";
   } finally {
     loading.value = false;
   }
@@ -13334,14 +22075,14 @@ async function runAutoDiscovery() {
       method: "POST"
     });
     if (discovery.value.status === "failed") {
-      error.value = discovery.value.error || "自动发现失败";
+      error.value = discovery.value.error || "鑷姩鍙戠幇澶辫触";
       return;
     }
     await runScan();
     await loadLifecycleSummary();
     await loadScores();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "自动发现失败";
+    error.value = err instanceof Error ? err.message : "鑷姩鍙戠幇澶辫触";
   } finally {
     discoveryLoading.value = false;
   }
@@ -13355,7 +22096,7 @@ async function loadPlan() {
   try {
     plan.value = await fetchJson<SimulationPlan>(`/api/simulation/plan/${first.symbol}`);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "模拟计划生成失败";
+    error.value = err instanceof Error ? err.message : "妯℃嫙璁″垝鐢熸垚澶辫触";
   } finally {
     planLoading.value = false;
   }
@@ -13369,7 +22110,7 @@ async function runAnalysis() {
   try {
     analysis.value = await fetchJson<any>(`/api/decision/analyze-symbol/${first.symbol}`);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "分析生成失败";
+    error.value = err instanceof Error ? err.message : "鍒嗘瀽鐢熸垚澶辫触";
   } finally {
     analysisLoading.value = false;
   }
@@ -13378,7 +22119,16 @@ async function runAnalysis() {
 async function runAutomation() {
   automationLoading.value = true;
   error.value = "";
-  try {
+    automationRunSteps.value = [];
+    automationFailedSteps.value = [];
+    automationNextAction.value = null;
+    automationDurationMs.value = null;
+    automationEffectiveCycleParams.value = null;
+    automationQualityGates.value = [];
+    automationQualityEventsCount.value = null;
+    automationSuppressedByQualitySymbols.value = [];
+    automationQualityNextAction.value = null;
+    try {
     const cycle = await fetchJson<AutomationCycle>(
       "/api/automation/cycles/run-once?limit=5&monitor_limit=5&review_symbol=SZ002081",
       {
@@ -13401,6 +22151,15 @@ async function runAutomation() {
     learningReport.value = cycle.learning_report ?? null;
     monitoring.value = cycle.monitoring ?? null;
     monitoringReview.value = cycle.monitoring_review ?? null;
+    automationRunSteps.value = cycle.run_steps ?? [];
+    automationFailedSteps.value = cycle.failed_steps ?? [];
+    automationNextAction.value = cycle.next_action ?? null;
+    automationDurationMs.value = cycle.duration_ms ?? null;
+    automationEffectiveCycleParams.value = cycle.effective_cycle_params ?? cycle.effective_params ?? null;
+    automationQualityGates.value = cycle.quality_gates ?? [];
+    automationQualityEventsCount.value = cycle.quality_events_count ?? null;
+    automationSuppressedByQualitySymbols.value = cycle.suppressed_by_quality_symbols ?? [];
+    automationQualityNextAction.value = cycle.quality_next_action ?? null;
     if (cycle.live_trading_enabled) {
       throw new Error("Live trading unexpectedly enabled");
     }
@@ -13426,7 +22185,7 @@ async function runMonitoring() {
       method: "POST"
     });
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "监控运行失败";
+    error.value = err instanceof Error ? err.message : "鐩戞帶杩愯澶辫触";
   } finally {
     monitoringLoading.value = false;
   }
@@ -13442,7 +22201,7 @@ async function runPhaseReplay() {
     phaseReplays.value = result.results;
     await loadLearningReport();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "阶段回放失败";
+    error.value = err instanceof Error ? err.message : "闃舵鍥炴斁澶辫触";
   } finally {
     phaseReplayLoading.value = false;
   }
@@ -13453,12 +22212,12 @@ async function runPhaseMatch() {
   error.value = "";
   try {
     phaseMatch.value = await fetchJson<PhaseMatch>(
-      "/api/learning/phase-matches/SH600135?name=乐凯胶片&lookback_years=3",
+      "/api/learning/phase-matches/SH600135?name=涔愬嚡鑳剁墖&lookback_years=3",
       { method: "POST" }
     );
     await loadPhaseReplay();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "阶段匹配失败";
+    error.value = err instanceof Error ? err.message : "闃舵鍖归厤澶辫触";
   } finally {
     phaseMatchLoading.value = false;
   }
@@ -13483,9 +22242,50 @@ async function runPotentialSearch() {
     await loadScores();
     await loadLifecycleSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "潜力搜索失败";
+    error.value = err instanceof Error ? err.message : "娼滃姏鎼滅储澶辫触";
   } finally {
     potentialSearchLoading.value = false;
+  }
+}
+
+async function loadOffhourResearch() {
+  try {
+    const [capabilities, latest, candidate] = await Promise.all([
+      fetchJson<OffhourResearchCapabilities>("/api/research/offhour/capabilities"),
+      fetchJson<OffhourResearchRun>("/api/research/offhour/runs/latest"),
+      fetchJson<OffhourModelCandidate>("/api/research/offhour/model-candidates/latest"),
+    ]);
+    offhourResearchCapabilities.value = capabilities;
+    offhourResearchLatest.value = latest.status === "empty" ? null : latest;
+    offhourModelCandidate.value = candidate.status === "empty" ? null : candidate;
+  } catch {
+    offhourResearchCapabilities.value = null;
+    offhourResearchLatest.value = null;
+    offhourModelCandidate.value = null;
+  }
+}
+
+async function runOffhourResearch() {
+  offhourResearchLoading.value = true;
+  error.value = "";
+  try {
+    offhourResearchLatest.value = await fetchJson<OffhourResearchRun>("/api/research/offhour/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        limit: 100,
+        strategy_limit: 50,
+        history_days: 240,
+        write_artifact: true,
+        refresh_history: false,
+        requested_by: "dashboard",
+      }),
+    });
+    await Promise.all([loadOffhourResearch(), loadScores(), loadBacktestRuns()]);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "盘后研究循环失败";
+  } finally {
+    offhourResearchLoading.value = false;
   }
 }
 
@@ -13716,7 +22516,7 @@ async function loadTradeExecutionGateway() {
     tradeGatewayAuditMigrationHealthDigestHistoryReleaseEvidenceComparison.value = auditMigrationHealthDigestHistoryReleaseEvidenceComparisonData;
     tradeGatewayAuditMigrationHealthDigestHistoryReleaseHealthDigest.value = auditMigrationHealthDigestHistoryReleaseHealthDigestData;
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "交易执行网关门禁加载失败";
+    error.value = err instanceof Error ? err.message : "浜ゆ槗鎵ц缃戝叧闂ㄧ鍔犺浇澶辫触";
   } finally {
     tradeGatewayLoading.value = false;
   }
@@ -13895,7 +22695,7 @@ async function runAgentTask(taskType: string) {
     await loadAgentTasks();
     await loadAgentAudit();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Agent任务执行失败";
+    error.value = err instanceof Error ? err.message : "Agent浠诲姟鎵ц澶辫触";
   } finally {
     agentTaskLoading.value = false;
   }
@@ -13909,7 +22709,7 @@ async function executeTask(id: number) {
     await loadAgentTasks();
     await loadAgentAudit();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "执行失败";
+    error.value = err instanceof Error ? err.message : "鎵ц澶辫触";
   } finally {
     agentTaskLoading.value = false;
   }
@@ -13925,7 +22725,7 @@ async function approveTask(id: number) {
     await loadAgentTasks();
     await loadAgentAudit();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "审批失败";
+    error.value = err instanceof Error ? err.message : "瀹℃壒澶辫触";
   }
 }
 
@@ -13939,7 +22739,7 @@ async function rejectTask(id: number) {
     await loadAgentTasks();
     await loadAgentAudit();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "拒绝失败";
+    error.value = err instanceof Error ? err.message : "鎷掔粷澶辫触";
   }
 }
 
@@ -13984,7 +22784,7 @@ async function ingestAgentLearning() {
     await loadAgentLearningSamples();
     await loadAgentLearningSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Agent学习收集失败";
+    error.value = err instanceof Error ? err.message : "Agent瀛︿範鏀堕泦澶辫触";
   } finally {
     agentLearningLoading.value = false;
   }
@@ -14014,7 +22814,7 @@ async function labelRecentOutcomes() {
     await loadAgentOutcomes();
     await loadAgentOutcomeSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "评估结局失败";
+    error.value = err instanceof Error ? err.message : "璇勪及缁撳眬澶辫触";
   } finally {
     agentOutcomeLoading.value = false;
   }
@@ -14068,7 +22868,7 @@ function modelReview(record: CodeEvolutionRecord): Record<string, any> | null {
 }
 
 function modelReviewSummary(record: CodeEvolutionRecord) {
-  return String(modelReview(record)?.response?.explanation?.summary ?? "暂无摘要");
+  return String(modelReview(record)?.response?.explanation?.summary ?? "鏆傛棤鎽樿");
 }
 
 function modelReviewTags(record: CodeEvolutionRecord): string[] {
@@ -14111,7 +22911,7 @@ async function generateCalibrationProposals() {
     await loadCalibrationProposals();
     await loadSignalPerformanceSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "校准提案生成失败";
+    error.value = err instanceof Error ? err.message : "鏍″噯鎻愭鐢熸垚澶辫触";
   } finally {
     calibrationLoading.value = false;
   }
@@ -14126,7 +22926,7 @@ async function approveCalibrationProposal(id: number) {
     });
     await loadCalibrationProposals();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "审批失败";
+    error.value = err instanceof Error ? err.message : "瀹℃壒澶辫触";
   }
 }
 
@@ -14139,7 +22939,7 @@ async function rejectCalibrationProposal(id: number) {
     });
     await loadCalibrationProposals();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "拒绝失败";
+    error.value = err instanceof Error ? err.message : "鎷掔粷澶辫触";
   }
 }
 
@@ -14175,7 +22975,7 @@ async function runSandboxApproved() {
     await loadSandboxExperiments();
     await loadSandboxSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "沙盒实验执行失败";
+    error.value = err instanceof Error ? err.message : "娌欑洅瀹為獙鎵ц澶辫触";
   } finally {
     sandboxLoading.value = false;
   }
@@ -14220,7 +23020,7 @@ async function draftSimPolicies() {
     await loadPaperSimPolicies();
     await loadPaperSimSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "生成模拟策略草稿失败";
+    error.value = err instanceof Error ? err.message : "鐢熸垚妯℃嫙绛栫暐鑽夌澶辫触";
   } finally {
     paperSimLoading.value = false;
   }
@@ -14236,7 +23036,7 @@ async function approveSimPolicy(id: number) {
     await loadPaperSimPolicies();
     await loadPaperSimSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "审批失败";
+    error.value = err instanceof Error ? err.message : "瀹℃壒澶辫触";
   }
 }
 
@@ -14250,7 +23050,7 @@ async function rejectSimPolicy(id: number) {
     await loadPaperSimPolicies();
     await loadPaperSimSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "拒绝失败";
+    error.value = err instanceof Error ? err.message : "鎷掔粷澶辫触";
   }
 }
 
@@ -14262,7 +23062,7 @@ async function runApprovedSimulations() {
     await loadPaperSimRuns();
     await loadPaperSimSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "运行模拟失败";
+    error.value = err instanceof Error ? err.message : "杩愯妯℃嫙澶辫触";
   } finally {
     paperSimLoading.value = false;
   }
@@ -14299,7 +23099,7 @@ async function evaluateRecentSimulations() {
     await loadPaperSimEvalSummary();
     await loadPaperSimEvalPolicies();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "评估模拟动作失败";
+    error.value = err instanceof Error ? err.message : "璇勪及妯℃嫙鍔ㄤ綔澶辫触";
   } finally {
     paperSimEvalLoading.value = false;
   }
@@ -14352,7 +23152,7 @@ async function runDailyBarRefresh() {
     await fetchJson("/api/data/daily-bars/refresh?limit=50&days=120", { method: "POST" });
     await loadPriceReadinessSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "日线缓存刷新失败";
+    error.value = err instanceof Error ? err.message : "鏃ョ嚎缂撳瓨鍒锋柊澶辫触";
   } finally {
     dailyBarRefreshLoading.value = false;
   }
@@ -14409,7 +23209,7 @@ async function refreshRealtimeEvents() {
     );
     await loadRealtimeData();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "实时事件刷新失败";
+    error.value = err instanceof Error ? err.message : "瀹炴椂浜嬩欢鍒锋柊澶辫触";
   } finally {
     realtimeLoading.value = false;
   }
@@ -14425,7 +23225,7 @@ async function syncRealtimeMonitoring() {
     );
     await loadRealtimeData();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "实时监控提醒同步失败";
+    error.value = err instanceof Error ? err.message : "瀹炴椂鐩戞帶鎻愰啋鍚屾澶辫触";
   } finally {
     realtimeLoading.value = false;
   }
@@ -14444,7 +23244,7 @@ async function runRealtimeCycle() {
     realtimeReplay.value = realtimeCycleResult.value.steps.replay;
     await loadRealtimeData();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "实时闭环运行失败";
+    error.value = err instanceof Error ? err.message : "瀹炴椂闂幆杩愯澶辫触";
   } finally {
     realtimeLoading.value = false;
   }
@@ -14457,9 +23257,204 @@ async function runRealtimeReplay() {
     realtimeReplay.value = await fetchJson<RealtimeReplay>("/api/realtime/replay?limit=100", { method: "POST" });
     await loadRealtimeData();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "实时信号 Replay 失败";
+    error.value = err instanceof Error ? err.message : "瀹炴椂淇″彿 Replay 澶辫触";
   } finally {
     realtimeLoading.value = false;
+  }
+}
+
+async function loadSimCockpit() {
+  simCockpitLoading.value = true;
+  try {
+    const [statusData, actionsData, readbacksData, stageData, trainingStatusData] = await Promise.all([
+      fetchJson<SimCockpitStatus>("/api/sim-cockpit/status"),
+      fetchJson<SimCockpitAction[]>("/api/sim-cockpit/actions/latest?limit=10"),
+      fetchJson<SimCockpitReadback[]>("/api/sim-cockpit/readbacks/latest?limit=10"),
+      fetchJson<Dataset2StageSummary>("/api/learning/dataset2/stage-summary"),
+      fetchJson<Dataset2TrainingStatus>("/api/learning/dataset2/training/status")
+    ]);
+    simCockpitStatus.value = statusData;
+    simCockpitActions.value = actionsData;
+    simCockpitReadbacks.value = readbacksData;
+    simCockpitDataset2Stage.value = stageData;
+    simCockpitDataset2TrainingStatus.value = trainingStatusData;
+  } catch (err) {
+    simCockpitStatus.value = null;
+    simCockpitActions.value = [];
+    simCockpitReadbacks.value = [];
+    simCockpitDataset2Stage.value = null;
+    simCockpitDataset2TrainingStatus.value = null;
+    error.value = err instanceof Error ? err.message : "Sim cockpit load failed";
+  } finally {
+    simCockpitLoading.value = false;
+  }
+}
+
+async function verifySimCockpitFixture() {
+  simCockpitLoading.value = true;
+  error.value = "";
+  try {
+    await fetchJson("/api/sim-cockpit/verify-window", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        window_title: "Tonghuashun hexin mncg simulation window",
+        visible_text: "mncg simulation simulated account",
+        raw_payload: {
+          process_name: "hexin.exe",
+          source: "dashboard_fixture"
+        },
+        detected_items: [{ type: "mode", value: "mncg" }],
+        verified_by: "dashboard",
+        confidence: 0.95
+      })
+    });
+    await loadSimCockpit();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Sim cockpit verification failed";
+  } finally {
+    simCockpitLoading.value = false;
+  }
+}
+
+async function detectSimCockpitWindow() {
+  simCockpitLoading.value = true;
+  error.value = "";
+  try {
+    simCockpitWindowDetection.value = await fetchJson<SimCockpitWindowDetection>(
+      "/api/sim-cockpit/window-detection?record=true"
+    );
+    await loadSimCockpit();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Sim cockpit window detection failed";
+  } finally {
+    simCockpitLoading.value = false;
+  }
+}
+
+async function dryRunSimCockpitScreen() {
+  simCockpitLoading.value = true;
+  error.value = "";
+  try {
+    const verificationId = simCockpitStatus.value?.latest_verification?.id ?? null;
+    await fetchJson("/api/sim-cockpit/actions/buy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol: "SZ002081",
+        price: 10,
+        quantity: 100,
+        signal_source: "dashboard_screen_dry_run",
+        risk_result: { simulation_allowed: true, all_gates_passed: true },
+        window_verification_id: verificationId,
+        requested_by: "dashboard",
+        dry_run: true,
+        execution_mode: "dry_run_screen"
+      })
+    });
+    await loadSimCockpit();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Sim cockpit dry-run failed";
+  } finally {
+    simCockpitLoading.value = false;
+  }
+}
+
+async function executeSimCockpitScreenClick() {
+  simCockpitLoading.value = true;
+  error.value = "";
+  try {
+    const verificationId = simCockpitStatus.value?.latest_verification?.id ?? null;
+    await fetchJson("/api/sim-cockpit/actions/buy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol: "SZ002081",
+        price: 10,
+        quantity: 100,
+        signal_source: "dashboard_screen_click_simulation",
+        risk_result: { simulation_allowed: true, all_gates_passed: true },
+        window_verification_id: verificationId,
+        requested_by: "dashboard",
+        execution_mode: "screen_click_simulation",
+        screen_confirmation: "SIMULATION_SCREEN_CLICK"
+      })
+    });
+    await loadSimCockpit();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Sim cockpit screen click failed";
+  } finally {
+    simCockpitLoading.value = false;
+  }
+}
+
+async function runSimulationCockpitCycle() {
+  simCockpitLoading.value = true;
+  error.value = "";
+  try {
+    simCockpitCycle.value = await fetchJson<SimCockpitCycleResult>(
+      "/api/automation/cycles/simulation-cockpit-run?limit=5",
+      { method: "POST" }
+    );
+    await loadSimCockpit();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Sim cockpit cycle failed";
+  } finally {
+    simCockpitLoading.value = false;
+  }
+}
+
+async function runDataset2SimpleDryRun() {
+  simCockpitLoading.value = true;
+  error.value = "";
+  try {
+    simCockpitDataset2DryRun.value = await fetchJson<Dataset2SimpleDryRun>(
+      "/api/learning/dataset2/training/dry-run",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 200, requested_by: "dashboard" })
+      }
+    );
+    await loadSimCockpit();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 dry-run failed";
+  } finally {
+    simCockpitLoading.value = false;
+  }
+}
+
+async function loadDataset2TrainingStatus() {
+  simCockpitLoading.value = true;
+  error.value = "";
+  try {
+    simCockpitDataset2TrainingStatus.value = await fetchJson<Dataset2TrainingStatus>(
+      "/api/learning/dataset2/training/status"
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 training status failed";
+  } finally {
+    simCockpitLoading.value = false;
+  }
+}
+
+async function runDataset2ControlledTraining() {
+  simCockpitLoading.value = true;
+  error.value = "";
+  try {
+    simCockpitDataset2TrainingRun.value = await fetchJson<Dataset2ControlledTrainingRun>(
+      "/api/learning/dataset2/training/run",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 200, requested_by: "dashboard" })
+      }
+    );
+    await loadSimCockpit();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Dataset2 controlled training failed";
+  } finally {
+    simCockpitLoading.value = false;
   }
 }
 
@@ -14572,7 +23567,7 @@ async function refreshScreenReadinessAudit() {
       "/api/screen-monitoring/readiness-audit?limit=20"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Readiness audit 生成失败";
+    error.value = err instanceof Error ? err.message : "Readiness audit 鐢熸垚澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14595,7 +23590,7 @@ async function acknowledgeScreenReadinessAudit() {
     );
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Readiness audit 确认失败";
+    error.value = err instanceof Error ? err.message : "Readiness audit 纭澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14609,7 +23604,7 @@ async function refreshScreenReadinessTimeline() {
       "/api/screen-monitoring/readiness-timeline?limit=40"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Readiness timeline 刷新失败";
+    error.value = err instanceof Error ? err.message : "Readiness timeline 鍒锋柊澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14623,7 +23618,7 @@ async function refreshScreenReadinessExport() {
       "/api/screen-monitoring/readiness-export?limit=40"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Readiness evidence export 生成失败";
+    error.value = err instanceof Error ? err.message : "Readiness evidence export 鐢熸垚澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14637,7 +23632,7 @@ async function verifyScreenReadinessExport() {
       "/api/screen-monitoring/readiness-export/verify?limit=40"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Readiness evidence verifier 校验失败";
+    error.value = err instanceof Error ? err.message : "Readiness evidence verifier 鏍￠獙澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14651,7 +23646,7 @@ async function compareScreenReadinessEvidence() {
       "/api/screen-monitoring/readiness-export/compare?limit=40"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Readiness evidence comparison 对比失败";
+    error.value = err instanceof Error ? err.message : "Readiness evidence comparison 瀵规瘮澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14665,7 +23660,7 @@ async function refreshScreenReadinessHealth() {
       "/api/screen-monitoring/readiness-health?limit=40"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Readiness health digest 生成失败";
+    error.value = err instanceof Error ? err.message : "Readiness health digest 鐢熸垚澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14679,7 +23674,7 @@ async function refreshScreenDigestHistoryProposal() {
       "/api/screen-monitoring/readiness-health/history-proposal?limit=40"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Digest history proposal 生成失败";
+    error.value = err instanceof Error ? err.message : "Digest history proposal 鐢熸垚澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14693,7 +23688,7 @@ async function refreshScreenDigestMigrationChecklist() {
       "/api/screen-monitoring/readiness-health/history-migration-checklist?limit=40"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Digest history migration checklist 生成失败";
+    error.value = err instanceof Error ? err.message : "Digest history migration checklist 鐢熸垚澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14712,7 +23707,7 @@ async function verifyScreenDigestMigrationSpec() {
       }
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Digest history migration spec 校验失败";
+    error.value = err instanceof Error ? err.message : "Digest history migration spec 鏍￠獙澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14747,7 +23742,7 @@ async function approveScreenDigestMigrationSpec() {
       "/api/screen-monitoring/readiness-health/history-migration-release-package?limit=40&max_age_days=7"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Digest history migration spec 审批记录失败";
+    error.value = err instanceof Error ? err.message : "Digest history migration spec 瀹℃壒璁板綍澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14761,7 +23756,7 @@ async function refreshScreenDigestReleaseReadiness() {
       "/api/screen-monitoring/readiness-health/history-migration-release-readiness?limit=40"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Digest history release readiness 生成失败";
+    error.value = err instanceof Error ? err.message : "Digest history release readiness 鐢熸垚澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14775,7 +23770,7 @@ async function refreshScreenDigestApprovalReview() {
       "/api/screen-monitoring/readiness-health/history-migration-approval-review?limit=40&max_age_days=7"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Digest history approval review 生成失败";
+    error.value = err instanceof Error ? err.message : "Digest history approval review 鐢熸垚澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14789,7 +23784,7 @@ async function refreshScreenDigestReleasePackage() {
       "/api/screen-monitoring/readiness-health/history-migration-release-package?limit=40&max_age_days=7"
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Digest history release package 生成失败";
+    error.value = err instanceof Error ? err.message : "Digest history release package 鐢熸垚澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14810,7 +23805,7 @@ async function replayScreenFixture() {
     screenObservationResult.value = screenFixtureReplayResult.value.observation;
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "屏幕 fixture 回放失败";
+    error.value = err instanceof Error ? err.message : "灞忓箷 fixture 鍥炴斁澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14831,7 +23826,7 @@ async function runScreenCapturePreflight() {
     screenObservationResult.value = screenPreflightResult.value.observation;
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "屏幕截图预检失败";
+    error.value = err instanceof Error ? err.message : "灞忓箷鎴浘棰勬澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14853,7 +23848,7 @@ async function runScreenCaptureStub() {
     screenArtifactSyncResult.value = null;
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "截图 artifact stub 生成失败";
+    error.value = err instanceof Error ? err.message : "鎴浘 artifact stub 鐢熸垚澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14871,7 +23866,7 @@ async function syncScreenArtifactReviews() {
     screenArtifactPolicy.value = screenArtifactSyncResult.value.policy;
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Artifact 复核队列同步失败";
+    error.value = err instanceof Error ? err.message : "Artifact 澶嶆牳闃熷垪鍚屾澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14888,7 +23883,7 @@ async function approveScreenArtifactReview(id: number) {
     });
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Artifact 复核接受失败";
+    error.value = err instanceof Error ? err.message : "Artifact 澶嶆牳鎺ュ彈澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14905,7 +23900,7 @@ async function rejectScreenArtifactReview(id: number) {
     });
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Artifact 复核拒绝失败";
+    error.value = err instanceof Error ? err.message : "Artifact 澶嶆牳鎷掔粷澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14925,7 +23920,7 @@ async function generateScreenProviderConfigProposal() {
     );
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "local-safe 配置提案生成失败";
+    error.value = err instanceof Error ? err.message : "local-safe 閰嶇疆鎻愭鐢熸垚澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14942,7 +23937,7 @@ async function approveScreenProviderConfigProposal(id: number) {
     });
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "local-safe 配置提案接受失败";
+    error.value = err instanceof Error ? err.message : "local-safe 閰嶇疆鎻愭鎺ュ彈澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14959,7 +23954,7 @@ async function rejectScreenProviderConfigProposal(id: number) {
     });
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "local-safe 配置提案拒绝失败";
+    error.value = err instanceof Error ? err.message : "local-safe 閰嶇疆鎻愭鎷掔粷澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14980,7 +23975,7 @@ async function runScreenProviderReplay() {
     );
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Provider replay 运行失败";
+    error.value = err instanceof Error ? err.message : "Provider replay 杩愯澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -14995,7 +23990,7 @@ async function recordMockScreenObservation() {
     });
     await loadScreenMonitoring();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "屏幕只读观测记录失败";
+    error.value = err instanceof Error ? err.message : "灞忓箷鍙瑙傛祴璁板綍澶辫触";
   } finally {
     screenMonitoringLoading.value = false;
   }
@@ -15036,7 +24031,7 @@ async function runBacktest() {
     });
     await loadBacktestRuns();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "回测运行失败";
+    error.value = err instanceof Error ? err.message : "鍥炴祴杩愯澶辫触";
   } finally {
     v15Loading.value = false;
   }
@@ -15057,7 +24052,7 @@ async function refreshMarketRegime() {
     marketRegime.value = await fetchJson<MarketRegimeData>("/api/market-regime/refresh", { method: "POST" });
     await loadPortfolioRisk();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "刷新大盘环境失败";
+    error.value = err instanceof Error ? err.message : "鍒锋柊澶х洏鐜澶辫触";
   } finally {
     v15Loading.value = false;
   }
@@ -15089,7 +24084,7 @@ async function actionAlert(alertId: number, actionType: string) {
     await loadMonitoringLifecycle();
     await loadLifecycleSummary();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "告警动作失败";
+    error.value = err instanceof Error ? err.message : "鍛婅鍔ㄤ綔澶辫触";
   }
 }
 
@@ -15108,7 +24103,7 @@ async function runAiReview() {
     await fetchJson("/api/ai/review/run", { method: "POST" });
     await loadAiProposals();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "AI提案生成失败";
+    error.value = err instanceof Error ? err.message : "AI鎻愭鐢熸垚澶辫触";
   } finally {
     v15Loading.value = false;
   }
@@ -15119,7 +24114,7 @@ async function validateAiProposal(id: number) {
     await fetchJson(`/api/ai/review/proposals/${id}/validate`, { method: "POST" });
     await loadAiProposals();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "AI提案验证失败";
+    error.value = err instanceof Error ? err.message : "AI鎻愭楠岃瘉澶辫触";
   }
 }
 
@@ -15128,7 +24123,7 @@ async function rejectAiProposal(id: number) {
     await fetchJson(`/api/ai/review/proposals/${id}/reject`, { method: "POST" });
     await loadAiProposals();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "AI提案拒绝失败";
+    error.value = err instanceof Error ? err.message : "AI鎻愭鎷掔粷澶辫触";
   }
 }
 
@@ -15183,7 +24178,7 @@ async function explainCodeEvolutionWithModel(id: number) {
     await fetchJson(`/api/ai/model/explain-code-evolution/${id}`, { method: "POST" });
     await Promise.all([loadExperienceMemory(), loadAIModelAuditLogs()]);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "AI解释生成失败";
+    error.value = err instanceof Error ? err.message : "AI瑙ｉ噴鐢熸垚澶辫触";
   } finally {
     aiModelLoading.value = false;
   }
@@ -15196,7 +24191,7 @@ async function generateCodeEvolutionReviews() {
     await fetchJson("/api/experience/code-evolution/generate?limit=5", { method: "POST" });
     await loadExperienceMemory();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "代码进化建议生成失败";
+    error.value = err instanceof Error ? err.message : "浠ｇ爜杩涘寲寤鸿鐢熸垚澶辫触";
   } finally {
     codeEvolutionLoading.value = false;
   }
@@ -15213,7 +24208,7 @@ async function approveCodeEvolution(id: number) {
     });
     await loadExperienceMemory();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "代码进化建议接受失败";
+    error.value = err instanceof Error ? err.message : "浠ｇ爜杩涘寲寤鸿鎺ュ彈澶辫触";
   } finally {
     codeEvolutionLoading.value = false;
   }
@@ -15230,7 +24225,7 @@ async function rejectCodeEvolution(id: number) {
     });
     await loadExperienceMemory();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "代码进化建议拒绝失败";
+    error.value = err instanceof Error ? err.message : "浠ｇ爜杩涘寲寤鸿鎷掔粷澶辫触";
   } finally {
     codeEvolutionLoading.value = false;
   }
@@ -15244,7 +24239,7 @@ async function runExperienceReview() {
     await loadExperienceMemory();
     await loadLearningReport();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "经验复盘生成失败";
+    error.value = err instanceof Error ? err.message : "缁忛獙澶嶇洏鐢熸垚澶辫触";
   } finally {
     experienceLoading.value = false;
   }
@@ -15319,11 +24314,77 @@ onMounted(async () => {
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionDryRunReviews(),
     loadDataset2ControlledCleanupApplyExecutionPlanExecutionFinalExecutionExecutionExecutionExecutionExecutionApprovals(),
     loadDataset2TrainingConvergenceReviews(),
+    loadDataset2StagingAutomatedCleanupApplications(),
+    loadDataset2PostCleanupTrainingFreezeReviews(),
+    loadDataset2LearningSamplePromotionPreflights(),
+    loadDataset2LearningSamplePromotionApplications(),
+    loadDataset2PostPromotionTrainingFreezeReviews(),
+    loadDataset2TrainingRunPlans(),
+    loadDataset2TrainingExecutionApprovals(),
+    loadDataset2TrainingDryRuns(),
+    loadDataset2TrainingDryRunReviews(),
+    loadDataset2ControlledTrainingExecutionPlans(),
+    loadDataset2ControlledTrainingExecutionPreflights(),
+    loadDataset2ControlledTrainingExecutionDryRuns(),
+    loadDataset2ControlledTrainingExecutionDryRunReviews(),
+    loadDataset2ControlledTrainingExecutionReleasePlans(),
+    loadDataset2ControlledTrainingExecutionReleasePreflights(),
+    loadDataset2ControlledTrainingExecutionReleaseDryRuns(),
+    loadDataset2ControlledTrainingExecutionReleaseDryRunReviews(),
+    loadDataset2ControlledTrainingExecutionFinalApprovals(),
+    loadDataset2ControlledTrainingExecutionFinalPreflights(),
+    loadDataset2ControlledTrainingExecutionFinalDryRuns(),
+    loadDataset2ControlledTrainingExecutionFinalDryRunReviews(),
+    loadDataset2ControlledTrainingExecutionRunApprovals(),
+    loadDataset2ControlledTrainingExecutionRunPreflights(),
+    loadDataset2ControlledTrainingExecutionRuns(),
+    loadDataset2ControlledTrainingExecutionRunReviews(),
+    loadDataset2ControlledTrainingArtifactPlans(),
+    loadDataset2ControlledTrainingArtifactPlanApprovals(),
+    loadDataset2ControlledTrainingArtifactPreflights(),
+    loadDataset2ControlledTrainingArtifactDryRuns(),
+    loadDataset2ControlledTrainingArtifactDryRunReviews(),
+    loadDataset2ControlledTrainingArtifactReleaseApprovals(),
+    loadDataset2ControlledTrainingArtifactReleasePreflights(),
+    loadDataset2ControlledTrainingArtifactReleaseDryRuns(),
+    loadDataset2ControlledTrainingArtifactReleaseDryRunReviews(),
+    loadDataset2ControlledTrainingArtifactFinalApprovals(),
+    loadDataset2ControlledTrainingArtifactFinalPreflights(),
+    loadDataset2ControlledTrainingArtifactFinalDryRuns(),
+    loadDataset2ControlledTrainingArtifactFinalDryRunReviews(),
+    loadDataset2ControlledTrainingArtifactWritePreflights(),
+    loadDataset2ControlledTrainingArtifactWriteDryRuns(),
+    loadDataset2ControlledTrainingArtifactWriteDryRunReviews(),
+    loadDataset2ControlledTrainingArtifactWriteApprovals(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionPreflights(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionDryRuns(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionDryRunReviews(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalApprovals(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalPreflights(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalDryRuns(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalDryRunReviews(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteApprovals(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWritePreflights(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRuns(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteDryRunReviews(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionApprovals(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionPreflights(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRuns(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionDryRunReviews(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalApprovals(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalPreflights(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRuns(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalDryRunReviews(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalApprovals(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalPreflights(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRuns(),
+    loadDataset2ControlledTrainingArtifactWriteExecutionFinalWriteExecutionFinalFinalDryRunReviews(),
     loadMonitoring(),
     loadMonitoringReview(),
     loadPhaseReplay(),
     loadPhaseMatch(),
     loadPotentialSearch(),
+    loadOffhourResearch(),
     loadAgentCapabilities(),
     loadTradeExecutionGateway(),
     loadAgentTasks(),
@@ -15345,6 +24406,7 @@ onMounted(async () => {
     loadPriceReadinessSummary(),
     loadRealtimeData(),
     loadScreenMonitoring(),
+    loadSimCockpit(),
     loadBacktestRuns(),
     loadMarketRegime(),
     loadPortfolioRisk(),
@@ -15356,7 +24418,7 @@ onMounted(async () => {
   ]);
   const firstError = results.find((item) => item.status === "rejected");
   if (firstError && firstError.status === "rejected") {
-    error.value = firstError.reason instanceof Error ? firstError.reason.message : "部分数据加载失败";
+    error.value = firstError.reason instanceof Error ? firstError.reason.message : "閮ㄥ垎鏁版嵁鍔犺浇澶辫触";
   }
 });
 </script>
@@ -15364,39 +24426,54 @@ onMounted(async () => {
 <style scoped>
 :global(body) {
   margin: 0;
-  font-family: "Microsoft YaHei", Arial, sans-serif;
-  background: #f3f5f7;
-  color: #17202a;
+  font-family: "Microsoft YaHei", "Inter", Arial, sans-serif;
+  background:
+    linear-gradient(180deg, #eef5f2 0%, #f7f8fa 34%, #f1f4f8 100%);
+  color: #18212f;
 }
 
 .shell {
-  max-width: 1180px;
+  max-width: 1380px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 22px;
 }
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 20px;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 18px;
+  border: 1px solid #dbe5e2;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 12px 30px rgba(25, 42, 70, 0.08);
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 
 .top-actions {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 680px;
 }
 
 .eyebrow {
   margin: 0 0 6px;
-  color: #5e6b78;
+  color: #5b6f74;
   font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .status {
   margin: 8px 0 0;
-  color: #5e6b78;
+  color: #56616f;
 }
 
 h1,
@@ -15406,12 +24483,15 @@ p {
 }
 
 h1 {
-  font-size: 28px;
+  font-size: 30px;
   margin-bottom: 0;
+  letter-spacing: 0;
 }
 
 h2 {
-  font-size: 18px;
+  font-size: 17px;
+  letter-spacing: 0;
+  color: #1d2939;
 }
 
 .grid {
@@ -15422,9 +24502,10 @@ h2 {
 
 .panel {
   background: #ffffff;
-  border: 1px solid #d9e0e7;
+  border: 1px solid #dde6e8;
   border-radius: 8px;
   padding: 18px;
+  box-shadow: 0 8px 20px rgba(28, 43, 66, 0.05);
 }
 
 .wide {
@@ -15457,7 +24538,7 @@ h2 {
 .account,
 .lifecycle {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 8px;
   margin-bottom: 10px;
 }
@@ -15466,10 +24547,12 @@ h2 {
 .knowledge span,
 .account span,
 .lifecycle span {
-  background: #eef3f7;
-  border: 1px solid #d8e0e8;
+  background: #f6f8fb;
+  border: 1px solid #dce5ed;
   border-radius: 6px;
-  padding: 8px;
+  padding: 9px 10px;
+  color: #28384c;
+  font-size: 13px;
 }
 
 .actions {
@@ -15483,10 +24566,10 @@ h2 {
   display: grid;
   gap: 5px;
   margin-top: 14px;
-  padding: 12px;
-  border: 1px solid #d9e0e7;
+  padding: 12px 13px;
+  border: 1px solid #dde6e8;
   border-radius: 8px;
-  background: #f8fafb;
+  background: #fbfcfd;
 }
 
 .score-list {
@@ -15499,19 +24582,30 @@ h2 {
   display: grid;
   gap: 4px;
   padding: 10px 12px;
-  border: 1px solid #d9e0e7;
+  border: 1px solid #dde6e8;
   border-left: 4px solid #2b7a78;
   border-radius: 8px;
-  background: #f8fafb;
+  background: #fbfcfd;
+  color: #263649;
 }
 
 button {
-  border: 0;
+  border: 1px solid #1d5fd7;
   border-radius: 6px;
-  padding: 10px 14px;
+  padding: 9px 13px;
   background: #1f6feb;
   color: #fff;
   cursor: pointer;
+  font-weight: 700;
+  letter-spacing: 0;
+  min-height: 36px;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  background: #175bcc;
+  border-color: #174ea6;
+  transform: translateY(-1px);
 }
 
 button:disabled,
@@ -15530,12 +24624,12 @@ button:disabled,
 }
 
 .review-only-banner {
-  background: #fef3cd;
-  border: 1px solid #ffc107;
+  background: #fff7e6;
+  border: 1px solid #f1bb55;
   border-radius: 6px;
   padding: 8px 12px;
   font-size: 13px;
-  color: #856404;
+  color: #7a4b12;
   margin-bottom: 10px;
 }
 
@@ -15564,6 +24658,16 @@ button:disabled,
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+    position: static;
+  }
+
+  .top-actions {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  button {
+    width: 100%;
   }
 }
 </style>

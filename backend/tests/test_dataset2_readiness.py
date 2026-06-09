@@ -9372,7 +9372,10944 @@ def test_dataset2_training_convergence_review_summarizes_without_execution(tmp_p
     reviews = service.list_training_convergence_reviews(limit=3)
     assert reviews[0]["id"] == review["event_id"]
     assert reviews[0]["review"]["reviewed_by"] == "tester"
-    assert reviews[0]["decision"]["can_start_training_now"] is False
+
+
+def test_dataset2_staging_automated_cleanup_requires_convergence_and_confirmation(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(
+                pattern_id="AUTO_CLEANUP_BLOCKED_001",
+                risk_level="medium_high",
+                observable_features=["['big_yang']", "high_volume"],
+                split_tag="validation",
+            )
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+    review = service.create_import_queue_review(source_dir=str(pack), limit=10, reviewed_by="tester")
+    imported = service.import_reviewed_to_staging(
+        source_dir=str(pack),
+        limit=10,
+        review_event_id=review["event_id"],
+        imported_by="tester",
+    )
+    staging_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    blocked = service.apply_staging_automated_cleanup(
+        package_id=imported["package_id"],
+        applied_by="tester",
+        confirmation_token=None,
+    )
+    staging_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    assert blocked["stage"] == "V5.6-P59"
+    assert blocked["status"] == "dataset2_staging_automated_cleanup_blocked"
+    assert blocked["decision"]["writes_database_now"] is False
+    assert blocked["decision"]["mutates_staging_records_now"] is False
+    assert blocked["decision"]["writes_learning_samples_now"] is False
+    assert blocked["decision"]["can_start_training_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert check_status["training_convergence_matches_staging_package"] == "blocked"
+    assert staging_after == staging_before
+    assert learning_after == learning_before
+
+
+def test_dataset2_staging_automated_cleanup_applies_only_safe_staging_flags(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(
+                pattern_id="AUTO_CLEANUP_001",
+                risk_level="medium_high",
+                observable_features=["['big_yang']", "high_volume"],
+                split_tag="train",
+            ),
+            _record(
+                pattern_id="AUTO_CLEANUP_002",
+                action_label="RISK_ALERT",
+                risk_level="high",
+                split_tag="test",
+            ),
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+    chain = _controlled_final_execution_execution_dry_run_chain(
+        service,
+        pack,
+        _manual_evidence_package(),
+        suffix="automated-cleanup",
+    )
+    source_review = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_dry_run_review(
+        apply_execution_plan_execution_final_execution_execution_dry_run_id=chain[
+            "final_execution_execution_dry_run"
+        ]["event_id"],
+        reviewed_by="tester",
+        review_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_approval",
+    )
+    source_approval = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_approval(
+        apply_execution_plan_execution_final_execution_execution_dry_run_review_id=source_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_preflight",
+    )
+    source_preflight = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_preflight(
+        apply_execution_plan_execution_final_execution_execution_execution_approval_id=source_approval["event_id"],
+        requested_by="tester",
+        preflight_decision="prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_dry_run",
+    )
+    source_dry_run = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_dry_run(
+        apply_execution_plan_execution_final_execution_execution_execution_preflight_id=source_preflight["event_id"],
+        simulated_by="tester",
+        dry_run_decision="simulated_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_review",
+    )
+    source_dry_run_review = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_dry_run_review(
+        apply_execution_plan_execution_final_execution_execution_execution_dry_run_id=source_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval",
+    )
+    service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval(
+        apply_execution_plan_execution_final_execution_execution_execution_dry_run_review_id=source_dry_run_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight",
+    )
+    convergence = service.training_convergence_review(source_dir=str(pack), reviewed_by="tester")
+    assert convergence["status"] == "dataset2_training_convergence_review_passed"
+    learning_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    applied = service.apply_staging_automated_cleanup(
+        applied_by="tester",
+        confirmation_token="APPLY_DATASET2_STAGING_AUTOMATED_CLEANUP",
+        note="apply deterministic staging cleanup only",
+    )
+    learning_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+    staged = service.list_staging_records(package_id=applied["package_id"], limit=10)
+    post_quality = service.staging_quality_review(package_id=applied["package_id"], reviewed_by="tester")
+
+    assert applied["stage"] == "V5.6-P59"
+    assert applied["status"] == "dataset2_staging_automated_cleanup_applied"
+    assert applied["summary"]["mutated_record_count"] == 1
+    assert applied["summary"]["operation_counts"]["normalize_enum"] == 1
+    assert applied["summary"]["operation_counts"]["parse_stringified_list_items"] == 1
+    assert applied["summary"]["quality_flag_counts_after"] == {}
+    assert applied["decision"]["writes_database_now"] is True
+    assert applied["decision"]["writes_existing_event_now"] is True
+    assert applied["decision"]["writes_staging_records_now"] is True
+    assert applied["decision"]["mutates_staging_records_now"] is True
+    assert applied["decision"]["writes_learning_samples_now"] is False
+    assert applied["decision"]["can_start_training_now"] is False
+    assert learning_after == learning_before
+    cleaned = [row for row in staged if row["pattern_id"] == "AUTO_CLEANUP_001"][0]
+    assert cleaned["status"] == "staged_automated_cleanup_applied"
+    assert cleaned["quality_flags"] == []
+    assert cleaned["cleanup_operations"] == []
+    assert cleaned["normalized"]["risk_level"] == "high"
+    assert cleaned["normalized"]["observable_features"] == ["big_yang", "high_volume"]
+    assert post_quality["counts"]["quality_flags"] == {}
+    assert post_quality["decision"]["writes_learning_samples_now"] is False
+    assert post_quality["decision"]["can_start_training_now"] is False
+    applications = service.list_staging_automated_cleanup_applications(limit=3)
+    assert applications[0]["id"] == applied["event_id"]
+    assert applications[0]["summary"]["record_bodies_included"] is False
+
+
+def test_dataset2_post_cleanup_training_freeze_review_requires_matching_p59(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(
+                pattern_id="FREEZE_REVIEW_BLOCKED_001",
+                risk_level="medium",
+                split_tag="validation",
+            )
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+    review = service.create_import_queue_review(source_dir=str(pack), limit=10, reviewed_by="tester")
+    imported = service.import_reviewed_to_staging(
+        source_dir=str(pack),
+        limit=10,
+        review_event_id=review["event_id"],
+        imported_by="tester",
+    )
+    staging_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    freeze = service.post_cleanup_training_freeze_review(
+        package_id=imported["package_id"],
+        reviewed_by="tester",
+        note="must block without matching P59 cleanup event",
+    )
+    staging_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    assert freeze["stage"] == "V5.6-P60"
+    assert freeze["status"] == "dataset2_post_cleanup_training_freeze_review_blocked"
+    assert freeze["decision"]["post_cleanup_training_freeze_review_recorded"] is True
+    assert freeze["decision"]["training_freeze_candidate_ready"] is False
+    assert freeze["decision"]["can_prepare_learning_sample_promotion_now"] is False
+    assert freeze["decision"]["writes_staging_records_now"] is False
+    assert freeze["decision"]["writes_learning_samples_now"] is False
+    assert freeze["decision"]["can_start_training_now"] is False
+    assert staging_after == staging_before
+    assert learning_after == learning_before
+    check_status = {check["name"]: check["status"] for check in freeze["checks"]}
+    assert check_status["latest_p59_cleanup_available"] == "blocked"
+    assert check_status["live_trading_disabled"] == "passed"
+
+    promotion = service.learning_sample_promotion_preflight(
+        package_id=imported["package_id"],
+        planned_by="tester",
+        note="must block without a passed P60 freeze review",
+    )
+    assert promotion["stage"] == "V5.6-P61"
+    assert promotion["status"] == "dataset2_learning_sample_promotion_preflight_blocked"
+    assert promotion["decision"]["learning_sample_promotion_preflight_ready"] is False
+    assert promotion["decision"]["writes_learning_samples_now"] is False
+    assert promotion["decision"]["can_start_training_now"] is False
+    check_status = {check["name"]: check["status"] for check in promotion["checks"]}
+    assert check_status["latest_p60_freeze_review_available"] == "blocked"
+    assert check_status["learning_samples_unchanged"] == "passed"
+
+
+def test_dataset2_post_cleanup_training_freeze_review_prepares_promotion_without_training(tmp_path, test_db):
+    pack = _write_dataset2_pack(
+        tmp_path,
+        [
+            _record(
+                pattern_id="FREEZE_REVIEW_001",
+                risk_level="medium_high",
+                observable_features=["['big_yang']", "high_volume"],
+                split_tag="train",
+            ),
+            _record(
+                pattern_id="FREEZE_REVIEW_002",
+                action_label="RISK_ALERT",
+                risk_level="high",
+                split_tag="test",
+                exit_price=9.5,
+                forward_return_5d=-0.05,
+                max_favorable_excursion=0.01,
+                max_adverse_excursion=-0.08,
+            ),
+        ],
+    )
+    service = Dataset2TrainingReadinessService()
+    chain = _controlled_final_execution_execution_dry_run_chain(
+        service,
+        pack,
+        _manual_evidence_package(),
+        suffix="post-cleanup-freeze",
+    )
+    source_review = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_dry_run_review(
+        apply_execution_plan_execution_final_execution_execution_dry_run_id=chain[
+            "final_execution_execution_dry_run"
+        ]["event_id"],
+        reviewed_by="tester",
+        review_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_approval",
+    )
+    source_approval = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_approval(
+        apply_execution_plan_execution_final_execution_execution_dry_run_review_id=source_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_preflight",
+    )
+    source_preflight = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_preflight(
+        apply_execution_plan_execution_final_execution_execution_execution_approval_id=source_approval["event_id"],
+        requested_by="tester",
+        preflight_decision="prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_dry_run",
+    )
+    source_dry_run = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_dry_run(
+        apply_execution_plan_execution_final_execution_execution_execution_preflight_id=source_preflight["event_id"],
+        simulated_by="tester",
+        dry_run_decision="simulated_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_review",
+    )
+    source_dry_run_review = service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_dry_run_review(
+        apply_execution_plan_execution_final_execution_execution_execution_dry_run_id=source_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_approval",
+    )
+    service.staging_cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_approval(
+        apply_execution_plan_execution_final_execution_execution_execution_dry_run_review_id=source_dry_run_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight",
+    )
+    convergence = service.training_convergence_review(source_dir=str(pack), reviewed_by="tester")
+    assert convergence["status"] == "dataset2_training_convergence_review_passed"
+    package_id = service.list_staging_records(limit=1)[0]["package_id"]
+    applied = service.apply_staging_automated_cleanup(
+        package_id=package_id,
+        applied_by="tester",
+        confirmation_token="APPLY_DATASET2_STAGING_AUTOMATED_CLEANUP",
+    )
+    assert applied["status"] == "dataset2_staging_automated_cleanup_applied"
+    staging_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_before = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    freeze = service.post_cleanup_training_freeze_review(
+        package_id=applied["package_id"],
+        reviewed_by="tester",
+        note="review cleaned staging only",
+    )
+    staging_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_after = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    assert freeze["stage"] == "V5.6-P60"
+    assert freeze["status"] == "dataset2_post_cleanup_training_freeze_review_passed"
+    assert freeze["evidence"]["latest_p59_cleanup_id"] == applied["event_id"]
+    assert freeze["counts"]["quality_flags"] == {}
+    assert freeze["counts"]["cleanup_operations"] == {}
+    assert freeze["decision"]["training_freeze_candidate_ready"] is True
+    assert freeze["decision"]["can_prepare_learning_sample_promotion_now"] is True
+    assert freeze["decision"]["writes_existing_event_now"] is True
+    assert freeze["decision"]["writes_staging_records_now"] is False
+    assert freeze["decision"]["mutates_staging_records_now"] is False
+    assert freeze["decision"]["writes_learning_samples_now"] is False
+    assert freeze["decision"]["can_promote_to_learning_samples_now"] is False
+    assert freeze["decision"]["can_start_training_now"] is False
+    assert freeze["decision"]["training_started_now"] is False
+    assert staging_after == staging_before
+    assert learning_after == learning_before
+    check_status = {check["name"]: check["status"] for check in freeze["checks"]}
+    assert check_status["latest_p59_cleanup_available"] == "passed"
+    assert check_status["quality_flags_cleared"] == "passed"
+    assert check_status["cleanup_operations_resolved"] == "passed"
+    assert check_status["historical_outcomes_complete"] == "passed"
+    assert check_status["split_coverage"] == "passed"
+    reviews = service.list_post_cleanup_training_freeze_reviews(limit=3)
+    assert reviews[0]["id"] == freeze["event_id"]
+    assert reviews[0]["review"]["reviewed_by"] == "tester"
+
+    promotion = service.learning_sample_promotion_preflight(
+        package_id=applied["package_id"],
+        planned_by="tester",
+        note="plan future promotion only",
+    )
+    staging_final = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM dataset2_staging_records")["cnt"]
+    learning_final = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+
+    assert promotion["stage"] == "V5.6-P61"
+    assert promotion["status"] == "dataset2_learning_sample_promotion_preflight_ready"
+    assert promotion["evidence"]["latest_p60_freeze_review_id"] == freeze["event_id"]
+    assert promotion["projection"]["candidate_count"] == 2
+    assert promotion["projection"]["expected_insert_count_future_p62"] == 2
+    assert promotion["projection"]["label_counts"]["method_success"] == 1
+    assert promotion["projection"]["label_counts"]["risk_failure"] == 1
+    assert promotion["projection"]["record_bodies_included"] is False
+    assert promotion["decision"]["learning_sample_promotion_preflight_ready"] is True
+    assert promotion["decision"]["can_prepare_learning_sample_promotion_approval_now"] is True
+    assert promotion["decision"]["can_promote_to_learning_samples_now"] is False
+    assert promotion["decision"]["writes_existing_event_now"] is True
+    assert promotion["decision"]["writes_staging_records_now"] is False
+    assert promotion["decision"]["mutates_staging_records_now"] is False
+    assert promotion["decision"]["writes_learning_samples_now"] is False
+    assert promotion["decision"]["can_start_training_now"] is False
+    assert promotion["decision"]["training_started_now"] is False
+    assert staging_final == staging_before
+    assert learning_final == learning_before
+    check_status = {check["name"]: check["status"] for check in promotion["checks"]}
+    assert check_status["latest_p60_freeze_review_available"] == "passed"
+    assert check_status["projected_sample_ids_unique"] == "passed"
+    assert check_status["learning_sample_source_ids_not_existing"] == "passed"
+    assert check_status["learning_samples_unchanged"] == "passed"
+    preflights = service.list_learning_sample_promotion_preflights(limit=3)
+    assert preflights[0]["id"] == promotion["event_id"]
+    assert preflights[0]["preflight"]["planned_by"] == "tester"
+
+    blocked_apply = service.apply_learning_sample_promotion(
+        package_id=applied["package_id"],
+        preflight_event_id=promotion["event_id"],
+        promoted_by="tester",
+        confirmation_token=None,
+    )
+    assert blocked_apply["stage"] == "V5.6-P62"
+    assert blocked_apply["status"] == "dataset2_learning_sample_promotion_blocked"
+    assert blocked_apply["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_before
+    check_status = {check["name"]: check["status"] for check in blocked_apply["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    blocked_freeze_after_promotion = service.post_promotion_training_freeze_review(
+        package_id=applied["package_id"],
+        reviewed_by="tester",
+        note="must block before P62 promotion is applied",
+    )
+    assert blocked_freeze_after_promotion["stage"] == "V5.6-P63"
+    assert blocked_freeze_after_promotion["status"] == "dataset2_post_promotion_training_freeze_review_blocked"
+    assert blocked_freeze_after_promotion["decision"]["post_promotion_training_freeze_ready"] is False
+    assert blocked_freeze_after_promotion["decision"]["writes_learning_samples_now"] is False
+    assert blocked_freeze_after_promotion["decision"]["can_start_training_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_freeze_after_promotion["checks"]}
+    assert check_status["latest_p62_promotion_available"] == "blocked"
+    assert check_status["promoted_learning_samples_present"] == "blocked"
+
+    applied_promotion = service.apply_learning_sample_promotion(
+        package_id=applied["package_id"],
+        preflight_event_id=promotion["event_id"],
+        promoted_by="tester",
+        confirmation_token="PROMOTE_DATASET2_LEARNING_SAMPLES",
+        note="controlled fixture promotion",
+    )
+    learning_after_promotion = test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"]
+    promoted_rows = test_db.fetch_all(
+        "SELECT * FROM learning_samples WHERE source_type = 'dataset2_staging' ORDER BY source_id"
+    )
+
+    assert applied_promotion["stage"] == "V5.6-P62"
+    assert applied_promotion["status"] == "dataset2_learning_sample_promotion_applied"
+    assert applied_promotion["evidence"]["inserted_count"] == 2
+    assert applied_promotion["decision"]["writes_learning_samples_now"] is True
+    assert applied_promotion["decision"]["can_start_training_now"] is False
+    assert applied_promotion["decision"]["training_started_now"] is False
+    assert learning_after_promotion == learning_before + 2
+    assert len(promoted_rows) == 2
+    assert {row["label"] for row in promoted_rows} == {"method_success", "risk_failure"}
+    assert all(row["source_id"].startswith(applied["package_id"]) for row in promoted_rows)
+    applications = service.list_learning_sample_promotion_applications(limit=3)
+    assert applications[0]["id"] == applied_promotion["event_id"]
+    assert applications[0]["promotion"]["promoted_by"] == "tester"
+
+    post_promotion_freeze = service.post_promotion_training_freeze_review(
+        package_id=applied["package_id"],
+        reviewed_by="tester",
+        note="review promoted dataset2 learning samples",
+    )
+    assert post_promotion_freeze["stage"] == "V5.6-P63"
+    assert post_promotion_freeze["status"] == "dataset2_post_promotion_training_freeze_review_passed"
+    assert post_promotion_freeze["evidence"]["latest_p62_apply_id"] == applied_promotion["event_id"]
+    assert post_promotion_freeze["evidence"]["learning_sample_count"] == 2
+    assert post_promotion_freeze["counts"]["labels"]["method_success"] == 1
+    assert post_promotion_freeze["counts"]["labels"]["risk_failure"] == 1
+    assert post_promotion_freeze["counts"]["splits"]["train"] == 1
+    assert post_promotion_freeze["counts"]["splits"]["test"] == 1
+    assert post_promotion_freeze["decision"]["post_promotion_training_freeze_ready"] is True
+    assert post_promotion_freeze["decision"]["can_prepare_dataset2_training_run_now"] is True
+    assert post_promotion_freeze["decision"]["writes_learning_samples_now"] is False
+    assert post_promotion_freeze["decision"]["can_start_training_now"] is False
+    assert post_promotion_freeze["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in post_promotion_freeze["checks"]}
+    assert check_status["latest_p62_promotion_available"] == "passed"
+    assert check_status["promoted_learning_samples_present"] == "passed"
+    assert check_status["split_coverage"] == "passed"
+    assert check_status["sample_safety_flags_preserved"] == "passed"
+    post_promotion_reviews = service.list_post_promotion_training_freeze_reviews(limit=3)
+    assert post_promotion_reviews[0]["id"] == post_promotion_freeze["event_id"]
+    assert post_promotion_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    training_plan = service.dataset2_training_run_plan(
+        package_id=applied["package_id"],
+        planned_by="tester",
+        note="prepare training plan only",
+    )
+    assert training_plan["stage"] == "V5.6-P64"
+    assert training_plan["status"] == "dataset2_training_run_plan_ready"
+    assert training_plan["evidence"]["latest_p63_freeze_review_id"] == post_promotion_freeze["event_id"]
+    assert training_plan["training_plan"]["source_type"] == "dataset2_staging"
+    assert training_plan["training_plan"]["target"] == "label"
+    assert training_plan["training_plan"]["label_counts"]["method_success"] == 1
+    assert training_plan["training_plan"]["label_counts"]["risk_failure"] == 1
+    assert training_plan["training_plan"]["split_counts"]["train"] == 1
+    assert training_plan["training_plan"]["split_counts"]["test"] == 1
+    assert training_plan["training_plan"]["class_weights"]["method_success"] == 1.0
+    assert training_plan["training_plan"]["can_execute_training_now"] is False
+    assert training_plan["training_plan"]["training_started_now"] is False
+    assert training_plan["decision"]["dataset2_training_run_plan_ready"] is True
+    assert training_plan["decision"]["can_request_dataset2_training_execution_approval_now"] is True
+    assert training_plan["decision"]["can_start_training_now"] is False
+    assert training_plan["decision"]["training_started_now"] is False
+    plans = service.list_dataset2_training_run_plans(limit=3)
+    assert plans[0]["id"] == training_plan["event_id"]
+    assert plans[0]["planning"]["planned_by"] == "tester"
+
+    blocked_training_approval = service.approve_dataset2_training_execution(
+        training_plan_id=training_plan["training_plan"]["plan_id"],
+        approved_by="tester",
+        confirmation_token=None,
+        note="missing token must block training execution approval",
+    )
+    assert blocked_training_approval["stage"] == "V5.6-P65"
+    assert blocked_training_approval["status"] == "dataset2_training_execution_approval_blocked"
+    assert blocked_training_approval["decision"]["dataset2_training_execution_approved_for_dry_run"] is False
+    assert blocked_training_approval["decision"]["can_prepare_dataset2_training_dry_run_now"] is False
+    assert blocked_training_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_training_approval["decision"]["can_start_training_now"] is False
+    assert blocked_training_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    check_status = {check["name"]: check["status"] for check in blocked_training_approval["checks"]}
+    assert check_status["training_run_plan_ready"] == "passed"
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    accepted_training_approval = service.approve_dataset2_training_execution(
+        training_plan_id=training_plan["training_plan"]["plan_id"],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_TRAINING_EXECUTION",
+        note="approve later dataset2 training dry-run only",
+    )
+    assert accepted_training_approval["stage"] == "V5.6-P65"
+    assert accepted_training_approval["status"] == "dataset2_training_execution_approval_accepted"
+    assert accepted_training_approval["evidence"]["training_plan_event_id"] == training_plan["event_id"]
+    assert accepted_training_approval["evidence"]["training_plan_id"] == training_plan["training_plan"]["plan_id"]
+    assert accepted_training_approval["evidence"]["learning_sample_count"] == 2
+    assert accepted_training_approval["approval"]["confirmation_token_matched"] is True
+    assert accepted_training_approval["decision"]["dataset2_training_execution_approval_recorded"] is True
+    assert accepted_training_approval["decision"]["dataset2_training_execution_approved_for_dry_run"] is True
+    assert accepted_training_approval["decision"]["can_prepare_dataset2_training_dry_run_now"] is True
+    assert accepted_training_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert accepted_training_approval["decision"]["can_start_training_now"] is False
+    assert accepted_training_approval["decision"]["training_started_now"] is False
+    assert accepted_training_approval["decision"]["writes_learning_samples_now"] is False
+    assert accepted_training_approval["decision"]["writes_source_dataset"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    training_approvals = service.list_dataset2_training_execution_approvals(limit=3)
+    assert training_approvals[0]["id"] == accepted_training_approval["event_id"]
+    assert training_approvals[0]["approval"]["approved_by"] == "tester"
+
+    dry_run_without_approval = service.dataset2_training_dry_run(
+        training_plan_id=training_plan["training_plan"]["plan_id"],
+        approval_event_id=blocked_training_approval["event_id"],
+        run_by="tester",
+        note="blocked approval cannot run dry-run",
+    )
+    assert dry_run_without_approval["stage"] == "V5.6-P66"
+    assert dry_run_without_approval["status"] == "dataset2_training_dry_run_blocked"
+    assert dry_run_without_approval["decision"]["dataset2_training_dry_run_completed"] is False
+    assert dry_run_without_approval["decision"]["can_prepare_dataset2_training_result_review_now"] is False
+    assert dry_run_without_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert dry_run_without_approval["decision"]["can_start_training_now"] is False
+    assert dry_run_without_approval["decision"]["training_started_now"] is False
+    assert dry_run_without_approval["decision"]["model_artifact_written"] is False
+    check_status = {check["name"]: check["status"] for check in dry_run_without_approval["checks"]}
+    assert check_status["training_execution_approval_accepted"] == "blocked"
+
+    training_dry_run = service.dataset2_training_dry_run(
+        training_plan_id=training_plan["training_plan"]["plan_id"],
+        approval_event_id=accepted_training_approval["event_id"],
+        run_by="tester",
+        note="dry-run baseline only",
+    )
+    assert training_dry_run["stage"] == "V5.6-P66"
+    assert training_dry_run["status"] == "dataset2_training_dry_run_completed"
+    assert training_dry_run["evidence"]["approval_event_id"] == accepted_training_approval["event_id"]
+    assert training_dry_run["evidence"]["training_plan_event_id"] == training_plan["event_id"]
+    assert training_dry_run["dry_run"]["baseline_strategy"] == "train_majority_label_classifier"
+    assert training_dry_run["dry_run"]["train_row_count"] == 1
+    assert training_dry_run["dry_run"]["out_of_sample_row_count"] == 1
+    assert training_dry_run["dry_run"]["model_artifact_written"] is False
+    assert training_dry_run["dry_run"]["training_started_now"] is False
+    assert training_dry_run["decision"]["dataset2_training_dry_run_completed"] is True
+    assert training_dry_run["decision"]["can_prepare_dataset2_training_result_review_now"] is True
+    assert training_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert training_dry_run["decision"]["can_start_training_now"] is False
+    assert training_dry_run["decision"]["training_started_now"] is False
+    assert training_dry_run["decision"]["model_artifact_written"] is False
+    assert training_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    dry_runs = service.list_dataset2_training_dry_runs(limit=3)
+    assert dry_runs[0]["id"] == training_dry_run["event_id"]
+    assert dry_runs[0]["run"]["run_by"] == "tester"
+
+    blocked_dry_run_review = service.dataset2_training_dry_run_review(
+        dry_run_event_id=dry_run_without_approval["event_id"],
+        reviewed_by="tester",
+        note="blocked dry-run cannot be accepted",
+    )
+    assert blocked_dry_run_review["stage"] == "V5.6-P67"
+    assert blocked_dry_run_review["status"] == "dataset2_training_dry_run_review_blocked"
+    assert blocked_dry_run_review["decision"]["dataset2_training_dry_run_review_accepted"] is False
+    assert blocked_dry_run_review["decision"]["can_prepare_controlled_dataset2_training_execution_plan_now"] is False
+    assert blocked_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_dry_run_review["decision"]["training_started_now"] is False
+    assert blocked_dry_run_review["decision"]["model_artifact_written"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_dry_run_review["checks"]}
+    assert check_status["training_dry_run_completed"] == "blocked"
+
+    dry_run_review = service.dataset2_training_dry_run_review(
+        dry_run_event_id=training_dry_run["event_id"],
+        reviewed_by="tester",
+        note="accept dry-run evidence for controlled training plan only",
+    )
+    assert dry_run_review["stage"] == "V5.6-P67"
+    assert dry_run_review["status"] == "dataset2_training_dry_run_review_accepted"
+    assert dry_run_review["evidence"]["dry_run_event_id"] == training_dry_run["event_id"]
+    assert dry_run_review["evidence"]["training_plan_event_id"] == training_plan["event_id"]
+    assert dry_run_review["metrics_review"]["train_row_count"] == 1
+    assert dry_run_review["metrics_review"]["out_of_sample_row_count"] == 1
+    assert dry_run_review["metrics_review"]["model_artifact_written"] is False
+    assert dry_run_review["metrics_review"]["training_started_now"] is False
+    assert dry_run_review["decision"]["dataset2_training_dry_run_review_accepted"] is True
+    assert dry_run_review["decision"]["can_prepare_controlled_dataset2_training_execution_plan_now"] is True
+    assert dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert dry_run_review["decision"]["can_start_training_now"] is False
+    assert dry_run_review["decision"]["training_started_now"] is False
+    assert dry_run_review["decision"]["model_artifact_written"] is False
+    assert dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    dry_run_reviews = service.list_dataset2_training_dry_run_reviews(limit=3)
+    assert dry_run_reviews[0]["id"] == dry_run_review["event_id"]
+    assert dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_execution_plan = service.dataset2_controlled_training_execution_plan(
+        dry_run_review_id=blocked_dry_run_review["event_id"],
+        planned_by="tester",
+        note="blocked dry-run review cannot create execution plan",
+    )
+    assert blocked_execution_plan["stage"] == "V5.6-P68"
+    assert blocked_execution_plan["status"] == "dataset2_controlled_training_execution_plan_blocked"
+    assert blocked_execution_plan["decision"]["controlled_dataset2_training_execution_plan_ready"] is False
+    assert blocked_execution_plan["decision"]["can_prepare_controlled_dataset2_training_execution_preflight_now"] is False
+    assert blocked_execution_plan["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_execution_plan["decision"]["can_start_training_now"] is False
+    assert blocked_execution_plan["decision"]["training_started_now"] is False
+    assert blocked_execution_plan["decision"]["model_artifact_written"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_execution_plan["checks"]}
+    assert check_status["dry_run_review_accepted"] == "blocked"
+
+    execution_plan = service.dataset2_controlled_training_execution_plan(
+        dry_run_review_id=dry_run_review["event_id"],
+        planned_by="tester",
+        note="plan controlled training execution only",
+    )
+    assert execution_plan["stage"] == "V5.6-P68"
+    assert execution_plan["status"] == "dataset2_controlled_training_execution_plan_ready"
+    assert execution_plan["evidence"]["dry_run_review_id"] == dry_run_review["event_id"]
+    assert execution_plan["evidence"]["training_plan_event_id"] == training_plan["event_id"]
+    assert execution_plan["execution_plan"]["plan_id"].startswith("dataset2-controlled-training-plan-")
+    assert execution_plan["execution_plan"]["expected_confirmation_token"] == "PREPARE_DATASET2_CONTROLLED_TRAINING_EXECUTION"
+    assert execution_plan["execution_plan"]["writes_model_artifact_now"] is False
+    assert execution_plan["execution_plan"]["executes_training_now"] is False
+    assert execution_plan["decision"]["controlled_dataset2_training_execution_plan_ready"] is True
+    assert execution_plan["decision"]["can_prepare_controlled_dataset2_training_execution_preflight_now"] is True
+    assert execution_plan["decision"]["can_execute_dataset2_training_now"] is False
+    assert execution_plan["decision"]["can_start_training_now"] is False
+    assert execution_plan["decision"]["training_started_now"] is False
+    assert execution_plan["decision"]["model_artifact_written"] is False
+    assert execution_plan["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    execution_plans = service.list_dataset2_controlled_training_execution_plans(limit=3)
+    assert execution_plans[0]["id"] == execution_plan["event_id"]
+    assert execution_plans[0]["planning"]["planned_by"] == "tester"
+
+    blocked_preflight = service.dataset2_controlled_training_execution_preflight(
+        execution_plan_event_id=execution_plan["event_id"],
+        requested_by="tester",
+        confirmation_token=None,
+        note="missing token must block controlled training preflight",
+    )
+    assert blocked_preflight["stage"] == "V5.6-P69"
+    assert blocked_preflight["status"] == "dataset2_controlled_training_execution_preflight_blocked"
+    assert blocked_preflight["decision"]["controlled_dataset2_training_execution_preflight_ready"] is False
+    assert blocked_preflight["decision"]["can_prepare_controlled_dataset2_training_execution_dry_run_now"] is False
+    assert blocked_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_preflight["decision"]["training_started_now"] is False
+    assert blocked_preflight["decision"]["model_artifact_written"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_preflight["checks"]}
+    assert check_status["controlled_training_execution_plan_ready"] == "passed"
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    execution_preflight = service.dataset2_controlled_training_execution_preflight(
+        execution_plan_event_id=execution_plan["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_EXECUTION",
+        note="preflight controlled training execution only",
+    )
+    assert execution_preflight["stage"] == "V5.6-P69"
+    assert execution_preflight["status"] == "dataset2_controlled_training_execution_preflight_ready"
+    assert execution_preflight["evidence"]["execution_plan_event_id"] == execution_plan["event_id"]
+    assert execution_preflight["evidence"]["execution_plan_id"] == execution_plan["execution_plan"]["plan_id"]
+    assert execution_preflight["evidence"]["current_sample_set_hash"] == execution_plan["evidence"]["sample_set_hash"]
+    assert execution_preflight["evidence"]["current_learning_sample_count"] == 2
+    assert execution_preflight["preflight"]["confirmation_token_matched"] is True
+    assert execution_preflight["execution_preflight"]["writes_model_artifact_now"] is False
+    assert execution_preflight["execution_preflight"]["executes_training_now"] is False
+    assert execution_preflight["decision"]["controlled_dataset2_training_execution_preflight_ready"] is True
+    assert execution_preflight["decision"]["can_prepare_controlled_dataset2_training_execution_dry_run_now"] is True
+    assert execution_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert execution_preflight["decision"]["can_start_training_now"] is False
+    assert execution_preflight["decision"]["training_started_now"] is False
+    assert execution_preflight["decision"]["model_artifact_written"] is False
+    assert execution_preflight["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    execution_preflights = service.list_dataset2_controlled_training_execution_preflights(limit=3)
+    assert execution_preflights[0]["id"] == execution_preflight["event_id"]
+    assert execution_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_execution_dry_run = service.dataset2_controlled_training_execution_dry_run(
+        preflight_event_id=blocked_preflight["event_id"],
+        simulated_by="tester",
+        note="blocked preflight cannot simulate controlled training execution",
+    )
+    assert blocked_execution_dry_run["stage"] == "V5.6-P70"
+    assert blocked_execution_dry_run["status"] == "dataset2_controlled_training_execution_dry_run_blocked"
+    assert blocked_execution_dry_run["decision"]["controlled_dataset2_training_execution_dry_run_completed"] is False
+    assert blocked_execution_dry_run["decision"]["can_prepare_controlled_dataset2_training_execution_dry_run_review_now"] is False
+    assert blocked_execution_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_execution_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_execution_dry_run["decision"]["training_started_now"] is False
+    assert blocked_execution_dry_run["decision"]["model_artifact_written"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_execution_dry_run["checks"]}
+    assert check_status["controlled_training_execution_preflight_ready"] == "blocked"
+
+    execution_dry_run = service.dataset2_controlled_training_execution_dry_run(
+        preflight_event_id=execution_preflight["event_id"],
+        simulated_by="tester",
+        note="simulate controlled training execution only",
+    )
+    assert execution_dry_run["stage"] == "V5.6-P70"
+    assert execution_dry_run["status"] == "dataset2_controlled_training_execution_dry_run_completed"
+    assert execution_dry_run["evidence"]["preflight_event_id"] == execution_preflight["event_id"]
+    assert execution_dry_run["evidence"]["execution_plan_event_id"] == execution_plan["event_id"]
+    assert execution_dry_run["evidence"]["learning_sample_count"] == 2
+    assert execution_dry_run["simulation_result"]["manifest_hash"]
+    assert execution_dry_run["simulation_result"]["would_write_model_artifact"] is False
+    assert execution_dry_run["simulation_result"]["would_write_file"] is False
+    assert execution_dry_run["simulation_result"]["would_execute_training"] is False
+    assert execution_dry_run["decision"]["controlled_dataset2_training_execution_dry_run_completed"] is True
+    assert execution_dry_run["decision"]["can_prepare_controlled_dataset2_training_execution_dry_run_review_now"] is True
+    assert execution_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert execution_dry_run["decision"]["can_start_training_now"] is False
+    assert execution_dry_run["decision"]["training_started_now"] is False
+    assert execution_dry_run["decision"]["model_artifact_written"] is False
+    assert execution_dry_run["decision"]["writes_file"] is False
+    assert execution_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    execution_dry_runs = service.list_dataset2_controlled_training_execution_dry_runs(limit=3)
+    assert execution_dry_runs[0]["id"] == execution_dry_run["event_id"]
+    assert execution_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_execution_dry_run_review = service.dataset2_controlled_training_execution_dry_run_review(
+        dry_run_event_id=blocked_execution_dry_run["event_id"],
+        reviewed_by="tester",
+        note="blocked controlled training dry-run cannot be accepted",
+    )
+    assert blocked_execution_dry_run_review["stage"] == "V5.6-P71"
+    assert blocked_execution_dry_run_review["status"] == "dataset2_controlled_training_execution_dry_run_review_blocked"
+    assert blocked_execution_dry_run_review["decision"]["controlled_dataset2_training_execution_dry_run_review_accepted"] is False
+    assert blocked_execution_dry_run_review["decision"]["can_prepare_controlled_dataset2_training_execution_release_plan_now"] is False
+    assert blocked_execution_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_execution_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_execution_dry_run_review["decision"]["training_started_now"] is False
+    assert blocked_execution_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_execution_dry_run_review["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_execution_dry_run_review["checks"]}
+    assert check_status["controlled_training_execution_dry_run_completed"] == "blocked"
+
+    execution_dry_run_review = service.dataset2_controlled_training_execution_dry_run_review(
+        dry_run_event_id=execution_dry_run["event_id"],
+        reviewed_by="tester",
+        note="accept controlled training dry-run evidence for release planning only",
+    )
+    assert execution_dry_run_review["stage"] == "V5.6-P71"
+    assert execution_dry_run_review["status"] == "dataset2_controlled_training_execution_dry_run_review_accepted"
+    assert execution_dry_run_review["evidence"]["dry_run_event_id"] == execution_dry_run["event_id"]
+    assert execution_dry_run_review["evidence"]["preflight_event_id"] == execution_preflight["event_id"]
+    assert execution_dry_run_review["evidence"]["execution_plan_event_id"] == execution_plan["event_id"]
+    assert execution_dry_run_review["evidence"]["manifest_hash"] == execution_dry_run["simulation_result"]["manifest_hash"]
+    assert execution_dry_run_review["evidence"]["learning_sample_count"] == 2
+    assert execution_dry_run_review["manifest_review"]["would_write_model_artifact"] is False
+    assert execution_dry_run_review["manifest_review"]["would_write_file"] is False
+    assert execution_dry_run_review["manifest_review"]["would_execute_training"] is False
+    assert execution_dry_run_review["manifest_review"]["training_started_now"] is False
+    assert execution_dry_run_review["decision"]["controlled_dataset2_training_execution_dry_run_review_accepted"] is True
+    assert execution_dry_run_review["decision"]["can_prepare_controlled_dataset2_training_execution_release_plan_now"] is True
+    assert execution_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert execution_dry_run_review["decision"]["can_start_training_now"] is False
+    assert execution_dry_run_review["decision"]["training_started_now"] is False
+    assert execution_dry_run_review["decision"]["model_artifact_written"] is False
+    assert execution_dry_run_review["decision"]["writes_file"] is False
+    assert execution_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    execution_dry_run_reviews = service.list_dataset2_controlled_training_execution_dry_run_reviews(limit=3)
+    assert execution_dry_run_reviews[0]["id"] == execution_dry_run_review["event_id"]
+    assert execution_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_release_plan = service.dataset2_controlled_training_execution_release_plan(
+        dry_run_review_id=blocked_execution_dry_run_review["event_id"],
+        planned_by="tester",
+        note="blocked dry-run review cannot create release plan",
+    )
+    assert blocked_release_plan["stage"] == "V5.6-P72"
+    assert blocked_release_plan["status"] == "dataset2_controlled_training_execution_release_plan_blocked"
+    assert blocked_release_plan["decision"]["controlled_dataset2_training_execution_release_plan_ready"] is False
+    assert blocked_release_plan["decision"]["can_prepare_controlled_dataset2_training_execution_release_preflight_now"] is False
+    assert blocked_release_plan["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_release_plan["decision"]["can_start_training_now"] is False
+    assert blocked_release_plan["decision"]["training_started_now"] is False
+    assert blocked_release_plan["decision"]["model_artifact_written"] is False
+    assert blocked_release_plan["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_release_plan["checks"]}
+    assert check_status["dry_run_review_accepted_for_release_plan"] == "blocked"
+
+    release_plan = service.dataset2_controlled_training_execution_release_plan(
+        dry_run_review_id=execution_dry_run_review["event_id"],
+        planned_by="tester",
+        note="plan controlled Dataset2 training release preflight only",
+    )
+    assert release_plan["stage"] == "V5.6-P72"
+    assert release_plan["status"] == "dataset2_controlled_training_execution_release_plan_ready"
+    assert release_plan["evidence"]["dry_run_review_id"] == execution_dry_run_review["event_id"]
+    assert release_plan["evidence"]["dry_run_event_id"] == execution_dry_run["event_id"]
+    assert release_plan["evidence"]["manifest_hash"] == execution_dry_run["simulation_result"]["manifest_hash"]
+    assert release_plan["evidence"]["sample_set_hash"] == execution_dry_run_review["evidence"]["sample_set_hash"]
+    assert release_plan["release_plan"]["plan_id"].startswith("dataset2-controlled-training-release-")
+    assert release_plan["release_plan"]["plan_hash"]
+    assert release_plan["release_plan"]["expected_confirmation_token"] == "PREPARE_DATASET2_CONTROLLED_TRAINING_RELEASE_PREFLIGHT"
+    assert release_plan["release_plan"]["writes_model_artifact_now"] is False
+    assert release_plan["release_plan"]["writes_file_now"] is False
+    assert release_plan["release_plan"]["executes_training_now"] is False
+    assert release_plan["release_plan"]["training_started_now"] is False
+    assert release_plan["decision"]["controlled_dataset2_training_execution_release_plan_ready"] is True
+    assert release_plan["decision"]["can_prepare_controlled_dataset2_training_execution_release_preflight_now"] is True
+    assert release_plan["decision"]["can_execute_dataset2_training_now"] is False
+    assert release_plan["decision"]["can_start_training_now"] is False
+    assert release_plan["decision"]["training_started_now"] is False
+    assert release_plan["decision"]["model_artifact_written"] is False
+    assert release_plan["decision"]["writes_file"] is False
+    assert release_plan["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    release_plans = service.list_dataset2_controlled_training_execution_release_plans(limit=3)
+    assert release_plans[0]["id"] == release_plan["event_id"]
+    assert release_plans[0]["planning"]["planned_by"] == "tester"
+
+    blocked_release_preflight = service.dataset2_controlled_training_execution_release_preflight(
+        release_plan_event_id=release_plan["event_id"],
+        requested_by="tester",
+        confirmation_token=None,
+        note="missing token must block release preflight",
+    )
+    assert blocked_release_preflight["stage"] == "V5.6-P73"
+    assert blocked_release_preflight["status"] == "dataset2_controlled_training_execution_release_preflight_blocked"
+    assert blocked_release_preflight["decision"]["controlled_dataset2_training_execution_release_preflight_ready"] is False
+    assert blocked_release_preflight["decision"]["can_prepare_controlled_dataset2_training_execution_release_dry_run_now"] is False
+    assert blocked_release_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_release_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_release_preflight["decision"]["training_started_now"] is False
+    assert blocked_release_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_release_preflight["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_release_preflight["checks"]}
+    assert check_status["controlled_training_execution_release_plan_ready"] == "passed"
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    release_preflight = service.dataset2_controlled_training_execution_release_preflight(
+        release_plan_event_id=release_plan["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_RELEASE_PREFLIGHT",
+        note="preflight controlled Dataset2 training release only",
+    )
+    assert release_preflight["stage"] == "V5.6-P73"
+    assert release_preflight["status"] == "dataset2_controlled_training_execution_release_preflight_ready"
+    assert release_preflight["evidence"]["release_plan_event_id"] == release_plan["event_id"]
+    assert release_preflight["evidence"]["release_plan_id"] == release_plan["release_plan"]["plan_id"]
+    assert release_preflight["evidence"]["release_plan_hash"] == release_plan["release_plan"]["plan_hash"]
+    assert release_preflight["evidence"]["manifest_hash"] == release_plan["evidence"]["manifest_hash"]
+    assert release_preflight["evidence"]["planned_sample_set_hash"] == release_plan["evidence"]["sample_set_hash"]
+    assert release_preflight["evidence"]["current_sample_set_hash"] == release_plan["evidence"]["sample_set_hash"]
+    assert release_preflight["evidence"]["current_learning_sample_count"] == 2
+    assert release_preflight["preflight"]["confirmation_token_matched"] is True
+    assert release_preflight["release_preflight"]["writes_model_artifact_now"] is False
+    assert release_preflight["release_preflight"]["writes_file_now"] is False
+    assert release_preflight["release_preflight"]["executes_training_now"] is False
+    assert release_preflight["release_preflight"]["training_started_now"] is False
+    assert release_preflight["decision"]["controlled_dataset2_training_execution_release_preflight_ready"] is True
+    assert release_preflight["decision"]["can_prepare_controlled_dataset2_training_execution_release_dry_run_now"] is True
+    assert release_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert release_preflight["decision"]["can_start_training_now"] is False
+    assert release_preflight["decision"]["training_started_now"] is False
+    assert release_preflight["decision"]["model_artifact_written"] is False
+    assert release_preflight["decision"]["writes_file"] is False
+    assert release_preflight["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    release_preflights = service.list_dataset2_controlled_training_execution_release_preflights(limit=3)
+    assert release_preflights[0]["id"] == release_preflight["event_id"]
+    assert release_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_release_dry_run = service.dataset2_controlled_training_execution_release_dry_run(
+        release_preflight_event_id=blocked_release_preflight["event_id"],
+        simulated_by="tester",
+        note="blocked release preflight cannot simulate release execution",
+    )
+    assert blocked_release_dry_run["stage"] == "V5.6-P74"
+    assert blocked_release_dry_run["status"] == "dataset2_controlled_training_execution_release_dry_run_blocked"
+    assert blocked_release_dry_run["decision"]["controlled_dataset2_training_execution_release_dry_run_completed"] is False
+    assert blocked_release_dry_run["decision"]["can_prepare_controlled_dataset2_training_execution_release_dry_run_review_now"] is False
+    assert blocked_release_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_release_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_release_dry_run["decision"]["training_started_now"] is False
+    assert blocked_release_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_release_dry_run["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_release_dry_run["checks"]}
+    assert check_status["release_preflight_ready"] == "blocked"
+
+    release_dry_run = service.dataset2_controlled_training_execution_release_dry_run(
+        release_preflight_event_id=release_preflight["event_id"],
+        simulated_by="tester",
+        note="simulate controlled Dataset2 training release only",
+    )
+    assert release_dry_run["stage"] == "V5.6-P74"
+    assert release_dry_run["status"] == "dataset2_controlled_training_execution_release_dry_run_completed"
+    assert release_dry_run["evidence"]["release_preflight_event_id"] == release_preflight["event_id"]
+    assert release_dry_run["evidence"]["release_plan_event_id"] == release_plan["event_id"]
+    assert release_dry_run["evidence"]["release_plan_hash"] == release_plan["release_plan"]["plan_hash"]
+    assert release_dry_run["evidence"]["learning_sample_count"] == 2
+    assert release_dry_run["simulation_result"]["release_simulation_manifest_hash"]
+    assert release_dry_run["simulation_result"]["artifact_manifest_hash"]
+    assert release_dry_run["simulation_result"]["artifact_manifest"]["artifact_write_allowed"] is False
+    assert release_dry_run["simulation_result"]["artifact_manifest"]["artifact_path"] is None
+    assert release_dry_run["simulation_result"]["would_write_model_artifact"] is False
+    assert release_dry_run["simulation_result"]["would_write_file"] is False
+    assert release_dry_run["simulation_result"]["would_execute_training"] is False
+    assert release_dry_run["decision"]["controlled_dataset2_training_execution_release_dry_run_completed"] is True
+    assert release_dry_run["decision"]["can_prepare_controlled_dataset2_training_execution_release_dry_run_review_now"] is True
+    assert release_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert release_dry_run["decision"]["can_start_training_now"] is False
+    assert release_dry_run["decision"]["training_started_now"] is False
+    assert release_dry_run["decision"]["model_artifact_written"] is False
+    assert release_dry_run["decision"]["writes_file"] is False
+    assert release_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    release_dry_runs = service.list_dataset2_controlled_training_execution_release_dry_runs(limit=3)
+    assert release_dry_runs[0]["id"] == release_dry_run["event_id"]
+    assert release_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_release_dry_run_review = service.dataset2_controlled_training_execution_release_dry_run_review(
+        release_dry_run_event_id=blocked_release_dry_run["event_id"],
+        reviewed_by="tester",
+        note="blocked release dry-run cannot be accepted",
+    )
+    assert blocked_release_dry_run_review["stage"] == "V5.6-P75"
+    assert blocked_release_dry_run_review["status"] == "dataset2_controlled_training_execution_release_dry_run_review_blocked"
+    assert blocked_release_dry_run_review["decision"]["controlled_dataset2_training_execution_release_dry_run_review_accepted"] is False
+    assert blocked_release_dry_run_review["decision"]["can_prepare_controlled_dataset2_training_execution_final_approval_now"] is False
+    assert blocked_release_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_release_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_release_dry_run_review["decision"]["training_started_now"] is False
+    assert blocked_release_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_release_dry_run_review["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_release_dry_run_review["checks"]}
+    assert check_status["release_dry_run_completed"] == "blocked"
+
+    release_dry_run_review = service.dataset2_controlled_training_execution_release_dry_run_review(
+        release_dry_run_event_id=release_dry_run["event_id"],
+        reviewed_by="tester",
+        note="accept controlled Dataset2 training release dry-run evidence for final approval planning only",
+    )
+    assert release_dry_run_review["stage"] == "V5.6-P75"
+    assert release_dry_run_review["status"] == "dataset2_controlled_training_execution_release_dry_run_review_accepted"
+    assert release_dry_run_review["evidence"]["release_dry_run_event_id"] == release_dry_run["event_id"]
+    assert release_dry_run_review["evidence"]["release_preflight_event_id"] == release_preflight["event_id"]
+    assert release_dry_run_review["evidence"]["release_plan_event_id"] == release_plan["event_id"]
+    assert release_dry_run_review["evidence"]["release_plan_hash"] == release_plan["release_plan"]["plan_hash"]
+    assert release_dry_run_review["evidence"]["release_simulation_manifest_hash"] == release_dry_run["simulation_result"]["release_simulation_manifest_hash"]
+    assert release_dry_run_review["evidence"]["artifact_manifest_hash"] == release_dry_run["simulation_result"]["artifact_manifest_hash"]
+    assert release_dry_run_review["evidence"]["sample_set_hash"] == release_dry_run["evidence"]["current_sample_set_hash"]
+    assert release_dry_run_review["evidence"]["learning_sample_count"] == 2
+    assert release_dry_run_review["manifest_review"]["artifact_write_allowed"] is False
+    assert release_dry_run_review["manifest_review"]["artifact_path"] is None
+    assert release_dry_run_review["manifest_review"]["would_write_model_artifact"] is False
+    assert release_dry_run_review["manifest_review"]["would_write_file"] is False
+    assert release_dry_run_review["manifest_review"]["would_execute_training"] is False
+    assert release_dry_run_review["manifest_review"]["training_started_now"] is False
+    assert release_dry_run_review["decision"]["controlled_dataset2_training_execution_release_dry_run_review_accepted"] is True
+    assert release_dry_run_review["decision"]["can_prepare_controlled_dataset2_training_execution_final_approval_now"] is True
+    assert release_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert release_dry_run_review["decision"]["can_start_training_now"] is False
+    assert release_dry_run_review["decision"]["training_started_now"] is False
+    assert release_dry_run_review["decision"]["model_artifact_written"] is False
+    assert release_dry_run_review["decision"]["writes_file"] is False
+    assert release_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    release_dry_run_reviews = service.list_dataset2_controlled_training_execution_release_dry_run_reviews(limit=3)
+    assert release_dry_run_reviews[0]["id"] == release_dry_run_review["event_id"]
+    assert release_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_final_approval = service.dataset2_controlled_training_execution_final_approval(
+        release_dry_run_review_id=blocked_release_dry_run_review["event_id"],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_FINAL_EXECUTION",
+        note="blocked release dry-run review cannot receive final approval metadata",
+    )
+    assert blocked_final_approval["stage"] == "V5.6-P76"
+    assert blocked_final_approval["status"] == "dataset2_controlled_training_execution_final_approval_blocked"
+    assert blocked_final_approval["decision"]["controlled_dataset2_training_execution_final_approval_accepted"] is False
+    assert blocked_final_approval["decision"]["can_prepare_controlled_dataset2_training_execution_final_preflight_now"] is False
+    assert blocked_final_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_final_approval["decision"]["can_start_training_now"] is False
+    assert blocked_final_approval["decision"]["training_started_now"] is False
+    assert blocked_final_approval["decision"]["model_artifact_written"] is False
+    assert blocked_final_approval["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_final_approval["checks"]}
+    assert check_status["release_dry_run_review_accepted"] == "blocked"
+
+    token_blocked_final_approval = service.dataset2_controlled_training_execution_final_approval(
+        release_dry_run_review_id=release_dry_run_review["event_id"],
+        approved_by="tester",
+        confirmation_token=None,
+        note="missing token must block final approval metadata",
+    )
+    assert token_blocked_final_approval["stage"] == "V5.6-P76"
+    assert token_blocked_final_approval["status"] == "dataset2_controlled_training_execution_final_approval_blocked"
+    assert token_blocked_final_approval["approval"]["confirmation_token_matched"] is False
+    assert token_blocked_final_approval["decision"]["can_prepare_controlled_dataset2_training_execution_final_preflight_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_final_approval["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    final_approval = service.dataset2_controlled_training_execution_final_approval(
+        release_dry_run_review_id=release_dry_run_review["event_id"],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_FINAL_EXECUTION",
+        note="approve controlled Dataset2 training final preflight metadata only",
+    )
+    assert final_approval["stage"] == "V5.6-P76"
+    assert final_approval["status"] == "dataset2_controlled_training_execution_final_approval_accepted"
+    assert final_approval["approval"]["confirmation_token_matched"] is True
+    assert final_approval["approval"]["approved_for_controlled_dataset2_training_execution_final_preflight"] is True
+    assert final_approval["evidence"]["release_dry_run_review_id"] == release_dry_run_review["event_id"]
+    assert final_approval["evidence"]["release_dry_run_event_id"] == release_dry_run["event_id"]
+    assert final_approval["evidence"]["release_plan_event_id"] == release_plan["event_id"]
+    assert final_approval["evidence"]["release_plan_hash"] == release_plan["release_plan"]["plan_hash"]
+    assert final_approval["evidence"]["release_simulation_manifest_hash"] == release_dry_run_review["evidence"]["release_simulation_manifest_hash"]
+    assert final_approval["evidence"]["artifact_manifest_hash"] == release_dry_run_review["evidence"]["artifact_manifest_hash"]
+    assert final_approval["evidence"]["sample_set_hash"] == release_dry_run_review["evidence"]["sample_set_hash"]
+    assert final_approval["evidence"]["learning_sample_count"] == 2
+    assert final_approval["approval_scope"]["expected_confirmation_token"] == "PREPARE_DATASET2_CONTROLLED_TRAINING_FINAL_PREFLIGHT"
+    assert final_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert final_approval["approval_scope"]["writes_file_now"] is False
+    assert final_approval["approval_scope"]["executes_training_now"] is False
+    assert final_approval["approval_scope"]["training_started_now"] is False
+    assert final_approval["decision"]["controlled_dataset2_training_execution_final_approval_accepted"] is True
+    assert final_approval["decision"]["can_prepare_controlled_dataset2_training_execution_final_preflight_now"] is True
+    assert final_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert final_approval["decision"]["can_start_training_now"] is False
+    assert final_approval["decision"]["training_started_now"] is False
+    assert final_approval["decision"]["model_artifact_written"] is False
+    assert final_approval["decision"]["writes_file"] is False
+    assert final_approval["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    final_approvals = service.list_dataset2_controlled_training_execution_final_approvals(limit=3)
+    assert final_approvals[0]["id"] == final_approval["event_id"]
+    assert final_approvals[0]["approval"]["approved_by"] == "tester"
+
+    blocked_final_preflight = service.dataset2_controlled_training_execution_final_preflight(
+        final_approval_id=blocked_final_approval["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_FINAL_PREFLIGHT",
+        note="blocked final approval cannot prepare final preflight",
+    )
+    assert blocked_final_preflight["stage"] == "V5.6-P77"
+    assert blocked_final_preflight["status"] == "dataset2_controlled_training_execution_final_preflight_blocked"
+    assert blocked_final_preflight["decision"]["controlled_dataset2_training_execution_final_preflight_ready"] is False
+    assert blocked_final_preflight["decision"]["can_prepare_controlled_dataset2_training_execution_final_dry_run_now"] is False
+    assert blocked_final_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_final_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_final_preflight["decision"]["training_started_now"] is False
+    assert blocked_final_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_final_preflight["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_final_preflight["checks"]}
+    assert check_status["final_approval_accepted"] == "blocked"
+
+    token_blocked_final_preflight = service.dataset2_controlled_training_execution_final_preflight(
+        final_approval_id=final_approval["event_id"],
+        requested_by="tester",
+        confirmation_token=None,
+        note="missing token must block final preflight metadata",
+    )
+    assert token_blocked_final_preflight["stage"] == "V5.6-P77"
+    assert token_blocked_final_preflight["status"] == "dataset2_controlled_training_execution_final_preflight_blocked"
+    assert token_blocked_final_preflight["preflight"]["confirmation_token_matched"] is False
+    assert token_blocked_final_preflight["decision"]["can_prepare_controlled_dataset2_training_execution_final_dry_run_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_final_preflight["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    final_preflight = service.dataset2_controlled_training_execution_final_preflight(
+        final_approval_id=final_approval["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_FINAL_PREFLIGHT",
+        note="prepare controlled Dataset2 training final dry-run metadata only",
+    )
+    assert final_preflight["stage"] == "V5.6-P77"
+    assert final_preflight["status"] == "dataset2_controlled_training_execution_final_preflight_ready"
+    assert final_preflight["preflight"]["confirmation_token_matched"] is True
+    assert final_preflight["evidence"]["final_approval_id"] == final_approval["event_id"]
+    assert final_preflight["evidence"]["release_dry_run_review_id"] == release_dry_run_review["event_id"]
+    assert final_preflight["evidence"]["release_dry_run_event_id"] == release_dry_run["event_id"]
+    assert final_preflight["evidence"]["release_plan_hash"] == release_plan["release_plan"]["plan_hash"]
+    assert final_preflight["evidence"]["release_simulation_manifest_hash"] == final_approval["evidence"]["release_simulation_manifest_hash"]
+    assert final_preflight["evidence"]["artifact_manifest_hash"] == final_approval["evidence"]["artifact_manifest_hash"]
+    assert final_preflight["evidence"]["approved_sample_set_hash"] == final_approval["evidence"]["sample_set_hash"]
+    assert final_preflight["evidence"]["current_sample_set_hash"] == final_approval["evidence"]["sample_set_hash"]
+    assert final_preflight["evidence"]["approved_learning_sample_count"] == 2
+    assert final_preflight["evidence"]["current_learning_sample_count"] == 2
+    assert final_preflight["final_preflight"]["expected_confirmation_token"] == "RUN_DATASET2_CONTROLLED_TRAINING_FINAL_DRY_RUN"
+    assert final_preflight["final_preflight"]["writes_model_artifact_now"] is False
+    assert final_preflight["final_preflight"]["writes_file_now"] is False
+    assert final_preflight["final_preflight"]["executes_training_now"] is False
+    assert final_preflight["final_preflight"]["training_started_now"] is False
+    assert final_preflight["final_preflight"]["artifact_write_allowed"] is False
+    assert final_preflight["final_preflight"]["artifact_path"] is None
+    assert final_preflight["decision"]["controlled_dataset2_training_execution_final_preflight_ready"] is True
+    assert final_preflight["decision"]["can_prepare_controlled_dataset2_training_execution_final_dry_run_now"] is True
+    assert final_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert final_preflight["decision"]["can_start_training_now"] is False
+    assert final_preflight["decision"]["training_started_now"] is False
+    assert final_preflight["decision"]["model_artifact_written"] is False
+    assert final_preflight["decision"]["writes_file"] is False
+    assert final_preflight["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    final_preflights = service.list_dataset2_controlled_training_execution_final_preflights(limit=3)
+    assert final_preflights[0]["id"] == final_preflight["event_id"]
+    assert final_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_final_dry_run = service.dataset2_controlled_training_execution_final_dry_run(
+        final_preflight_event_id=blocked_final_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_FINAL_DRY_RUN",
+        note="blocked final preflight cannot run final dry-run",
+    )
+    assert blocked_final_dry_run["stage"] == "V5.6-P78"
+    assert blocked_final_dry_run["status"] == "dataset2_controlled_training_execution_final_dry_run_blocked"
+    assert blocked_final_dry_run["decision"]["controlled_dataset2_training_execution_final_dry_run_completed"] is False
+    assert blocked_final_dry_run["decision"]["can_prepare_controlled_dataset2_training_execution_final_dry_run_review_now"] is False
+    assert blocked_final_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_final_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_final_dry_run["decision"]["training_started_now"] is False
+    assert blocked_final_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_final_dry_run["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_final_dry_run["checks"]}
+    assert check_status["final_preflight_ready"] == "blocked"
+
+    token_blocked_final_dry_run = service.dataset2_controlled_training_execution_final_dry_run(
+        final_preflight_event_id=final_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token=None,
+        note="missing token must block final dry-run metadata",
+    )
+    assert token_blocked_final_dry_run["stage"] == "V5.6-P78"
+    assert token_blocked_final_dry_run["status"] == "dataset2_controlled_training_execution_final_dry_run_blocked"
+    assert token_blocked_final_dry_run["dry_run"]["confirmation_token_matched"] is False
+    assert token_blocked_final_dry_run["decision"]["can_prepare_controlled_dataset2_training_execution_final_dry_run_review_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_final_dry_run["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    final_dry_run = service.dataset2_controlled_training_execution_final_dry_run(
+        final_preflight_event_id=final_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_FINAL_DRY_RUN",
+        note="simulate controlled Dataset2 training final dry-run metadata only",
+    )
+    assert final_dry_run["stage"] == "V5.6-P78"
+    assert final_dry_run["status"] == "dataset2_controlled_training_execution_final_dry_run_completed"
+    assert final_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert final_dry_run["dry_run"]["model_artifact_written"] is False
+    assert final_dry_run["dry_run"]["writes_file"] is False
+    assert final_dry_run["dry_run"]["executes_training_now"] is False
+    assert final_dry_run["evidence"]["final_preflight_event_id"] == final_preflight["event_id"]
+    assert final_dry_run["evidence"]["final_approval_id"] == final_approval["event_id"]
+    assert final_dry_run["evidence"]["release_dry_run_review_id"] == release_dry_run_review["event_id"]
+    assert final_dry_run["evidence"]["release_dry_run_event_id"] == release_dry_run["event_id"]
+    assert final_dry_run["evidence"]["release_plan_hash"] == release_plan["release_plan"]["plan_hash"]
+    assert final_dry_run["evidence"]["release_simulation_manifest_hash"] == final_preflight["evidence"]["release_simulation_manifest_hash"]
+    assert final_dry_run["evidence"]["approved_artifact_manifest_hash"] == final_preflight["evidence"]["artifact_manifest_hash"]
+    assert final_dry_run["evidence"]["current_sample_set_hash"] == final_preflight["evidence"]["current_sample_set_hash"]
+    assert final_dry_run["evidence"]["preflight_sample_set_hash"] == final_preflight["evidence"]["current_sample_set_hash"]
+    assert final_dry_run["evidence"]["current_learning_sample_count"] == 2
+    assert final_dry_run["evidence"]["preflight_learning_sample_count"] == 2
+    assert final_dry_run["evidence"]["final_dry_run_manifest_hash"]
+    assert final_dry_run["evidence"]["simulated_artifact_manifest_hash"]
+    assert final_dry_run["simulation_result"]["final_dry_run_manifest_hash"] == final_dry_run["evidence"]["final_dry_run_manifest_hash"]
+    assert final_dry_run["simulation_result"]["artifact_manifest_hash"] == final_dry_run["evidence"]["simulated_artifact_manifest_hash"]
+    assert final_dry_run["simulation_result"]["approved_artifact_manifest_hash"] == final_preflight["evidence"]["artifact_manifest_hash"]
+    assert final_dry_run["simulation_result"]["artifact_manifest"]["artifact_write_allowed"] is False
+    assert final_dry_run["simulation_result"]["artifact_manifest"]["artifact_path"] is None
+    assert final_dry_run["simulation_result"]["would_write_model_artifact"] is False
+    assert final_dry_run["simulation_result"]["would_write_file"] is False
+    assert final_dry_run["simulation_result"]["would_execute_training"] is False
+    assert final_dry_run["simulation_result"]["training_started_now"] is False
+    assert final_dry_run["decision"]["controlled_dataset2_training_execution_final_dry_run_completed"] is True
+    assert final_dry_run["decision"]["can_prepare_controlled_dataset2_training_execution_final_dry_run_review_now"] is True
+    assert final_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert final_dry_run["decision"]["can_start_training_now"] is False
+    assert final_dry_run["decision"]["training_started_now"] is False
+    assert final_dry_run["decision"]["model_artifact_written"] is False
+    assert final_dry_run["decision"]["writes_file"] is False
+    assert final_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    final_dry_runs = service.list_dataset2_controlled_training_execution_final_dry_runs(limit=3)
+    assert final_dry_runs[0]["id"] == final_dry_run["event_id"]
+    assert final_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_final_dry_run_review = service.dataset2_controlled_training_execution_final_dry_run_review(
+        final_dry_run_event_id=blocked_final_dry_run["event_id"],
+        reviewed_by="tester",
+        note="blocked final dry-run cannot be accepted",
+    )
+    assert blocked_final_dry_run_review["stage"] == "V5.6-P79"
+    assert blocked_final_dry_run_review["status"] == "dataset2_controlled_training_execution_final_dry_run_review_blocked"
+    assert blocked_final_dry_run_review["decision"]["controlled_dataset2_training_execution_final_dry_run_review_accepted"] is False
+    assert blocked_final_dry_run_review["decision"]["can_prepare_controlled_dataset2_training_execution_run_approval_now"] is False
+    assert blocked_final_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_final_dry_run_review["decision"]["training_started_now"] is False
+    assert blocked_final_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_final_dry_run_review["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_final_dry_run_review["checks"]}
+    assert check_status["final_dry_run_completed"] == "blocked"
+
+    decision_blocked_final_dry_run_review = service.dataset2_controlled_training_execution_final_dry_run_review(
+        final_dry_run_event_id=final_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="accepted_for_immediate_training",
+        note="wrong review decision must block",
+    )
+    assert decision_blocked_final_dry_run_review["stage"] == "V5.6-P79"
+    assert decision_blocked_final_dry_run_review["status"] == "dataset2_controlled_training_execution_final_dry_run_review_blocked"
+    assert decision_blocked_final_dry_run_review["decision"]["can_prepare_controlled_dataset2_training_execution_run_approval_now"] is False
+    check_status = {check["name"]: check["status"] for check in decision_blocked_final_dry_run_review["checks"]}
+    assert check_status["review_decision_allowed"] == "blocked"
+
+    final_dry_run_review = service.dataset2_controlled_training_execution_final_dry_run_review(
+        final_dry_run_event_id=final_dry_run["event_id"],
+        reviewed_by="tester",
+        note="accept controlled Dataset2 training final dry-run evidence for run approval planning only",
+    )
+    assert final_dry_run_review["stage"] == "V5.6-P79"
+    assert final_dry_run_review["status"] == "dataset2_controlled_training_execution_final_dry_run_review_accepted"
+    assert final_dry_run_review["evidence"]["final_dry_run_event_id"] == final_dry_run["event_id"]
+    assert final_dry_run_review["evidence"]["final_preflight_event_id"] == final_preflight["event_id"]
+    assert final_dry_run_review["evidence"]["final_approval_id"] == final_approval["event_id"]
+    assert final_dry_run_review["evidence"]["release_dry_run_review_id"] == release_dry_run_review["event_id"]
+    assert final_dry_run_review["evidence"]["release_dry_run_event_id"] == release_dry_run["event_id"]
+    assert final_dry_run_review["evidence"]["release_plan_hash"] == release_plan["release_plan"]["plan_hash"]
+    assert final_dry_run_review["evidence"]["release_simulation_manifest_hash"] == final_dry_run["evidence"]["release_simulation_manifest_hash"]
+    assert final_dry_run_review["evidence"]["approved_artifact_manifest_hash"] == final_dry_run["evidence"]["approved_artifact_manifest_hash"]
+    assert final_dry_run_review["evidence"]["simulated_artifact_manifest_hash"] == final_dry_run["simulation_result"]["artifact_manifest_hash"]
+    assert final_dry_run_review["evidence"]["final_dry_run_manifest_hash"] == final_dry_run["simulation_result"]["final_dry_run_manifest_hash"]
+    assert final_dry_run_review["evidence"]["sample_set_hash"] == final_dry_run["evidence"]["current_sample_set_hash"]
+    assert final_dry_run_review["evidence"]["learning_sample_count"] == 2
+    assert final_dry_run_review["manifest_review"]["artifact_write_allowed"] is False
+    assert final_dry_run_review["manifest_review"]["artifact_path"] is None
+    assert final_dry_run_review["manifest_review"]["would_write_model_artifact"] is False
+    assert final_dry_run_review["manifest_review"]["would_write_file"] is False
+    assert final_dry_run_review["manifest_review"]["would_execute_training"] is False
+    assert final_dry_run_review["manifest_review"]["training_started_now"] is False
+    assert final_dry_run_review["decision"]["controlled_dataset2_training_execution_final_dry_run_review_accepted"] is True
+    assert final_dry_run_review["decision"]["can_prepare_controlled_dataset2_training_execution_run_approval_now"] is True
+    assert final_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert final_dry_run_review["decision"]["training_started_now"] is False
+    assert final_dry_run_review["decision"]["model_artifact_written"] is False
+    assert final_dry_run_review["decision"]["writes_file"] is False
+    assert final_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    final_dry_run_reviews = service.list_dataset2_controlled_training_execution_final_dry_run_reviews(limit=3)
+    assert final_dry_run_reviews[0]["id"] == final_dry_run_review["event_id"]
+    assert final_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_run_approval = service.dataset2_controlled_training_execution_run_approval(
+        final_dry_run_review_id=blocked_final_dry_run_review["event_id"],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_EXECUTION_RUN",
+        note="blocked final dry-run review cannot receive run approval metadata",
+    )
+    assert blocked_run_approval["stage"] == "V5.6-P80"
+    assert blocked_run_approval["status"] == "dataset2_controlled_training_execution_run_approval_blocked"
+    assert blocked_run_approval["decision"]["controlled_dataset2_training_execution_run_approval_accepted"] is False
+    assert blocked_run_approval["decision"]["can_prepare_controlled_dataset2_training_execution_run_preflight_now"] is False
+    assert blocked_run_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_run_approval["decision"]["can_start_training_now"] is False
+    assert blocked_run_approval["decision"]["training_started_now"] is False
+    assert blocked_run_approval["decision"]["model_artifact_written"] is False
+    assert blocked_run_approval["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_run_approval["checks"]}
+    assert check_status["final_dry_run_review_accepted"] == "blocked"
+
+    token_blocked_run_approval = service.dataset2_controlled_training_execution_run_approval(
+        final_dry_run_review_id=final_dry_run_review["event_id"],
+        approved_by="tester",
+        confirmation_token=None,
+        note="missing token must block run approval metadata",
+    )
+    assert token_blocked_run_approval["stage"] == "V5.6-P80"
+    assert token_blocked_run_approval["status"] == "dataset2_controlled_training_execution_run_approval_blocked"
+    assert token_blocked_run_approval["approval"]["confirmation_token_matched"] is False
+    assert token_blocked_run_approval["decision"]["can_prepare_controlled_dataset2_training_execution_run_preflight_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_run_approval["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    decision_blocked_run_approval = service.dataset2_controlled_training_execution_run_approval(
+        final_dry_run_review_id=final_dry_run_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_immediate_training",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_EXECUTION_RUN",
+        note="wrong approval decision must block",
+    )
+    assert decision_blocked_run_approval["stage"] == "V5.6-P80"
+    assert decision_blocked_run_approval["status"] == "dataset2_controlled_training_execution_run_approval_blocked"
+    assert decision_blocked_run_approval["decision"]["can_prepare_controlled_dataset2_training_execution_run_preflight_now"] is False
+    check_status = {check["name"]: check["status"] for check in decision_blocked_run_approval["checks"]}
+    assert check_status["approval_decision_allowed"] == "blocked"
+
+    run_approval = service.dataset2_controlled_training_execution_run_approval(
+        final_dry_run_review_id=final_dry_run_review["event_id"],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_EXECUTION_RUN",
+        note="approve controlled Dataset2 training run preflight metadata only",
+    )
+    assert run_approval["stage"] == "V5.6-P80"
+    assert run_approval["status"] == "dataset2_controlled_training_execution_run_approval_accepted"
+    assert run_approval["approval"]["confirmation_token_matched"] is True
+    assert run_approval["approval"]["approved_for_controlled_dataset2_training_execution_run_preflight"] is True
+    assert run_approval["evidence"]["final_dry_run_review_id"] == final_dry_run_review["event_id"]
+    assert run_approval["evidence"]["final_dry_run_event_id"] == final_dry_run["event_id"]
+    assert run_approval["evidence"]["final_preflight_event_id"] == final_preflight["event_id"]
+    assert run_approval["evidence"]["final_approval_id"] == final_approval["event_id"]
+    assert run_approval["evidence"]["release_dry_run_review_id"] == release_dry_run_review["event_id"]
+    assert run_approval["evidence"]["release_dry_run_event_id"] == release_dry_run["event_id"]
+    assert run_approval["evidence"]["release_plan_hash"] == release_plan["release_plan"]["plan_hash"]
+    assert run_approval["evidence"]["final_dry_run_manifest_hash"] == final_dry_run_review["evidence"]["final_dry_run_manifest_hash"]
+    assert run_approval["evidence"]["simulated_artifact_manifest_hash"] == final_dry_run_review["evidence"]["simulated_artifact_manifest_hash"]
+    assert run_approval["evidence"]["release_simulation_manifest_hash"] == final_dry_run_review["evidence"]["release_simulation_manifest_hash"]
+    assert run_approval["evidence"]["sample_set_hash"] == final_dry_run_review["evidence"]["sample_set_hash"]
+    assert run_approval["evidence"]["learning_sample_count"] == 2
+    assert run_approval["approval_scope"]["expected_confirmation_token"] == "PREPARE_DATASET2_CONTROLLED_TRAINING_EXECUTION_RUN_PREFLIGHT"
+    assert run_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert run_approval["approval_scope"]["writes_file_now"] is False
+    assert run_approval["approval_scope"]["executes_training_now"] is False
+    assert run_approval["approval_scope"]["training_started_now"] is False
+    assert run_approval["decision"]["controlled_dataset2_training_execution_run_approval_accepted"] is True
+    assert run_approval["decision"]["can_prepare_controlled_dataset2_training_execution_run_preflight_now"] is True
+    assert run_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert run_approval["decision"]["can_start_training_now"] is False
+    assert run_approval["decision"]["training_started_now"] is False
+    assert run_approval["decision"]["model_artifact_written"] is False
+    assert run_approval["decision"]["writes_file"] is False
+    assert run_approval["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    run_approvals = service.list_dataset2_controlled_training_execution_run_approvals(limit=3)
+    assert run_approvals[0]["id"] == run_approval["event_id"]
+    assert run_approvals[0]["approval"]["approved_by"] == "tester"
+
+    blocked_run_preflight = service.dataset2_controlled_training_execution_run_preflight(
+        run_approval_id=token_blocked_run_approval["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_EXECUTION_RUN_PREFLIGHT",
+        note="blocked approval cannot receive run preflight metadata",
+    )
+    assert blocked_run_preflight["stage"] == "V5.6-P81"
+    assert blocked_run_preflight["status"] == "dataset2_controlled_training_execution_run_preflight_blocked"
+    assert blocked_run_preflight["decision"]["controlled_dataset2_training_execution_run_preflight_ready"] is False
+    assert blocked_run_preflight["decision"]["can_prepare_controlled_dataset2_training_execution_run_now"] is False
+    assert blocked_run_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_run_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_run_preflight["decision"]["training_started_now"] is False
+    assert blocked_run_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_run_preflight["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_run_preflight["checks"]}
+    assert check_status["run_approval_accepted"] == "blocked"
+
+    token_blocked_run_preflight = service.dataset2_controlled_training_execution_run_preflight(
+        run_approval_id=run_approval["event_id"],
+        requested_by="tester",
+        confirmation_token=None,
+        note="missing token must block run preflight metadata",
+    )
+    assert token_blocked_run_preflight["stage"] == "V5.6-P81"
+    assert token_blocked_run_preflight["status"] == "dataset2_controlled_training_execution_run_preflight_blocked"
+    assert token_blocked_run_preflight["preflight"]["confirmation_token_matched"] is False
+    assert token_blocked_run_preflight["decision"]["can_prepare_controlled_dataset2_training_execution_run_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_run_preflight["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    run_preflight = service.dataset2_controlled_training_execution_run_preflight(
+        run_approval_id=run_approval["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_EXECUTION_RUN_PREFLIGHT",
+        note="preflight controlled Dataset2 training run metadata only",
+    )
+    assert run_preflight["stage"] == "V5.6-P81"
+    assert run_preflight["status"] == "dataset2_controlled_training_execution_run_preflight_ready"
+    assert run_preflight["preflight"]["confirmation_token_matched"] is True
+    assert run_preflight["evidence"]["run_approval_id"] == run_approval["event_id"]
+    assert run_preflight["evidence"]["final_dry_run_review_id"] == final_dry_run_review["event_id"]
+    assert run_preflight["evidence"]["final_dry_run_manifest_hash"] == run_approval["evidence"]["final_dry_run_manifest_hash"]
+    assert run_preflight["evidence"]["simulated_artifact_manifest_hash"] == run_approval["evidence"]["simulated_artifact_manifest_hash"]
+    assert run_preflight["evidence"]["release_simulation_manifest_hash"] == run_approval["evidence"]["release_simulation_manifest_hash"]
+    assert run_preflight["evidence"]["approved_sample_set_hash"] == run_approval["evidence"]["sample_set_hash"]
+    assert run_preflight["evidence"]["current_sample_set_hash"] == run_approval["evidence"]["sample_set_hash"]
+    assert run_preflight["evidence"]["approved_learning_sample_count"] == 2
+    assert run_preflight["evidence"]["current_learning_sample_count"] == 2
+    assert run_preflight["run_preflight"]["expected_confirmation_token"] == "RUN_DATASET2_CONTROLLED_TRAINING_EXECUTION"
+    assert run_preflight["run_preflight"]["writes_model_artifact_now"] is False
+    assert run_preflight["run_preflight"]["writes_file_now"] is False
+    assert run_preflight["run_preflight"]["executes_training_now"] is False
+    assert run_preflight["run_preflight"]["training_started_now"] is False
+    assert run_preflight["decision"]["controlled_dataset2_training_execution_run_preflight_ready"] is True
+    assert run_preflight["decision"]["can_prepare_controlled_dataset2_training_execution_run_now"] is True
+    assert run_preflight["decision"]["can_run_controlled_dataset2_training_execution_now"] is False
+    assert run_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert run_preflight["decision"]["can_start_training_now"] is False
+    assert run_preflight["decision"]["training_started_now"] is False
+    assert run_preflight["decision"]["model_artifact_written"] is False
+    assert run_preflight["decision"]["writes_file"] is False
+    assert run_preflight["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    run_preflights = service.list_dataset2_controlled_training_execution_run_preflights(limit=3)
+    assert run_preflights[0]["id"] == run_preflight["event_id"]
+    assert run_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_controlled_run = service.dataset2_controlled_training_execution_run(
+        run_preflight_event_id=token_blocked_run_preflight["event_id"],
+        run_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_EXECUTION",
+        note="blocked preflight cannot run controlled training",
+    )
+    assert blocked_controlled_run["stage"] == "V5.6-P82"
+    assert blocked_controlled_run["status"] == "dataset2_controlled_training_execution_run_blocked"
+    assert blocked_controlled_run["decision"]["controlled_dataset2_training_execution_run_completed"] is False
+    assert blocked_controlled_run["decision"]["in_memory_training_completed"] is False
+    assert blocked_controlled_run["decision"]["can_prepare_controlled_dataset2_training_execution_run_review_now"] is False
+    assert blocked_controlled_run["decision"]["training_started_now"] is False
+    assert blocked_controlled_run["decision"]["model_artifact_written"] is False
+    assert blocked_controlled_run["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_controlled_run["checks"]}
+    assert check_status["run_preflight_ready"] == "blocked"
+
+    token_blocked_controlled_run = service.dataset2_controlled_training_execution_run(
+        run_preflight_event_id=run_preflight["event_id"],
+        run_by="tester",
+        confirmation_token=None,
+        note="missing token must block controlled training run",
+    )
+    assert token_blocked_controlled_run["stage"] == "V5.6-P82"
+    assert token_blocked_controlled_run["status"] == "dataset2_controlled_training_execution_run_blocked"
+    assert token_blocked_controlled_run["run"]["confirmation_token_matched"] is False
+    assert token_blocked_controlled_run["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_controlled_run["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    controlled_run = service.dataset2_controlled_training_execution_run(
+        run_preflight_event_id=run_preflight["event_id"],
+        run_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_EXECUTION",
+        note="controlled in-memory Dataset2 training execution",
+    )
+    assert controlled_run["stage"] == "V5.6-P82"
+    assert controlled_run["status"] == "dataset2_controlled_training_execution_run_completed"
+    assert controlled_run["run"]["confirmation_token_matched"] is True
+    assert controlled_run["evidence"]["run_preflight_event_id"] == run_preflight["event_id"]
+    assert controlled_run["evidence"]["run_approval_id"] == run_approval["event_id"]
+    assert controlled_run["evidence"]["final_dry_run_review_id"] == final_dry_run_review["event_id"]
+    assert controlled_run["evidence"]["preflight_sample_set_hash"] == run_preflight["evidence"]["current_sample_set_hash"]
+    assert controlled_run["evidence"]["current_sample_set_hash"] == run_preflight["evidence"]["current_sample_set_hash"]
+    assert controlled_run["evidence"]["preflight_learning_sample_count"] == 2
+    assert controlled_run["evidence"]["current_learning_sample_count"] == 2
+    assert controlled_run["training_result"]["algorithm"] == "feature_value_frequency_classifier"
+    assert controlled_run["training_result"]["train_row_count"] == 1
+    assert controlled_run["training_result"]["out_of_sample_row_count"] == 1
+    assert controlled_run["training_result"]["trained_feature_count"] > 0
+    assert controlled_run["training_result"]["model_summary_hash"]
+    assert controlled_run["training_result"]["model_artifact_written"] is False
+    assert controlled_run["training_result"]["writes_file"] is False
+    assert controlled_run["training_result"]["artifact_path"] is None
+    assert controlled_run["training_result"]["record_bodies_included"] is False
+    assert controlled_run["training_result"]["in_memory_model_trained"] is True
+    assert controlled_run["decision"]["controlled_dataset2_training_execution_run_completed"] is True
+    assert controlled_run["decision"]["in_memory_training_completed"] is True
+    assert controlled_run["decision"]["can_prepare_controlled_dataset2_training_execution_run_review_now"] is True
+    assert controlled_run["decision"]["training_started_now"] is True
+    assert controlled_run["decision"]["model_artifact_written"] is False
+    assert controlled_run["decision"]["writes_file"] is False
+    assert controlled_run["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    controlled_runs = service.list_dataset2_controlled_training_execution_runs(limit=3)
+    assert controlled_runs[0]["id"] == controlled_run["event_id"]
+    assert controlled_runs[0]["run"]["run_by"] == "tester"
+
+    blocked_run_review = service.dataset2_controlled_training_execution_run_review(
+        run_event_id=blocked_controlled_run["event_id"],
+        reviewed_by="tester",
+        note="blocked controlled run cannot be accepted for artifact planning",
+    )
+    assert blocked_run_review["stage"] == "V5.6-P83"
+    assert blocked_run_review["status"] == "dataset2_controlled_training_execution_run_review_blocked"
+    assert blocked_run_review["decision"]["controlled_dataset2_training_execution_run_review_accepted"] is False
+    assert blocked_run_review["decision"]["can_prepare_controlled_dataset2_training_artifact_plan_now"] is False
+    assert blocked_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_run_review["decision"]["training_started_now"] is False
+    assert blocked_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_run_review["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_run_review["checks"]}
+    assert check_status["controlled_training_run_completed"] == "blocked"
+
+    decision_blocked_run_review = service.dataset2_controlled_training_execution_run_review(
+        run_event_id=controlled_run["event_id"],
+        reviewed_by="tester",
+        review_decision="accepted_for_immediate_artifact_write",
+        note="wrong review decision must block artifact planning",
+    )
+    assert decision_blocked_run_review["stage"] == "V5.6-P83"
+    assert decision_blocked_run_review["status"] == "dataset2_controlled_training_execution_run_review_blocked"
+    assert decision_blocked_run_review["decision"]["can_prepare_controlled_dataset2_training_artifact_plan_now"] is False
+    check_status = {check["name"]: check["status"] for check in decision_blocked_run_review["checks"]}
+    assert check_status["review_decision_allowed"] == "blocked"
+
+    controlled_run_review = service.dataset2_controlled_training_execution_run_review(
+        run_event_id=controlled_run["event_id"],
+        reviewed_by="tester",
+        note="review controlled no-artifact Dataset2 training run",
+    )
+    assert controlled_run_review["stage"] == "V5.6-P83"
+    assert controlled_run_review["status"] == "dataset2_controlled_training_execution_run_review_accepted"
+    assert controlled_run_review["review"]["review_decision"] == "accepted_for_controlled_dataset2_training_artifact_plan"
+    assert controlled_run_review["evidence"]["run_event_id"] == controlled_run["event_id"]
+    assert controlled_run_review["evidence"]["run_preflight_event_id"] == run_preflight["event_id"]
+    assert controlled_run_review["evidence"]["sample_set_hash"] == controlled_run["evidence"]["current_sample_set_hash"]
+    assert controlled_run_review["evidence"]["learning_sample_count"] == 2
+    assert controlled_run_review["evidence"]["model_summary_hash"] == controlled_run["training_result"]["model_summary_hash"]
+    assert controlled_run_review["run_review"]["train_row_count"] == 1
+    assert controlled_run_review["run_review"]["out_of_sample_row_count"] == 1
+    assert controlled_run_review["run_review"]["model_artifact_written"] is False
+    assert controlled_run_review["run_review"]["writes_file"] is False
+    assert controlled_run_review["run_review"]["artifact_path"] is None
+    assert controlled_run_review["decision"]["controlled_dataset2_training_execution_run_review_accepted"] is True
+    assert controlled_run_review["decision"]["can_prepare_controlled_dataset2_training_artifact_plan_now"] is True
+    assert controlled_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert controlled_run_review["decision"]["can_start_training_now"] is False
+    assert controlled_run_review["decision"]["training_started_now"] is False
+    assert controlled_run_review["decision"]["model_artifact_written"] is False
+    assert controlled_run_review["decision"]["writes_file"] is False
+    assert controlled_run_review["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    controlled_run_reviews = service.list_dataset2_controlled_training_execution_run_reviews(limit=3)
+    assert controlled_run_reviews[0]["id"] == controlled_run_review["event_id"]
+    assert controlled_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_artifact_plan = service.dataset2_controlled_training_artifact_plan(
+        run_review_id=blocked_run_review["event_id"],
+        planned_by="tester",
+        note="blocked run review cannot become an artifact plan",
+    )
+    assert blocked_artifact_plan["stage"] == "V5.6-P84"
+    assert blocked_artifact_plan["status"] == "dataset2_controlled_training_artifact_plan_blocked"
+    assert blocked_artifact_plan["decision"]["controlled_dataset2_training_artifact_plan_ready"] is False
+    assert blocked_artifact_plan["decision"]["can_request_controlled_dataset2_training_artifact_plan_approval_now"] is False
+    assert blocked_artifact_plan["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_plan["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_plan["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_plan["decision"]["training_started_now"] is False
+    assert blocked_artifact_plan["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_plan["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_plan["checks"]}
+    assert check_status["run_review_accepted"] == "blocked"
+
+    artifact_plan = service.dataset2_controlled_training_artifact_plan(
+        run_review_id=controlled_run_review["event_id"],
+        planned_by="tester",
+        note="metadata-only controlled Dataset2 training artifact plan",
+    )
+    assert artifact_plan["stage"] == "V5.6-P84"
+    assert artifact_plan["status"] == "dataset2_controlled_training_artifact_plan_ready"
+    assert artifact_plan["evidence"]["run_review_id"] == controlled_run_review["event_id"]
+    assert artifact_plan["evidence"]["run_event_id"] == controlled_run["event_id"]
+    assert artifact_plan["evidence"]["sample_set_hash"] == controlled_run_review["evidence"]["sample_set_hash"]
+    assert artifact_plan["evidence"]["model_summary_hash"] == controlled_run_review["evidence"]["model_summary_hash"]
+    assert artifact_plan["artifact_plan"]["artifact_plan_id"].startswith("dataset2-artifact-plan-")
+    assert artifact_plan["artifact_plan"]["artifact_plan_hash"]
+    assert artifact_plan["artifact_plan"]["artifact_manifest"]["artifact_write_allowed_now"] is False
+    assert artifact_plan["artifact_plan"]["artifact_manifest"]["artifact_path"] is None
+    assert artifact_plan["artifact_plan"]["writes_model_artifact_now"] is False
+    assert artifact_plan["artifact_plan"]["writes_file_now"] is False
+    assert artifact_plan["artifact_plan"]["executes_training_now"] is False
+    assert artifact_plan["decision"]["controlled_dataset2_training_artifact_plan_ready"] is True
+    assert artifact_plan["decision"]["can_request_controlled_dataset2_training_artifact_plan_approval_now"] is True
+    assert artifact_plan["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_plan["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_plan["decision"]["can_start_training_now"] is False
+    assert artifact_plan["decision"]["training_started_now"] is False
+    assert artifact_plan["decision"]["model_artifact_written"] is False
+    assert artifact_plan["decision"]["writes_file"] is False
+    assert artifact_plan["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_plans = service.list_dataset2_controlled_training_artifact_plans(limit=3)
+    assert artifact_plans[0]["id"] == artifact_plan["event_id"]
+    assert artifact_plans[0]["planning"]["planned_by"] == "tester"
+
+    blocked_artifact_plan_approval = service.dataset2_controlled_training_artifact_plan_approval(
+        artifact_plan_event_id=blocked_artifact_plan["event_id"],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_PLAN",
+        note="blocked artifact plan cannot be approved",
+    )
+    assert blocked_artifact_plan_approval["stage"] == "V5.6-P85"
+    assert blocked_artifact_plan_approval["status"] == "dataset2_controlled_training_artifact_plan_approval_blocked"
+    assert blocked_artifact_plan_approval["decision"]["controlled_dataset2_training_artifact_plan_approval_accepted"] is False
+    assert blocked_artifact_plan_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_preflight_now"] is False
+    assert blocked_artifact_plan_approval["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_plan_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_plan_approval["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_plan_approval["decision"]["training_started_now"] is False
+    assert blocked_artifact_plan_approval["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_plan_approval["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_plan_approval["checks"]}
+    assert check_status["artifact_plan_ready"] == "blocked"
+
+    token_blocked_artifact_plan_approval = service.dataset2_controlled_training_artifact_plan_approval(
+        artifact_plan_event_id=artifact_plan["event_id"],
+        approved_by="tester",
+        confirmation_token=None,
+        note="missing token must block artifact plan approval",
+    )
+    assert token_blocked_artifact_plan_approval["stage"] == "V5.6-P85"
+    assert token_blocked_artifact_plan_approval["status"] == "dataset2_controlled_training_artifact_plan_approval_blocked"
+    assert token_blocked_artifact_plan_approval["approval"]["confirmation_token_matched"] is False
+    assert token_blocked_artifact_plan_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_preflight_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_plan_approval["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    decision_blocked_artifact_plan_approval = service.dataset2_controlled_training_artifact_plan_approval(
+        artifact_plan_event_id=artifact_plan["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_immediate_artifact_write",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_PLAN",
+        note="wrong decision must block artifact plan approval",
+    )
+    assert decision_blocked_artifact_plan_approval["stage"] == "V5.6-P85"
+    assert decision_blocked_artifact_plan_approval["status"] == "dataset2_controlled_training_artifact_plan_approval_blocked"
+    assert decision_blocked_artifact_plan_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_preflight_now"] is False
+    check_status = {check["name"]: check["status"] for check in decision_blocked_artifact_plan_approval["checks"]}
+    assert check_status["approval_decision_allowed"] == "blocked"
+
+    artifact_plan_approval = service.dataset2_controlled_training_artifact_plan_approval(
+        artifact_plan_event_id=artifact_plan["event_id"],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_PLAN",
+        note="approve metadata-only artifact plan preflight",
+    )
+    assert artifact_plan_approval["stage"] == "V5.6-P85"
+    assert artifact_plan_approval["status"] == "dataset2_controlled_training_artifact_plan_approval_accepted"
+    assert artifact_plan_approval["approval"]["confirmation_token_matched"] is True
+    assert artifact_plan_approval["approval"]["approved_for_controlled_dataset2_training_artifact_plan_preflight"] is True
+    assert artifact_plan_approval["evidence"]["artifact_plan_event_id"] == artifact_plan["event_id"]
+    assert artifact_plan_approval["evidence"]["artifact_plan_hash"] == artifact_plan["artifact_plan"]["artifact_plan_hash"]
+    assert artifact_plan_approval["evidence"]["sample_set_hash"] == artifact_plan["evidence"]["sample_set_hash"]
+    assert artifact_plan_approval["evidence"]["model_summary_hash"] == artifact_plan["evidence"]["model_summary_hash"]
+    assert artifact_plan_approval["approval_scope"]["expected_confirmation_token"] == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_PREFLIGHT"
+    assert artifact_plan_approval["approval_scope"]["artifact_write_allowed_now"] is False
+    assert artifact_plan_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert artifact_plan_approval["approval_scope"]["writes_file_now"] is False
+    assert artifact_plan_approval["approval_scope"]["executes_training_now"] is False
+    assert artifact_plan_approval["approval_scope"]["training_started_now"] is False
+    assert artifact_plan_approval["decision"]["controlled_dataset2_training_artifact_plan_approval_accepted"] is True
+    assert artifact_plan_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_preflight_now"] is True
+    assert artifact_plan_approval["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_plan_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_plan_approval["decision"]["can_start_training_now"] is False
+    assert artifact_plan_approval["decision"]["training_started_now"] is False
+    assert artifact_plan_approval["decision"]["model_artifact_written"] is False
+    assert artifact_plan_approval["decision"]["writes_file"] is False
+    assert artifact_plan_approval["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_plan_approvals = service.list_dataset2_controlled_training_artifact_plan_approvals(limit=3)
+    assert artifact_plan_approvals[0]["id"] == artifact_plan_approval["event_id"]
+    assert artifact_plan_approvals[0]["approval"]["approved_by"] == "tester"
+
+    blocked_artifact_preflight = service.dataset2_controlled_training_artifact_preflight(
+        artifact_plan_approval_id=blocked_artifact_plan_approval["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_PREFLIGHT",
+        note="blocked approval cannot enter artifact preflight",
+    )
+    assert blocked_artifact_preflight["stage"] == "V5.6-P86"
+    assert blocked_artifact_preflight["status"] == "dataset2_controlled_training_artifact_preflight_blocked"
+    assert blocked_artifact_preflight["decision"]["controlled_dataset2_training_artifact_preflight_ready"] is False
+    assert blocked_artifact_preflight["decision"]["can_run_controlled_dataset2_training_artifact_dry_run_now"] is False
+    assert blocked_artifact_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_preflight["decision"]["training_started_now"] is False
+    assert blocked_artifact_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_preflight["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_preflight["checks"]}
+    assert check_status["artifact_plan_approval_accepted"] == "blocked"
+
+    token_blocked_artifact_preflight = service.dataset2_controlled_training_artifact_preflight(
+        artifact_plan_approval_id=artifact_plan_approval["event_id"],
+        requested_by="tester",
+        confirmation_token=None,
+        note="missing token must block artifact preflight",
+    )
+    assert token_blocked_artifact_preflight["stage"] == "V5.6-P86"
+    assert token_blocked_artifact_preflight["status"] == "dataset2_controlled_training_artifact_preflight_blocked"
+    assert token_blocked_artifact_preflight["preflight"]["confirmation_token_matched"] is False
+    assert token_blocked_artifact_preflight["decision"]["can_run_controlled_dataset2_training_artifact_dry_run_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_preflight["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    artifact_preflight = service.dataset2_controlled_training_artifact_preflight(
+        artifact_plan_approval_id=artifact_plan_approval["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_PREFLIGHT",
+        note="preflight metadata-only artifact dry-run readiness",
+    )
+    assert artifact_preflight["stage"] == "V5.6-P86"
+    assert artifact_preflight["status"] == "dataset2_controlled_training_artifact_preflight_ready"
+    assert artifact_preflight["preflight"]["confirmation_token_matched"] is True
+    assert artifact_preflight["evidence"]["artifact_plan_approval_id"] == artifact_plan_approval["event_id"]
+    assert artifact_preflight["evidence"]["artifact_plan_event_id"] == artifact_plan["event_id"]
+    assert artifact_preflight["evidence"]["artifact_plan_hash"] == artifact_plan_approval["evidence"]["artifact_plan_hash"]
+    assert artifact_preflight["evidence"]["sample_set_hash"] == artifact_plan_approval["evidence"]["sample_set_hash"]
+    assert artifact_preflight["evidence"]["model_summary_hash"] == artifact_plan_approval["evidence"]["model_summary_hash"]
+    assert artifact_preflight["artifact_preflight"]["expected_confirmation_token"] == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_DRY_RUN"
+    assert artifact_preflight["artifact_preflight"]["artifact_write_allowed_now"] is False
+    assert artifact_preflight["artifact_preflight"]["writes_model_artifact_now"] is False
+    assert artifact_preflight["artifact_preflight"]["writes_file_now"] is False
+    assert artifact_preflight["artifact_preflight"]["executes_training_now"] is False
+    assert artifact_preflight["artifact_preflight"]["training_started_now"] is False
+    assert artifact_preflight["decision"]["controlled_dataset2_training_artifact_preflight_ready"] is True
+    assert artifact_preflight["decision"]["can_run_controlled_dataset2_training_artifact_dry_run_now"] is True
+    assert artifact_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_preflight["decision"]["training_started_now"] is False
+    assert artifact_preflight["decision"]["model_artifact_written"] is False
+    assert artifact_preflight["decision"]["writes_file"] is False
+    assert artifact_preflight["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_preflights = service.list_dataset2_controlled_training_artifact_preflights(limit=3)
+    assert artifact_preflights[0]["id"] == artifact_preflight["event_id"]
+    assert artifact_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_artifact_dry_run = service.dataset2_controlled_training_artifact_dry_run(
+        artifact_preflight_event_id=blocked_artifact_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_DRY_RUN",
+        note="blocked preflight cannot become an artifact dry-run",
+    )
+    assert blocked_artifact_dry_run["stage"] == "V5.6-P87"
+    assert blocked_artifact_dry_run["status"] == "dataset2_controlled_training_artifact_dry_run_blocked"
+    assert blocked_artifact_dry_run["decision"]["controlled_dataset2_training_artifact_dry_run_completed"] is False
+    assert blocked_artifact_dry_run["decision"]["can_prepare_controlled_dataset2_training_artifact_dry_run_review_now"] is False
+    assert blocked_artifact_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_dry_run["decision"]["training_started_now"] is False
+    assert blocked_artifact_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_dry_run["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_dry_run["checks"]}
+    assert check_status["artifact_preflight_ready"] == "blocked"
+
+    token_blocked_artifact_dry_run = service.dataset2_controlled_training_artifact_dry_run(
+        artifact_preflight_event_id=artifact_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token=None,
+        note="missing token must block artifact dry-run",
+    )
+    assert token_blocked_artifact_dry_run["stage"] == "V5.6-P87"
+    assert token_blocked_artifact_dry_run["status"] == "dataset2_controlled_training_artifact_dry_run_blocked"
+    assert token_blocked_artifact_dry_run["dry_run"]["confirmation_token_matched"] is False
+    assert token_blocked_artifact_dry_run["decision"]["can_prepare_controlled_dataset2_training_artifact_dry_run_review_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_dry_run["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    artifact_dry_run = service.dataset2_controlled_training_artifact_dry_run(
+        artifact_preflight_event_id=artifact_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_DRY_RUN",
+        note="simulate controlled Dataset2 artifact write without writing files",
+    )
+    assert artifact_dry_run["stage"] == "V5.6-P87"
+    assert artifact_dry_run["status"] == "dataset2_controlled_training_artifact_dry_run_completed"
+    assert artifact_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert artifact_dry_run["evidence"]["artifact_preflight_event_id"] == artifact_preflight["event_id"]
+    assert artifact_dry_run["evidence"]["artifact_plan_hash"] == artifact_preflight["evidence"]["artifact_plan_hash"]
+    assert artifact_dry_run["evidence"]["sample_set_hash"] == artifact_preflight["evidence"]["sample_set_hash"]
+    assert artifact_dry_run["evidence"]["model_summary_hash"] == artifact_preflight["evidence"]["model_summary_hash"]
+    assert artifact_dry_run["artifact_dry_run"]["artifact_dry_run_manifest_hash"]
+    assert artifact_dry_run["artifact_dry_run"]["simulated_artifact_payload_hash"]
+    assert artifact_dry_run["artifact_dry_run"]["artifact_manifest"]["artifact_path"] is None
+    assert artifact_dry_run["artifact_dry_run"]["artifact_manifest"]["artifact_write_allowed_now"] is False
+    assert artifact_dry_run["artifact_dry_run"]["artifact_manifest"]["would_write_model_artifact"] is False
+    assert artifact_dry_run["artifact_dry_run"]["artifact_manifest"]["would_write_file"] is False
+    assert artifact_dry_run["artifact_dry_run"]["artifact_manifest"]["record_bodies_included"] is False
+    assert artifact_dry_run["artifact_dry_run"]["writes_model_artifact_now"] is False
+    assert artifact_dry_run["artifact_dry_run"]["writes_file_now"] is False
+    assert artifact_dry_run["artifact_dry_run"]["executes_training_now"] is False
+    assert artifact_dry_run["artifact_dry_run"]["training_started_now"] is False
+    assert artifact_dry_run["artifact_dry_run"]["model_artifact_written"] is False
+    assert artifact_dry_run["decision"]["controlled_dataset2_training_artifact_dry_run_completed"] is True
+    assert artifact_dry_run["decision"]["can_prepare_controlled_dataset2_training_artifact_dry_run_review_now"] is True
+    assert artifact_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_dry_run["decision"]["training_started_now"] is False
+    assert artifact_dry_run["decision"]["model_artifact_written"] is False
+    assert artifact_dry_run["decision"]["writes_file"] is False
+    assert artifact_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_dry_runs = service.list_dataset2_controlled_training_artifact_dry_runs(limit=3)
+    assert artifact_dry_runs[0]["id"] == artifact_dry_run["event_id"]
+    assert artifact_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_artifact_dry_run_review = service.dataset2_controlled_training_artifact_dry_run_review(
+        artifact_dry_run_event_id=blocked_artifact_dry_run["event_id"],
+        reviewed_by="tester",
+        note="blocked artifact dry-run cannot be accepted",
+    )
+    assert blocked_artifact_dry_run_review["stage"] == "V5.6-P88"
+    assert blocked_artifact_dry_run_review["status"] == "dataset2_controlled_training_artifact_dry_run_review_blocked"
+    assert blocked_artifact_dry_run_review["decision"]["controlled_dataset2_training_artifact_dry_run_review_accepted"] is False
+    assert blocked_artifact_dry_run_review["decision"]["can_request_controlled_dataset2_training_artifact_release_approval_now"] is False
+    assert blocked_artifact_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_dry_run_review["decision"]["training_started_now"] is False
+    assert blocked_artifact_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_dry_run_review["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_dry_run_review["checks"]}
+    assert check_status["artifact_dry_run_completed"] == "blocked"
+
+    decision_blocked_artifact_dry_run_review = service.dataset2_controlled_training_artifact_dry_run_review(
+        artifact_dry_run_event_id=artifact_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="accepted_for_immediate_model_artifact_write",
+        note="wrong review decision must block artifact dry-run review",
+    )
+    assert decision_blocked_artifact_dry_run_review["stage"] == "V5.6-P88"
+    assert decision_blocked_artifact_dry_run_review["status"] == "dataset2_controlled_training_artifact_dry_run_review_blocked"
+    assert decision_blocked_artifact_dry_run_review["decision"]["can_request_controlled_dataset2_training_artifact_release_approval_now"] is False
+    check_status = {check["name"]: check["status"] for check in decision_blocked_artifact_dry_run_review["checks"]}
+    assert check_status["review_decision_allowed"] == "blocked"
+
+    artifact_dry_run_review = service.dataset2_controlled_training_artifact_dry_run_review(
+        artifact_dry_run_event_id=artifact_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="accepted_for_controlled_dataset2_training_artifact_release_approval",
+        note="accept P87 dry-run evidence for later release approval",
+    )
+    assert artifact_dry_run_review["stage"] == "V5.6-P88"
+    assert artifact_dry_run_review["status"] == "dataset2_controlled_training_artifact_dry_run_review_accepted"
+    assert artifact_dry_run_review["review"]["accepted_for_controlled_dataset2_training_artifact_release_approval"] is True
+    assert artifact_dry_run_review["evidence"]["artifact_dry_run_event_id"] == artifact_dry_run["event_id"]
+    assert artifact_dry_run_review["evidence"]["artifact_dry_run_manifest_hash"] == artifact_dry_run["artifact_dry_run"]["artifact_dry_run_manifest_hash"]
+    assert artifact_dry_run_review["evidence"]["simulated_artifact_payload_hash"] == artifact_dry_run["artifact_dry_run"]["simulated_artifact_payload_hash"]
+    assert artifact_dry_run_review["artifact_review"]["artifact_write_allowed_now"] is False
+    assert artifact_dry_run_review["artifact_review"]["writes_model_artifact_now"] is False
+    assert artifact_dry_run_review["artifact_review"]["writes_file_now"] is False
+    assert artifact_dry_run_review["artifact_review"]["executes_training_now"] is False
+    assert artifact_dry_run_review["artifact_review"]["training_started_now"] is False
+    assert artifact_dry_run_review["artifact_review"]["model_artifact_written"] is False
+    assert artifact_dry_run_review["decision"]["controlled_dataset2_training_artifact_dry_run_review_accepted"] is True
+    assert artifact_dry_run_review["decision"]["can_request_controlled_dataset2_training_artifact_release_approval_now"] is True
+    assert artifact_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_dry_run_review["decision"]["training_started_now"] is False
+    assert artifact_dry_run_review["decision"]["model_artifact_written"] is False
+    assert artifact_dry_run_review["decision"]["writes_file"] is False
+    assert artifact_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_dry_run_reviews = service.list_dataset2_controlled_training_artifact_dry_run_reviews(limit=3)
+    assert artifact_dry_run_reviews[0]["id"] == artifact_dry_run_review["event_id"]
+    assert artifact_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_artifact_release_approval = service.dataset2_controlled_training_artifact_release_approval(
+        artifact_dry_run_review_id=blocked_artifact_dry_run_review["event_id"],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE",
+        note="blocked artifact dry-run review cannot be approved for release preflight",
+    )
+    assert blocked_artifact_release_approval["stage"] == "V5.6-P89"
+    assert blocked_artifact_release_approval["status"] == "dataset2_controlled_training_artifact_release_approval_blocked"
+    assert blocked_artifact_release_approval["decision"]["controlled_dataset2_training_artifact_release_approval_accepted"] is False
+    assert blocked_artifact_release_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_release_preflight_now"] is False
+    assert blocked_artifact_release_approval["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_release_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_release_approval["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_release_approval["decision"]["training_started_now"] is False
+    assert blocked_artifact_release_approval["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_release_approval["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_release_approval["checks"]}
+    assert check_status["artifact_dry_run_review_accepted"] == "blocked"
+
+    token_blocked_artifact_release_approval = service.dataset2_controlled_training_artifact_release_approval(
+        artifact_dry_run_review_id=artifact_dry_run_review["event_id"],
+        approved_by="tester",
+        confirmation_token=None,
+        note="missing token must block artifact release approval",
+    )
+    assert token_blocked_artifact_release_approval["stage"] == "V5.6-P89"
+    assert token_blocked_artifact_release_approval["status"] == "dataset2_controlled_training_artifact_release_approval_blocked"
+    assert token_blocked_artifact_release_approval["approval"]["confirmation_token_matched"] is False
+    assert token_blocked_artifact_release_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_release_preflight_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_release_approval["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    decision_blocked_artifact_release_approval = service.dataset2_controlled_training_artifact_release_approval(
+        artifact_dry_run_review_id=artifact_dry_run_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_immediate_model_artifact_write",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE",
+        note="wrong approval decision must block artifact release approval",
+    )
+    assert decision_blocked_artifact_release_approval["stage"] == "V5.6-P89"
+    assert decision_blocked_artifact_release_approval["status"] == "dataset2_controlled_training_artifact_release_approval_blocked"
+    assert decision_blocked_artifact_release_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_release_preflight_now"] is False
+    check_status = {check["name"]: check["status"] for check in decision_blocked_artifact_release_approval["checks"]}
+    assert check_status["approval_decision_allowed"] == "blocked"
+
+    artifact_release_approval = service.dataset2_controlled_training_artifact_release_approval(
+        artifact_dry_run_review_id=artifact_dry_run_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_dataset2_training_artifact_release_preflight",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE",
+        note="approve metadata-only artifact release preflight",
+    )
+    assert artifact_release_approval["stage"] == "V5.6-P89"
+    assert artifact_release_approval["status"] == "dataset2_controlled_training_artifact_release_approval_accepted"
+    assert artifact_release_approval["approval"]["confirmation_token_matched"] is True
+    assert artifact_release_approval["approval"]["approved_for_controlled_dataset2_training_artifact_release_preflight"] is True
+    assert artifact_release_approval["evidence"]["artifact_dry_run_review_id"] == artifact_dry_run_review["event_id"]
+    assert artifact_release_approval["evidence"]["artifact_dry_run_manifest_hash"] == artifact_dry_run_review["evidence"]["artifact_dry_run_manifest_hash"]
+    assert artifact_release_approval["evidence"]["simulated_artifact_payload_hash"] == artifact_dry_run_review["evidence"]["simulated_artifact_payload_hash"]
+    assert artifact_release_approval["approval_scope"]["expected_confirmation_token"] == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE_PREFLIGHT"
+    assert artifact_release_approval["approval_scope"]["artifact_write_allowed_now"] is False
+    assert artifact_release_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert artifact_release_approval["approval_scope"]["writes_file_now"] is False
+    assert artifact_release_approval["approval_scope"]["executes_training_now"] is False
+    assert artifact_release_approval["approval_scope"]["training_started_now"] is False
+    assert artifact_release_approval["approval_scope"]["model_artifact_written"] is False
+    assert artifact_release_approval["decision"]["controlled_dataset2_training_artifact_release_approval_accepted"] is True
+    assert artifact_release_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_release_preflight_now"] is True
+    assert artifact_release_approval["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_release_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_release_approval["decision"]["can_start_training_now"] is False
+    assert artifact_release_approval["decision"]["training_started_now"] is False
+    assert artifact_release_approval["decision"]["model_artifact_written"] is False
+    assert artifact_release_approval["decision"]["writes_file"] is False
+    assert artifact_release_approval["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_release_approvals = service.list_dataset2_controlled_training_artifact_release_approvals(limit=3)
+    assert artifact_release_approvals[0]["id"] == artifact_release_approval["event_id"]
+    assert artifact_release_approvals[0]["approval"]["approved_by"] == "tester"
+
+    blocked_artifact_release_preflight = service.dataset2_controlled_training_artifact_release_preflight(
+        artifact_release_approval_id=blocked_artifact_release_approval["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE_PREFLIGHT",
+        note="blocked release approval cannot enter artifact release preflight",
+    )
+    assert blocked_artifact_release_preflight["stage"] == "V5.6-P90"
+    assert blocked_artifact_release_preflight["status"] == "dataset2_controlled_training_artifact_release_preflight_blocked"
+    assert blocked_artifact_release_preflight["decision"]["controlled_dataset2_training_artifact_release_preflight_ready"] is False
+    assert blocked_artifact_release_preflight["decision"]["can_run_controlled_dataset2_training_artifact_release_dry_run_now"] is False
+    assert blocked_artifact_release_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_release_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_release_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_release_preflight["decision"]["training_started_now"] is False
+    assert blocked_artifact_release_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_release_preflight["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_release_preflight["checks"]}
+    assert check_status["artifact_release_approval_accepted"] == "blocked"
+
+    token_blocked_artifact_release_preflight = service.dataset2_controlled_training_artifact_release_preflight(
+        artifact_release_approval_id=artifact_release_approval["event_id"],
+        requested_by="tester",
+        confirmation_token=None,
+        note="missing token must block artifact release preflight",
+    )
+    assert token_blocked_artifact_release_preflight["stage"] == "V5.6-P90"
+    assert token_blocked_artifact_release_preflight["status"] == "dataset2_controlled_training_artifact_release_preflight_blocked"
+    assert token_blocked_artifact_release_preflight["preflight"]["confirmation_token_matched"] is False
+    assert token_blocked_artifact_release_preflight["decision"]["can_run_controlled_dataset2_training_artifact_release_dry_run_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_release_preflight["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    artifact_release_preflight = service.dataset2_controlled_training_artifact_release_preflight(
+        artifact_release_approval_id=artifact_release_approval["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE_PREFLIGHT",
+        note="preflight metadata-only artifact release dry-run readiness",
+    )
+    assert artifact_release_preflight["stage"] == "V5.6-P90"
+    assert artifact_release_preflight["status"] == "dataset2_controlled_training_artifact_release_preflight_ready"
+    assert artifact_release_preflight["preflight"]["confirmation_token_matched"] is True
+    assert artifact_release_preflight["evidence"]["artifact_release_approval_id"] == artifact_release_approval["event_id"]
+    assert artifact_release_preflight["evidence"]["artifact_dry_run_manifest_hash"] == artifact_release_approval["evidence"]["artifact_dry_run_manifest_hash"]
+    assert artifact_release_preflight["evidence"]["simulated_artifact_payload_hash"] == artifact_release_approval["evidence"]["simulated_artifact_payload_hash"]
+    assert artifact_release_preflight["artifact_release_preflight"]["expected_confirmation_token"] == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE_DRY_RUN"
+    assert artifact_release_preflight["artifact_release_preflight"]["artifact_write_allowed_now"] is False
+    assert artifact_release_preflight["artifact_release_preflight"]["writes_model_artifact_now"] is False
+    assert artifact_release_preflight["artifact_release_preflight"]["writes_file_now"] is False
+    assert artifact_release_preflight["artifact_release_preflight"]["executes_training_now"] is False
+    assert artifact_release_preflight["artifact_release_preflight"]["training_started_now"] is False
+    assert artifact_release_preflight["artifact_release_preflight"]["model_artifact_written"] is False
+    assert artifact_release_preflight["decision"]["controlled_dataset2_training_artifact_release_preflight_ready"] is True
+    assert artifact_release_preflight["decision"]["can_run_controlled_dataset2_training_artifact_release_dry_run_now"] is True
+    assert artifact_release_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_release_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_release_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_release_preflight["decision"]["training_started_now"] is False
+    assert artifact_release_preflight["decision"]["model_artifact_written"] is False
+    assert artifact_release_preflight["decision"]["writes_file"] is False
+    assert artifact_release_preflight["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_release_preflights = service.list_dataset2_controlled_training_artifact_release_preflights(limit=3)
+    assert artifact_release_preflights[0]["id"] == artifact_release_preflight["event_id"]
+    assert artifact_release_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_artifact_release_dry_run = service.dataset2_controlled_training_artifact_release_dry_run(
+        artifact_release_preflight_event_id=blocked_artifact_release_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE_DRY_RUN",
+        note="blocked release preflight cannot become release dry-run",
+    )
+    assert blocked_artifact_release_dry_run["stage"] == "V5.6-P91"
+    assert blocked_artifact_release_dry_run["status"] == "dataset2_controlled_training_artifact_release_dry_run_blocked"
+    assert blocked_artifact_release_dry_run["decision"]["controlled_dataset2_training_artifact_release_dry_run_completed"] is False
+    assert blocked_artifact_release_dry_run["decision"]["can_prepare_controlled_dataset2_training_artifact_release_dry_run_review_now"] is False
+    assert blocked_artifact_release_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_release_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_release_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_release_dry_run["decision"]["training_started_now"] is False
+    assert blocked_artifact_release_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_release_dry_run["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_release_dry_run["checks"]}
+    assert check_status["artifact_release_preflight_ready"] == "blocked"
+
+    token_blocked_artifact_release_dry_run = service.dataset2_controlled_training_artifact_release_dry_run(
+        artifact_release_preflight_event_id=artifact_release_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token=None,
+        note="missing token must block artifact release dry-run",
+    )
+    assert token_blocked_artifact_release_dry_run["stage"] == "V5.6-P91"
+    assert token_blocked_artifact_release_dry_run["status"] == "dataset2_controlled_training_artifact_release_dry_run_blocked"
+    assert token_blocked_artifact_release_dry_run["dry_run"]["confirmation_token_matched"] is False
+    assert token_blocked_artifact_release_dry_run["decision"]["can_prepare_controlled_dataset2_training_artifact_release_dry_run_review_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_release_dry_run["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    artifact_release_dry_run = service.dataset2_controlled_training_artifact_release_dry_run(
+        artifact_release_preflight_event_id=artifact_release_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE_DRY_RUN",
+        note="simulate Dataset2 artifact release without writing files",
+    )
+    assert artifact_release_dry_run["stage"] == "V5.6-P91"
+    assert artifact_release_dry_run["status"] == "dataset2_controlled_training_artifact_release_dry_run_completed"
+    assert artifact_release_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert artifact_release_dry_run["evidence"]["artifact_release_preflight_event_id"] == artifact_release_preflight["event_id"]
+    assert artifact_release_dry_run["evidence"]["artifact_dry_run_manifest_hash"] == artifact_release_preflight["evidence"]["artifact_dry_run_manifest_hash"]
+    assert artifact_release_dry_run["evidence"]["simulated_artifact_payload_hash"] == artifact_release_preflight["evidence"]["simulated_artifact_payload_hash"]
+    assert artifact_release_dry_run["evidence"]["release_manifest_hash"]
+    assert artifact_release_dry_run["evidence"]["release_payload_hash"]
+    assert artifact_release_dry_run["artifact_release_dry_run"]["release_manifest_hash"]
+    assert artifact_release_dry_run["artifact_release_dry_run"]["release_payload_hash"]
+    assert artifact_release_dry_run["artifact_release_dry_run"]["release_manifest"]["artifact_release_path"] is None
+    assert artifact_release_dry_run["artifact_release_dry_run"]["release_manifest"]["would_write_model_artifact"] is False
+    assert artifact_release_dry_run["artifact_release_dry_run"]["release_manifest"]["would_write_file"] is False
+    assert artifact_release_dry_run["artifact_release_dry_run"]["release_manifest"]["would_persist_model_body"] is False
+    assert artifact_release_dry_run["artifact_release_dry_run"]["release_manifest"]["would_mutate_samples"] is False
+    assert artifact_release_dry_run["artifact_release_dry_run"]["writes_model_artifact_now"] is False
+    assert artifact_release_dry_run["artifact_release_dry_run"]["writes_file_now"] is False
+    assert artifact_release_dry_run["artifact_release_dry_run"]["executes_training_now"] is False
+    assert artifact_release_dry_run["artifact_release_dry_run"]["training_started_now"] is False
+    assert artifact_release_dry_run["artifact_release_dry_run"]["model_artifact_written"] is False
+    assert artifact_release_dry_run["decision"]["controlled_dataset2_training_artifact_release_dry_run_completed"] is True
+    assert artifact_release_dry_run["decision"]["can_prepare_controlled_dataset2_training_artifact_release_dry_run_review_now"] is True
+    assert artifact_release_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_release_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_release_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_release_dry_run["decision"]["training_started_now"] is False
+    assert artifact_release_dry_run["decision"]["model_artifact_written"] is False
+    assert artifact_release_dry_run["decision"]["writes_file"] is False
+    assert artifact_release_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_release_dry_runs = service.list_dataset2_controlled_training_artifact_release_dry_runs(limit=3)
+    assert artifact_release_dry_runs[0]["id"] == artifact_release_dry_run["event_id"]
+    assert artifact_release_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_artifact_release_dry_run_review = service.dataset2_controlled_training_artifact_release_dry_run_review(
+        artifact_release_dry_run_event_id=blocked_artifact_release_dry_run["event_id"],
+        reviewed_by="tester",
+        note="blocked release dry-run cannot be reviewed as accepted",
+    )
+    assert blocked_artifact_release_dry_run_review["stage"] == "V5.6-P92"
+    assert blocked_artifact_release_dry_run_review["status"] == "dataset2_controlled_training_artifact_release_dry_run_review_blocked"
+    assert blocked_artifact_release_dry_run_review["decision"]["controlled_dataset2_training_artifact_release_dry_run_review_accepted"] is False
+    assert blocked_artifact_release_dry_run_review["decision"]["can_request_controlled_dataset2_training_artifact_final_approval_now"] is False
+    assert blocked_artifact_release_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_release_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_release_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_release_dry_run_review["decision"]["training_started_now"] is False
+    assert blocked_artifact_release_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_release_dry_run_review["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_release_dry_run_review["checks"]}
+    assert check_status["artifact_release_dry_run_completed"] == "blocked"
+
+    decision_blocked_artifact_release_dry_run_review = service.dataset2_controlled_training_artifact_release_dry_run_review(
+        artifact_release_dry_run_event_id=artifact_release_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="accepted_for_immediate_model_artifact_write",
+        note="wrong decision must block release dry-run review",
+    )
+    assert decision_blocked_artifact_release_dry_run_review["stage"] == "V5.6-P92"
+    assert decision_blocked_artifact_release_dry_run_review["status"] == "dataset2_controlled_training_artifact_release_dry_run_review_blocked"
+    assert decision_blocked_artifact_release_dry_run_review["decision"]["can_request_controlled_dataset2_training_artifact_final_approval_now"] is False
+    check_status = {check["name"]: check["status"] for check in decision_blocked_artifact_release_dry_run_review["checks"]}
+    assert check_status["review_decision_allowed"] == "blocked"
+
+    artifact_release_dry_run_review = service.dataset2_controlled_training_artifact_release_dry_run_review(
+        artifact_release_dry_run_event_id=artifact_release_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="accepted_for_controlled_dataset2_training_artifact_final_approval",
+        note="accept P91 release dry-run evidence for later final approval",
+    )
+    assert artifact_release_dry_run_review["stage"] == "V5.6-P92"
+    assert artifact_release_dry_run_review["status"] == "dataset2_controlled_training_artifact_release_dry_run_review_accepted"
+    assert artifact_release_dry_run_review["review"]["accepted_for_controlled_dataset2_training_artifact_final_approval"] is True
+    assert artifact_release_dry_run_review["evidence"]["artifact_release_dry_run_event_id"] == artifact_release_dry_run["event_id"]
+    assert artifact_release_dry_run_review["evidence"]["release_manifest_hash"] == artifact_release_dry_run["evidence"]["release_manifest_hash"]
+    assert artifact_release_dry_run_review["evidence"]["release_payload_hash"] == artifact_release_dry_run["evidence"]["release_payload_hash"]
+    assert artifact_release_dry_run_review["release_review"]["release_manifest_hash"] == artifact_release_dry_run["evidence"]["release_manifest_hash"]
+    assert artifact_release_dry_run_review["release_review"]["release_payload_hash"] == artifact_release_dry_run["evidence"]["release_payload_hash"]
+    assert artifact_release_dry_run_review["release_review"]["artifact_write_allowed_now"] is False
+    assert artifact_release_dry_run_review["release_review"]["writes_model_artifact_now"] is False
+    assert artifact_release_dry_run_review["release_review"]["writes_file_now"] is False
+    assert artifact_release_dry_run_review["release_review"]["executes_training_now"] is False
+    assert artifact_release_dry_run_review["release_review"]["training_started_now"] is False
+    assert artifact_release_dry_run_review["release_review"]["model_artifact_written"] is False
+    assert artifact_release_dry_run_review["decision"]["controlled_dataset2_training_artifact_release_dry_run_review_accepted"] is True
+    assert artifact_release_dry_run_review["decision"]["can_request_controlled_dataset2_training_artifact_final_approval_now"] is True
+    assert artifact_release_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_release_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_release_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_release_dry_run_review["decision"]["training_started_now"] is False
+    assert artifact_release_dry_run_review["decision"]["model_artifact_written"] is False
+    assert artifact_release_dry_run_review["decision"]["writes_file"] is False
+    assert artifact_release_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_release_dry_run_reviews = service.list_dataset2_controlled_training_artifact_release_dry_run_reviews(limit=3)
+    assert artifact_release_dry_run_reviews[0]["id"] == artifact_release_dry_run_review["event_id"]
+    assert artifact_release_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_artifact_final_approval = service.dataset2_controlled_training_artifact_final_approval(
+        artifact_release_dry_run_review_id=blocked_artifact_release_dry_run_review["event_id"],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL",
+        note="blocked release dry-run review cannot be finally approved",
+    )
+    assert blocked_artifact_final_approval["stage"] == "V5.6-P93"
+    assert blocked_artifact_final_approval["status"] == "dataset2_controlled_training_artifact_final_approval_blocked"
+    assert blocked_artifact_final_approval["decision"]["controlled_dataset2_training_artifact_final_approval_accepted"] is False
+    assert blocked_artifact_final_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_final_preflight_now"] is False
+    assert blocked_artifact_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_final_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_final_approval["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_final_approval["decision"]["training_started_now"] is False
+    assert blocked_artifact_final_approval["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_final_approval["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_final_approval["checks"]}
+    assert check_status["artifact_release_dry_run_review_accepted"] == "blocked"
+
+    token_blocked_artifact_final_approval = service.dataset2_controlled_training_artifact_final_approval(
+        artifact_release_dry_run_review_id=artifact_release_dry_run_review["event_id"],
+        approved_by="tester",
+        confirmation_token=None,
+        note="missing token must block final artifact approval",
+    )
+    assert token_blocked_artifact_final_approval["stage"] == "V5.6-P93"
+    assert token_blocked_artifact_final_approval["status"] == "dataset2_controlled_training_artifact_final_approval_blocked"
+    assert token_blocked_artifact_final_approval["approval"]["confirmation_token_matched"] is False
+    assert token_blocked_artifact_final_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_final_preflight_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_final_approval["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    decision_blocked_artifact_final_approval = service.dataset2_controlled_training_artifact_final_approval(
+        artifact_release_dry_run_review_id=artifact_release_dry_run_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_immediate_model_artifact_write",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL",
+        note="wrong approval decision must block final artifact approval",
+    )
+    assert decision_blocked_artifact_final_approval["stage"] == "V5.6-P93"
+    assert decision_blocked_artifact_final_approval["status"] == "dataset2_controlled_training_artifact_final_approval_blocked"
+    assert decision_blocked_artifact_final_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_final_preflight_now"] is False
+    check_status = {check["name"]: check["status"] for check in decision_blocked_artifact_final_approval["checks"]}
+    assert check_status["approval_decision_allowed"] == "blocked"
+
+    artifact_final_approval = service.dataset2_controlled_training_artifact_final_approval(
+        artifact_release_dry_run_review_id=artifact_release_dry_run_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_dataset2_training_artifact_final_preflight",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL",
+        note="approve metadata-only final artifact preflight",
+    )
+    assert artifact_final_approval["stage"] == "V5.6-P93"
+    assert artifact_final_approval["status"] == "dataset2_controlled_training_artifact_final_approval_accepted"
+    assert artifact_final_approval["approval"]["confirmation_token_matched"] is True
+    assert artifact_final_approval["approval"]["approved_for_controlled_dataset2_training_artifact_final_preflight"] is True
+    assert artifact_final_approval["evidence"]["artifact_release_dry_run_review_id"] == artifact_release_dry_run_review["event_id"]
+    assert artifact_final_approval["evidence"]["release_manifest_hash"] == artifact_release_dry_run_review["evidence"]["release_manifest_hash"]
+    assert artifact_final_approval["evidence"]["release_payload_hash"] == artifact_release_dry_run_review["evidence"]["release_payload_hash"]
+    assert artifact_final_approval["approval_scope"]["expected_confirmation_token"] == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL_PREFLIGHT"
+    assert artifact_final_approval["approval_scope"]["release_manifest_hash"] == artifact_release_dry_run_review["evidence"]["release_manifest_hash"]
+    assert artifact_final_approval["approval_scope"]["release_payload_hash"] == artifact_release_dry_run_review["evidence"]["release_payload_hash"]
+    assert artifact_final_approval["approval_scope"]["artifact_write_allowed_now"] is False
+    assert artifact_final_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert artifact_final_approval["approval_scope"]["writes_file_now"] is False
+    assert artifact_final_approval["approval_scope"]["executes_training_now"] is False
+    assert artifact_final_approval["approval_scope"]["training_started_now"] is False
+    assert artifact_final_approval["approval_scope"]["model_artifact_written"] is False
+    assert artifact_final_approval["decision"]["controlled_dataset2_training_artifact_final_approval_accepted"] is True
+    assert artifact_final_approval["decision"]["can_prepare_controlled_dataset2_training_artifact_final_preflight_now"] is True
+    assert artifact_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_final_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_final_approval["decision"]["can_start_training_now"] is False
+    assert artifact_final_approval["decision"]["training_started_now"] is False
+    assert artifact_final_approval["decision"]["model_artifact_written"] is False
+    assert artifact_final_approval["decision"]["writes_file"] is False
+    assert artifact_final_approval["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_final_approvals = service.list_dataset2_controlled_training_artifact_final_approvals(limit=3)
+    assert artifact_final_approvals[0]["id"] == artifact_final_approval["event_id"]
+    assert artifact_final_approvals[0]["approval"]["approved_by"] == "tester"
+
+    blocked_artifact_final_preflight = service.dataset2_controlled_training_artifact_final_preflight(
+        artifact_final_approval_id=blocked_artifact_final_approval["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL_PREFLIGHT",
+        note="blocked final approval cannot enter final preflight",
+    )
+    assert blocked_artifact_final_preflight["stage"] == "V5.6-P94"
+    assert blocked_artifact_final_preflight["status"] == "dataset2_controlled_training_artifact_final_preflight_blocked"
+    assert blocked_artifact_final_preflight["decision"]["controlled_dataset2_training_artifact_final_preflight_ready"] is False
+    assert blocked_artifact_final_preflight["decision"]["can_run_controlled_dataset2_training_artifact_final_dry_run_now"] is False
+    assert blocked_artifact_final_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_final_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_final_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_final_preflight["decision"]["training_started_now"] is False
+    assert blocked_artifact_final_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_final_preflight["decision"]["writes_file"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_final_preflight["checks"]}
+    assert check_status["artifact_final_approval_accepted"] == "blocked"
+
+    token_blocked_artifact_final_preflight = service.dataset2_controlled_training_artifact_final_preflight(
+        artifact_final_approval_id=artifact_final_approval["event_id"],
+        requested_by="tester",
+        confirmation_token=None,
+        note="missing token must block final artifact preflight",
+    )
+    assert token_blocked_artifact_final_preflight["stage"] == "V5.6-P94"
+    assert token_blocked_artifact_final_preflight["status"] == "dataset2_controlled_training_artifact_final_preflight_blocked"
+    assert token_blocked_artifact_final_preflight["preflight"]["confirmation_token_matched"] is False
+    assert token_blocked_artifact_final_preflight["decision"]["can_run_controlled_dataset2_training_artifact_final_dry_run_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_final_preflight["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    artifact_final_preflight = service.dataset2_controlled_training_artifact_final_preflight(
+        artifact_final_approval_id=artifact_final_approval["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL_PREFLIGHT",
+        note="preflight metadata-only artifact final dry-run readiness",
+    )
+    assert artifact_final_preflight["stage"] == "V5.6-P94"
+    assert artifact_final_preflight["status"] == "dataset2_controlled_training_artifact_final_preflight_ready"
+    assert artifact_final_preflight["preflight"]["confirmation_token_matched"] is True
+    assert artifact_final_preflight["evidence"]["artifact_final_approval_id"] == artifact_final_approval["event_id"]
+    assert artifact_final_preflight["evidence"]["release_manifest_hash"] == artifact_final_approval["evidence"]["release_manifest_hash"]
+    assert artifact_final_preflight["evidence"]["release_payload_hash"] == artifact_final_approval["evidence"]["release_payload_hash"]
+    assert artifact_final_preflight["artifact_final_preflight"]["expected_confirmation_token"] == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL_DRY_RUN"
+    assert artifact_final_preflight["artifact_final_preflight"]["release_manifest_hash"] == artifact_final_approval["evidence"]["release_manifest_hash"]
+    assert artifact_final_preflight["artifact_final_preflight"]["release_payload_hash"] == artifact_final_approval["evidence"]["release_payload_hash"]
+    assert artifact_final_preflight["artifact_final_preflight"]["artifact_write_allowed_now"] is False
+    assert artifact_final_preflight["artifact_final_preflight"]["writes_model_artifact_now"] is False
+    assert artifact_final_preflight["artifact_final_preflight"]["writes_file_now"] is False
+    assert artifact_final_preflight["artifact_final_preflight"]["executes_training_now"] is False
+    assert artifact_final_preflight["artifact_final_preflight"]["training_started_now"] is False
+    assert artifact_final_preflight["artifact_final_preflight"]["model_artifact_written"] is False
+    assert artifact_final_preflight["decision"]["controlled_dataset2_training_artifact_final_preflight_ready"] is True
+    assert artifact_final_preflight["decision"]["can_run_controlled_dataset2_training_artifact_final_dry_run_now"] is True
+    assert artifact_final_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_final_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_final_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_final_preflight["decision"]["training_started_now"] is False
+    assert artifact_final_preflight["decision"]["model_artifact_written"] is False
+    assert artifact_final_preflight["decision"]["writes_file"] is False
+    assert artifact_final_preflight["decision"]["writes_learning_samples_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_final_preflights = service.list_dataset2_controlled_training_artifact_final_preflights(limit=3)
+    assert artifact_final_preflights[0]["id"] == artifact_final_preflight["event_id"]
+    assert artifact_final_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_artifact_final_dry_run = service.dataset2_controlled_training_artifact_final_dry_run(
+        artifact_final_preflight_event_id=blocked_artifact_final_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL_DRY_RUN",
+        note="blocked final preflight cannot run artifact final dry-run",
+    )
+    assert blocked_artifact_final_dry_run["stage"] == "V5.6-P95"
+    assert blocked_artifact_final_dry_run["status"] == "dataset2_controlled_training_artifact_final_dry_run_blocked"
+    assert blocked_artifact_final_dry_run["decision"]["controlled_dataset2_training_artifact_final_dry_run_completed"] is False
+    assert blocked_artifact_final_dry_run["decision"]["can_prepare_controlled_dataset2_training_artifact_final_dry_run_review_now"] is False
+    assert blocked_artifact_final_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_final_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_final_dry_run["decision"]["writes_file"] is False
+    assert blocked_artifact_final_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_final_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_final_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_final_dry_run["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_final_dry_run["checks"]}
+    assert check_status["artifact_final_preflight_ready"] == "blocked"
+
+    token_blocked_artifact_final_dry_run = service.dataset2_controlled_training_artifact_final_dry_run(
+        artifact_final_preflight_event_id=artifact_final_preflight["event_id"],
+        simulated_by="tester",
+        note="missing token must block artifact final dry-run",
+    )
+    assert token_blocked_artifact_final_dry_run["stage"] == "V5.6-P95"
+    assert token_blocked_artifact_final_dry_run["status"] == "dataset2_controlled_training_artifact_final_dry_run_blocked"
+    assert token_blocked_artifact_final_dry_run["dry_run"]["confirmation_token_matched"] is False
+    assert token_blocked_artifact_final_dry_run["decision"]["can_prepare_controlled_dataset2_training_artifact_final_dry_run_review_now"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_final_dry_run["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    artifact_final_dry_run = service.dataset2_controlled_training_artifact_final_dry_run(
+        artifact_final_preflight_event_id=artifact_final_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL_DRY_RUN",
+        note="simulate final artifact packaging metadata only",
+    )
+    assert artifact_final_dry_run["stage"] == "V5.6-P95"
+    assert artifact_final_dry_run["status"] == "dataset2_controlled_training_artifact_final_dry_run_completed"
+    assert artifact_final_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert artifact_final_dry_run["evidence"]["artifact_final_preflight_event_id"] == artifact_final_preflight["event_id"]
+    assert artifact_final_dry_run["evidence"]["artifact_final_approval_id"] == artifact_final_approval["event_id"]
+    assert artifact_final_dry_run["evidence"]["release_manifest_hash"] == artifact_final_preflight["evidence"]["release_manifest_hash"]
+    assert artifact_final_dry_run["evidence"]["release_payload_hash"] == artifact_final_preflight["evidence"]["release_payload_hash"]
+    assert artifact_final_dry_run["evidence"]["artifact_dry_run_manifest_hash"] == artifact_final_preflight["evidence"]["artifact_dry_run_manifest_hash"]
+    assert artifact_final_dry_run["evidence"]["simulated_artifact_payload_hash"] == artifact_final_preflight["evidence"]["simulated_artifact_payload_hash"]
+    assert artifact_final_dry_run["evidence"]["final_artifact_manifest_hash"]
+    assert artifact_final_dry_run["evidence"]["simulated_final_artifact_payload_hash"]
+    assert artifact_final_dry_run["artifact_final_dry_run"]["allowed_next_stage"] == "controlled_dataset2_training_artifact_final_dry_run_review"
+    assert artifact_final_dry_run["artifact_final_dry_run"]["final_artifact_manifest"]["artifact_path"] is None
+    assert artifact_final_dry_run["artifact_final_dry_run"]["artifact_write_allowed_now"] is False
+    assert artifact_final_dry_run["artifact_final_dry_run"]["writes_model_artifact_now"] is False
+    assert artifact_final_dry_run["artifact_final_dry_run"]["writes_file_now"] is False
+    assert artifact_final_dry_run["artifact_final_dry_run"]["executes_training_now"] is False
+    assert artifact_final_dry_run["artifact_final_dry_run"]["training_started_now"] is False
+    assert artifact_final_dry_run["artifact_final_dry_run"]["model_artifact_written"] is False
+    assert artifact_final_dry_run["decision"]["controlled_dataset2_training_artifact_final_dry_run_completed"] is True
+    assert artifact_final_dry_run["decision"]["can_prepare_controlled_dataset2_training_artifact_final_dry_run_review_now"] is True
+    assert artifact_final_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_final_dry_run["decision"]["model_artifact_written"] is False
+    assert artifact_final_dry_run["decision"]["writes_file"] is False
+    assert artifact_final_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert artifact_final_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_final_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_final_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_final_dry_runs = service.list_dataset2_controlled_training_artifact_final_dry_runs(limit=3)
+    assert artifact_final_dry_runs[0]["id"] == artifact_final_dry_run["event_id"]
+    assert artifact_final_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_artifact_final_dry_run_review = service.dataset2_controlled_training_artifact_final_dry_run_review(
+        artifact_final_dry_run_event_id=blocked_artifact_final_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="accepted_for_controlled_dataset2_training_artifact_write_preflight",
+        note="blocked final dry-run cannot be reviewed as accepted",
+    )
+    assert blocked_artifact_final_dry_run_review["stage"] == "V5.6-P96"
+    assert (
+        blocked_artifact_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_final_dry_run_review_blocked"
+    )
+    assert (
+        blocked_artifact_final_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_final_dry_run_review_accepted"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_final_dry_run_review["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_preflight_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_final_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_final_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_final_dry_run_review["decision"]["writes_file"] is False
+    assert blocked_artifact_final_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_final_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_final_dry_run_review["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_final_dry_run_review["checks"]}
+    assert check_status["artifact_final_dry_run_completed"] == "blocked"
+
+    decision_blocked_artifact_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_final_dry_run_review(
+            artifact_final_dry_run_event_id=artifact_final_dry_run["event_id"],
+            reviewed_by="tester",
+            review_decision="rejected",
+            note="wrong decision must block artifact write preflight",
+        )
+    )
+    assert decision_blocked_artifact_final_dry_run_review["stage"] == "V5.6-P96"
+    assert (
+        decision_blocked_artifact_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_final_dry_run_review_blocked"
+    )
+    assert (
+        decision_blocked_artifact_final_dry_run_review["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_preflight_now"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"] for check in decision_blocked_artifact_final_dry_run_review["checks"]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+
+    artifact_final_dry_run_review = service.dataset2_controlled_training_artifact_final_dry_run_review(
+        artifact_final_dry_run_event_id=artifact_final_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="accepted_for_controlled_dataset2_training_artifact_write_preflight",
+        note="accept final artifact dry-run evidence for write preflight planning only",
+    )
+    assert artifact_final_dry_run_review["stage"] == "V5.6-P96"
+    assert artifact_final_dry_run_review["status"] == "dataset2_controlled_training_artifact_final_dry_run_review_accepted"
+    assert artifact_final_dry_run_review["review"]["reviewed_by"] == "tester"
+    assert artifact_final_dry_run_review["review"]["record_bodies_included"] is False
+    assert artifact_final_dry_run_review["review"]["accepted_for_controlled_dataset2_training_artifact_write_preflight"] is True
+    assert artifact_final_dry_run_review["evidence"]["artifact_final_dry_run_event_id"] == artifact_final_dry_run["event_id"]
+    assert artifact_final_dry_run_review["evidence"]["artifact_final_preflight_event_id"] == artifact_final_preflight["event_id"]
+    assert artifact_final_dry_run_review["evidence"]["artifact_final_approval_id"] == artifact_final_approval["event_id"]
+    assert artifact_final_dry_run_review["evidence"]["release_manifest_hash"] == artifact_final_dry_run["evidence"]["release_manifest_hash"]
+    assert artifact_final_dry_run_review["evidence"]["release_payload_hash"] == artifact_final_dry_run["evidence"]["release_payload_hash"]
+    assert artifact_final_dry_run_review["evidence"]["final_artifact_manifest_hash"] == artifact_final_dry_run["evidence"]["final_artifact_manifest_hash"]
+    assert artifact_final_dry_run_review["evidence"]["simulated_final_artifact_payload_hash"] == artifact_final_dry_run["evidence"]["simulated_final_artifact_payload_hash"]
+    assert artifact_final_dry_run_review["final_dry_run_review"]["allowed_next_stage"] == "controlled_dataset2_training_artifact_write_preflight"
+    assert artifact_final_dry_run_review["final_dry_run_review"]["expected_confirmation_token"] == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_PREFLIGHT"
+    assert artifact_final_dry_run_review["final_dry_run_review"]["writes_model_artifact_now"] is False
+    assert artifact_final_dry_run_review["final_dry_run_review"]["writes_file_now"] is False
+    assert artifact_final_dry_run_review["final_dry_run_review"]["executes_training_now"] is False
+    assert artifact_final_dry_run_review["final_dry_run_review"]["training_started_now"] is False
+    assert artifact_final_dry_run_review["final_dry_run_review"]["model_artifact_written"] is False
+    assert artifact_final_dry_run_review["decision"]["controlled_dataset2_training_artifact_final_dry_run_review_accepted"] is True
+    assert (
+        artifact_final_dry_run_review["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_final_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_final_dry_run_review["decision"]["model_artifact_written"] is False
+    assert artifact_final_dry_run_review["decision"]["writes_file"] is False
+    assert artifact_final_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert artifact_final_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_final_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_final_dry_run_reviews = service.list_dataset2_controlled_training_artifact_final_dry_run_reviews(limit=3)
+    assert artifact_final_dry_run_reviews[0]["id"] == artifact_final_dry_run_review["event_id"]
+    assert artifact_final_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_artifact_write_preflight = service.dataset2_controlled_training_artifact_write_preflight(
+        artifact_final_dry_run_review_id=blocked_artifact_final_dry_run_review["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_PREFLIGHT",
+        note="blocked final dry-run review cannot prepare artifact write preflight",
+    )
+    assert blocked_artifact_write_preflight["stage"] == "V5.6-P97"
+    assert blocked_artifact_write_preflight["status"] == "dataset2_controlled_training_artifact_write_preflight_blocked"
+    assert blocked_artifact_write_preflight["decision"]["controlled_dataset2_training_artifact_write_preflight_ready"] is False
+    assert (
+        blocked_artifact_write_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_dry_run_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_preflight["decision"]["writes_file"] is False
+    assert blocked_artifact_write_preflight["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_preflight["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_write_preflight["checks"]}
+    assert check_status["artifact_final_dry_run_review_accepted"] == "blocked"
+
+    token_blocked_artifact_write_preflight = service.dataset2_controlled_training_artifact_write_preflight(
+        artifact_final_dry_run_review_id=artifact_final_dry_run_review["event_id"],
+        requested_by="tester",
+        confirmation_token=None,
+        note="missing token must block artifact write preflight",
+    )
+    assert token_blocked_artifact_write_preflight["stage"] == "V5.6-P97"
+    assert token_blocked_artifact_write_preflight["status"] == "dataset2_controlled_training_artifact_write_preflight_blocked"
+    assert token_blocked_artifact_write_preflight["preflight"]["confirmation_token_matched"] is False
+    assert (
+        token_blocked_artifact_write_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_dry_run_now"
+        ]
+        is False
+    )
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_write_preflight["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    artifact_write_preflight = service.dataset2_controlled_training_artifact_write_preflight(
+        artifact_final_dry_run_review_id=artifact_final_dry_run_review["event_id"],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_PREFLIGHT",
+        note="prepare artifact write dry-run evidence without writing any artifact",
+    )
+    assert artifact_write_preflight["stage"] == "V5.6-P97"
+    assert artifact_write_preflight["status"] == "dataset2_controlled_training_artifact_write_preflight_ready"
+    assert artifact_write_preflight["preflight"]["requested_by"] == "tester"
+    assert artifact_write_preflight["preflight"]["confirmation_token_matched"] is True
+    assert artifact_write_preflight["evidence"]["artifact_final_dry_run_review_id"] == artifact_final_dry_run_review["event_id"]
+    assert artifact_write_preflight["evidence"]["artifact_final_dry_run_event_id"] == artifact_final_dry_run["event_id"]
+    assert artifact_write_preflight["evidence"]["artifact_final_preflight_event_id"] == artifact_final_preflight["event_id"]
+    assert artifact_write_preflight["evidence"]["artifact_final_approval_id"] == artifact_final_approval["event_id"]
+    assert artifact_write_preflight["evidence"]["final_artifact_manifest_hash"] == artifact_final_dry_run_review["evidence"]["final_artifact_manifest_hash"]
+    assert (
+        artifact_write_preflight["evidence"]["simulated_final_artifact_payload_hash"]
+        == artifact_final_dry_run_review["evidence"]["simulated_final_artifact_payload_hash"]
+    )
+    assert artifact_write_preflight["evidence"]["release_manifest_hash"] == artifact_final_dry_run_review["evidence"]["release_manifest_hash"]
+    assert artifact_write_preflight["evidence"]["release_payload_hash"] == artifact_final_dry_run_review["evidence"]["release_payload_hash"]
+    assert artifact_write_preflight["evidence"]["planned_artifact_manifest_hash"]
+    assert (
+        artifact_write_preflight["artifact_write_preflight"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_dry_run"
+    )
+    assert (
+        artifact_write_preflight["artifact_write_preflight"]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_DRY_RUN"
+    )
+    assert (
+        artifact_write_preflight["artifact_write_preflight"]["planned_artifact_manifest_hash"]
+        == artifact_write_preflight["evidence"]["planned_artifact_manifest_hash"]
+    )
+    planned_manifest = artifact_write_preflight["artifact_write_preflight"]["planned_artifact_manifest"]
+    assert planned_manifest["artifact_write_allowed_now"] is False
+    assert planned_manifest["would_write_model_artifact"] is False
+    assert planned_manifest["would_write_file"] is False
+    assert planned_manifest["would_persist_model_body"] is False
+    assert planned_manifest["would_mutate_samples"] is False
+    assert planned_manifest["executes_training_now"] is False
+    assert planned_manifest["training_started_now"] is False
+    assert planned_manifest["record_bodies_included"] is False
+    assert artifact_write_preflight["artifact_write_preflight"]["writes_model_artifact_now"] is False
+    assert artifact_write_preflight["artifact_write_preflight"]["writes_file_now"] is False
+    assert artifact_write_preflight["artifact_write_preflight"]["persists_model_body_now"] is False
+    assert artifact_write_preflight["artifact_write_preflight"]["executes_training_now"] is False
+    assert artifact_write_preflight["artifact_write_preflight"]["training_started_now"] is False
+    assert artifact_write_preflight["artifact_write_preflight"]["model_artifact_written"] is False
+    assert artifact_write_preflight["decision"]["controlled_dataset2_training_artifact_write_preflight_ready"] is True
+    assert artifact_write_preflight["decision"]["can_run_controlled_dataset2_training_artifact_write_dry_run_now"] is True
+    assert artifact_write_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_preflight["decision"]["model_artifact_written"] is False
+    assert artifact_write_preflight["decision"]["writes_file"] is False
+    assert artifact_write_preflight["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_preflights = service.list_dataset2_controlled_training_artifact_write_preflights(limit=3)
+    assert artifact_write_preflights[0]["id"] == artifact_write_preflight["event_id"]
+    assert artifact_write_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_artifact_write_dry_run = service.dataset2_controlled_training_artifact_write_dry_run(
+        artifact_write_preflight_event_id=blocked_artifact_write_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_DRY_RUN",
+        note="blocked write preflight cannot run artifact write dry-run",
+    )
+    assert blocked_artifact_write_dry_run["stage"] == "V5.6-P98"
+    assert blocked_artifact_write_dry_run["status"] == "dataset2_controlled_training_artifact_write_dry_run_blocked"
+    assert blocked_artifact_write_dry_run["decision"]["controlled_dataset2_training_artifact_write_dry_run_completed"] is False
+    assert (
+        blocked_artifact_write_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_dry_run_review_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_dry_run["decision"]["writes_file"] is False
+    assert blocked_artifact_write_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_dry_run["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_write_dry_run["checks"]}
+    assert check_status["artifact_write_preflight_ready"] == "blocked"
+
+    token_blocked_artifact_write_dry_run = service.dataset2_controlled_training_artifact_write_dry_run(
+        artifact_write_preflight_event_id=artifact_write_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token=None,
+        note="missing token must block artifact write dry-run",
+    )
+    assert token_blocked_artifact_write_dry_run["stage"] == "V5.6-P98"
+    assert token_blocked_artifact_write_dry_run["status"] == "dataset2_controlled_training_artifact_write_dry_run_blocked"
+    assert token_blocked_artifact_write_dry_run["dry_run"]["confirmation_token_matched"] is False
+    assert (
+        token_blocked_artifact_write_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_dry_run_review_now"
+        ]
+        is False
+    )
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_write_dry_run["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+
+    artifact_write_dry_run = service.dataset2_controlled_training_artifact_write_dry_run(
+        artifact_write_preflight_event_id=artifact_write_preflight["event_id"],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_DRY_RUN",
+        note="simulate artifact write without writing files or model bodies",
+    )
+    assert artifact_write_dry_run["stage"] == "V5.6-P98"
+    assert artifact_write_dry_run["status"] == "dataset2_controlled_training_artifact_write_dry_run_completed"
+    assert artifact_write_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert artifact_write_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert artifact_write_dry_run["evidence"]["artifact_write_preflight_event_id"] == artifact_write_preflight["event_id"]
+    assert artifact_write_dry_run["evidence"]["artifact_final_dry_run_review_id"] == artifact_final_dry_run_review["event_id"]
+    assert artifact_write_dry_run["evidence"]["artifact_final_dry_run_event_id"] == artifact_final_dry_run["event_id"]
+    assert artifact_write_dry_run["evidence"]["planned_artifact_manifest_hash"] == artifact_write_preflight["evidence"]["planned_artifact_manifest_hash"]
+    assert artifact_write_dry_run["evidence"]["final_artifact_manifest_hash"] == artifact_write_preflight["evidence"]["final_artifact_manifest_hash"]
+    assert (
+        artifact_write_dry_run["evidence"]["simulated_final_artifact_payload_hash"]
+        == artifact_write_preflight["evidence"]["simulated_final_artifact_payload_hash"]
+    )
+    assert artifact_write_dry_run["evidence"]["artifact_write_dry_run_manifest_hash"]
+    assert artifact_write_dry_run["evidence"]["simulated_artifact_write_payload_hash"]
+    assert (
+        artifact_write_dry_run["artifact_write_dry_run"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_dry_run_review"
+    )
+    assert (
+        artifact_write_dry_run["artifact_write_dry_run"]["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_approval"
+    )
+    assert (
+        artifact_write_dry_run["artifact_write_dry_run"]["artifact_write_dry_run_manifest_hash"]
+        == artifact_write_dry_run["evidence"]["artifact_write_dry_run_manifest_hash"]
+    )
+    write_manifest = artifact_write_dry_run["artifact_write_dry_run"]["artifact_write_dry_run_manifest"]
+    assert write_manifest["artifact_path_selected_now"] is False
+    assert write_manifest["artifact_write_allowed_now"] is False
+    assert write_manifest["would_write_model_artifact"] is False
+    assert write_manifest["would_write_file"] is False
+    assert write_manifest["would_persist_model_body"] is False
+    assert write_manifest["would_mutate_samples"] is False
+    assert write_manifest["executes_training_now"] is False
+    assert write_manifest["training_started_now"] is False
+    assert write_manifest["record_bodies_included"] is False
+    assert artifact_write_dry_run["artifact_write_dry_run"]["writes_model_artifact_now"] is False
+    assert artifact_write_dry_run["artifact_write_dry_run"]["writes_file_now"] is False
+    assert artifact_write_dry_run["artifact_write_dry_run"]["persists_model_body_now"] is False
+    assert artifact_write_dry_run["artifact_write_dry_run"]["executes_training_now"] is False
+    assert artifact_write_dry_run["artifact_write_dry_run"]["training_started_now"] is False
+    assert artifact_write_dry_run["artifact_write_dry_run"]["model_artifact_written"] is False
+    assert artifact_write_dry_run["decision"]["controlled_dataset2_training_artifact_write_dry_run_completed"] is True
+    assert artifact_write_dry_run["decision"]["can_prepare_controlled_dataset2_training_artifact_write_dry_run_review_now"] is True
+    assert artifact_write_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_dry_run["decision"]["model_artifact_written"] is False
+    assert artifact_write_dry_run["decision"]["writes_file"] is False
+    assert artifact_write_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_dry_runs = service.list_dataset2_controlled_training_artifact_write_dry_runs(limit=3)
+    assert artifact_write_dry_runs[0]["id"] == artifact_write_dry_run["event_id"]
+    assert artifact_write_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_artifact_write_dry_run_review = service.dataset2_controlled_training_artifact_write_dry_run_review(
+        artifact_write_dry_run_event_id=blocked_artifact_write_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="accepted_for_controlled_dataset2_training_artifact_write_approval",
+        note="blocked write dry-run cannot be accepted for artifact write approval",
+    )
+    assert blocked_artifact_write_dry_run_review["stage"] == "V5.6-P99"
+    assert (
+        blocked_artifact_write_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_dry_run_review_blocked"
+    )
+    assert (
+        blocked_artifact_write_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_dry_run_review_accepted"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_approval_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_dry_run_review["decision"]["writes_file"] is False
+    assert blocked_artifact_write_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_dry_run_review["decision"]["training_started_now"] is False
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_dry_run_review["checks"]
+    }
+    assert check_status["artifact_write_dry_run_completed"] == "blocked"
+
+    decision_blocked_artifact_write_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_dry_run_review(
+            artifact_write_dry_run_event_id=artifact_write_dry_run["event_id"],
+            reviewed_by="tester",
+            review_decision="rejected",
+            note="wrong review decision must block artifact write approval path",
+        )
+    )
+    assert decision_blocked_artifact_write_dry_run_review["stage"] == "V5.6-P99"
+    assert (
+        decision_blocked_artifact_write_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_dry_run_review["checks"]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_approval_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert decision_blocked_artifact_write_dry_run_review["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_dry_run_review["decision"]["can_start_training_now"] is False
+
+    artifact_write_dry_run_review = service.dataset2_controlled_training_artifact_write_dry_run_review(
+        artifact_write_dry_run_event_id=artifact_write_dry_run["event_id"],
+        reviewed_by="tester",
+        review_decision="accepted_for_controlled_dataset2_training_artifact_write_approval",
+        note="review dry-run hashes before a later artifact write approval",
+    )
+    assert artifact_write_dry_run_review["stage"] == "V5.6-P99"
+    assert artifact_write_dry_run_review["status"] == "dataset2_controlled_training_artifact_write_dry_run_review_accepted"
+    assert artifact_write_dry_run_review["review"]["reviewed_by"] == "tester"
+    assert (
+        artifact_write_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_approval"
+        ]
+        is True
+    )
+    assert artifact_write_dry_run_review["review"]["record_bodies_included"] is False
+    assert artifact_write_dry_run_review["evidence"]["artifact_write_dry_run_event_id"] == artifact_write_dry_run["event_id"]
+    assert (
+        artifact_write_dry_run_review["evidence"]["artifact_write_preflight_event_id"]
+        == artifact_write_preflight["event_id"]
+    )
+    assert (
+        artifact_write_dry_run_review["evidence"]["artifact_final_dry_run_review_id"]
+        == artifact_final_dry_run_review["event_id"]
+    )
+    assert artifact_write_dry_run_review["evidence"]["artifact_final_dry_run_event_id"] == artifact_final_dry_run["event_id"]
+    assert (
+        artifact_write_dry_run_review["evidence"]["artifact_write_dry_run_manifest_hash"]
+        == artifact_write_dry_run["evidence"]["artifact_write_dry_run_manifest_hash"]
+    )
+    assert (
+        artifact_write_dry_run_review["evidence"]["simulated_artifact_write_payload_hash"]
+        == artifact_write_dry_run["evidence"]["simulated_artifact_write_payload_hash"]
+    )
+    assert (
+        artifact_write_dry_run_review["evidence"]["planned_artifact_manifest_hash"]
+        == artifact_write_dry_run["evidence"]["planned_artifact_manifest_hash"]
+    )
+    assert (
+        artifact_write_dry_run_review["artifact_write_dry_run_review"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_approval"
+    )
+    assert (
+        artifact_write_dry_run_review["artifact_write_dry_run_review"]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE"
+    )
+    assert (
+        artifact_write_dry_run_review["artifact_write_dry_run_review"]["artifact_write_dry_run_manifest_hash"]
+        == artifact_write_dry_run_review["evidence"]["artifact_write_dry_run_manifest_hash"]
+    )
+    assert artifact_write_dry_run_review["artifact_write_dry_run_review"]["writes_model_artifact_now"] is False
+    assert artifact_write_dry_run_review["artifact_write_dry_run_review"]["writes_file_now"] is False
+    assert artifact_write_dry_run_review["artifact_write_dry_run_review"]["persists_model_body_now"] is False
+    assert artifact_write_dry_run_review["artifact_write_dry_run_review"]["executes_training_now"] is False
+    assert artifact_write_dry_run_review["artifact_write_dry_run_review"]["training_started_now"] is False
+    assert artifact_write_dry_run_review["artifact_write_dry_run_review"]["model_artifact_written"] is False
+    assert artifact_write_dry_run_review["decision"]["controlled_dataset2_training_artifact_write_dry_run_review_accepted"] is True
+    assert (
+        artifact_write_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_dry_run_review["decision"]["model_artifact_written"] is False
+    assert artifact_write_dry_run_review["decision"]["writes_file"] is False
+    assert artifact_write_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_dry_run_reviews = service.list_dataset2_controlled_training_artifact_write_dry_run_reviews(limit=3)
+    assert artifact_write_dry_run_reviews[0]["id"] == artifact_write_dry_run_review["event_id"]
+    assert artifact_write_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_artifact_write_approval = service.dataset2_controlled_training_artifact_write_approval(
+        artifact_write_dry_run_review_id=blocked_artifact_write_dry_run_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_dataset2_training_artifact_write_execution_preflight",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE",
+        note="blocked write dry-run review cannot be approved",
+    )
+    assert blocked_artifact_write_approval["stage"] == "V5.6-P100"
+    assert blocked_artifact_write_approval["status"] == "dataset2_controlled_training_artifact_write_approval_blocked"
+    assert blocked_artifact_write_approval["decision"]["controlled_dataset2_training_artifact_write_approval_accepted"] is False
+    assert (
+        blocked_artifact_write_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_preflight_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_approval["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_approval["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_approval["decision"]["writes_file"] is False
+    assert blocked_artifact_write_approval["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_approval["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_approval["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_write_approval["checks"]}
+    assert check_status["artifact_write_dry_run_review_accepted"] == "blocked"
+
+    token_blocked_artifact_write_approval = service.dataset2_controlled_training_artifact_write_approval(
+        artifact_write_dry_run_review_id=artifact_write_dry_run_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_dataset2_training_artifact_write_execution_preflight",
+        confirmation_token=None,
+        note="missing token must block artifact write approval",
+    )
+    assert token_blocked_artifact_write_approval["stage"] == "V5.6-P100"
+    assert token_blocked_artifact_write_approval["status"] == "dataset2_controlled_training_artifact_write_approval_blocked"
+    assert token_blocked_artifact_write_approval["approval"]["confirmation_token_matched"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_write_approval["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_preflight_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_approval["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_approval["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_approval["decision"]["can_start_training_now"] is False
+
+    decision_blocked_artifact_write_approval = service.dataset2_controlled_training_artifact_write_approval(
+        artifact_write_dry_run_review_id=artifact_write_dry_run_review["event_id"],
+        approved_by="tester",
+        approval_decision="rejected",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE",
+        note="wrong approval decision must block artifact write preflight path",
+    )
+    assert decision_blocked_artifact_write_approval["stage"] == "V5.6-P100"
+    assert decision_blocked_artifact_write_approval["status"] == "dataset2_controlled_training_artifact_write_approval_blocked"
+    check_status = {check["name"]: check["status"] for check in decision_blocked_artifact_write_approval["checks"]}
+    assert check_status["approval_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_preflight_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_approval["decision"]["can_write_model_artifact_now"] is False
+    assert decision_blocked_artifact_write_approval["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_approval["decision"]["can_start_training_now"] is False
+
+    artifact_write_approval = service.dataset2_controlled_training_artifact_write_approval(
+        artifact_write_dry_run_review_id=artifact_write_dry_run_review["event_id"],
+        approved_by="tester",
+        approval_decision="approved_for_controlled_dataset2_training_artifact_write_execution_preflight",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE",
+        note="approve metadata-only artifact write execution preflight",
+    )
+    assert artifact_write_approval["stage"] == "V5.6-P100"
+    assert artifact_write_approval["status"] == "dataset2_controlled_training_artifact_write_approval_accepted"
+    assert artifact_write_approval["approval"]["approved_by"] == "tester"
+    assert artifact_write_approval["approval"]["confirmation_token_matched"] is True
+    assert (
+        artifact_write_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_preflight"
+        ]
+        is True
+    )
+    assert artifact_write_approval["approval"]["record_bodies_included"] is False
+    assert artifact_write_approval["evidence"]["artifact_write_dry_run_review_id"] == artifact_write_dry_run_review["event_id"]
+    assert artifact_write_approval["evidence"]["artifact_write_dry_run_event_id"] == artifact_write_dry_run["event_id"]
+    assert (
+        artifact_write_approval["evidence"]["artifact_write_preflight_event_id"]
+        == artifact_write_preflight["event_id"]
+    )
+    assert (
+        artifact_write_approval["evidence"]["artifact_write_dry_run_manifest_hash"]
+        == artifact_write_dry_run_review["evidence"]["artifact_write_dry_run_manifest_hash"]
+    )
+    assert (
+        artifact_write_approval["evidence"]["simulated_artifact_write_payload_hash"]
+        == artifact_write_dry_run_review["evidence"]["simulated_artifact_write_payload_hash"]
+    )
+    assert (
+        artifact_write_approval["evidence"]["planned_artifact_manifest_hash"]
+        == artifact_write_dry_run_review["evidence"]["planned_artifact_manifest_hash"]
+    )
+    assert (
+        artifact_write_approval["approval_scope"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_preflight"
+    )
+    assert (
+        artifact_write_approval["approval_scope"]["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_PREFLIGHT"
+    )
+    assert (
+        artifact_write_approval["approval_scope"]["artifact_write_dry_run_manifest_hash"]
+        == artifact_write_approval["evidence"]["artifact_write_dry_run_manifest_hash"]
+    )
+    assert artifact_write_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert artifact_write_approval["approval_scope"]["writes_file_now"] is False
+    assert artifact_write_approval["approval_scope"]["persists_model_body_now"] is False
+    assert artifact_write_approval["approval_scope"]["executes_training_now"] is False
+    assert artifact_write_approval["approval_scope"]["training_started_now"] is False
+    assert artifact_write_approval["approval_scope"]["model_artifact_written"] is False
+    assert artifact_write_approval["decision"]["controlled_dataset2_training_artifact_write_approval_accepted"] is True
+    assert (
+        artifact_write_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_write_approval["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_approval["decision"]["model_artifact_written"] is False
+    assert artifact_write_approval["decision"]["writes_file"] is False
+    assert artifact_write_approval["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_approval["decision"]["can_start_training_now"] is False
+    assert artifact_write_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_approvals = service.list_dataset2_controlled_training_artifact_write_approvals(limit=3)
+    assert artifact_write_approvals[0]["id"] == artifact_write_approval["event_id"]
+    assert artifact_write_approvals[0]["approval"]["approved_by"] == "tester"
+
+    blocked_artifact_write_execution_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_preflight(
+            artifact_write_approval_id=blocked_artifact_write_approval["event_id"],
+            requested_by="tester",
+            confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_PREFLIGHT",
+            note="blocked artifact write approval cannot enter execution preflight",
+        )
+    )
+    assert blocked_artifact_write_execution_preflight["stage"] == "V5.6-P101"
+    assert (
+        blocked_artifact_write_execution_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_preflight_blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_preflight_ready"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_dry_run_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_preflight["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_preflight["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_preflight["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_write_execution_preflight["checks"]}
+    assert check_status["artifact_write_approval_accepted"] == "blocked"
+
+    token_blocked_artifact_write_execution_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_preflight(
+            artifact_write_approval_id=artifact_write_approval["event_id"],
+            requested_by="tester",
+            confirmation_token=None,
+            note="missing token must block artifact write execution preflight",
+        )
+    )
+    assert token_blocked_artifact_write_execution_preflight["stage"] == "V5.6-P101"
+    assert (
+        token_blocked_artifact_write_execution_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_preflight_blocked"
+    )
+    assert token_blocked_artifact_write_execution_preflight["preflight"]["confirmation_token_matched"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_write_execution_preflight["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_dry_run_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_preflight["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_preflight["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_preflight(
+            artifact_write_approval_id=artifact_write_approval["event_id"],
+            requested_by="tester",
+            confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_PREFLIGHT",
+            note="preflight metadata-only artifact write execution dry-run",
+        )
+    )
+    assert artifact_write_execution_preflight["stage"] == "V5.6-P101"
+    assert (
+        artifact_write_execution_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_preflight_ready"
+    )
+    assert artifact_write_execution_preflight["preflight"]["requested_by"] == "tester"
+    assert artifact_write_execution_preflight["preflight"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_preflight["preflight"]["record_bodies_included"] is False
+    assert artifact_write_execution_preflight["evidence"]["artifact_write_approval_id"] == artifact_write_approval["event_id"]
+    assert (
+        artifact_write_execution_preflight["evidence"]["artifact_write_dry_run_review_id"]
+        == artifact_write_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_preflight["evidence"]["artifact_write_dry_run_manifest_hash"]
+        == artifact_write_approval["evidence"]["artifact_write_dry_run_manifest_hash"]
+    )
+    assert (
+        artifact_write_execution_preflight["evidence"]["simulated_artifact_write_payload_hash"]
+        == artifact_write_approval["evidence"]["simulated_artifact_write_payload_hash"]
+    )
+    assert (
+        artifact_write_execution_preflight["artifact_write_execution_preflight"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_dry_run"
+    )
+    assert (
+        artifact_write_execution_preflight["artifact_write_execution_preflight"]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_DRY_RUN"
+    )
+    assert artifact_write_execution_preflight["artifact_write_execution_preflight"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_preflight["artifact_write_execution_preflight"]["writes_file_now"] is False
+    assert artifact_write_execution_preflight["artifact_write_execution_preflight"]["persists_model_body_now"] is False
+    assert artifact_write_execution_preflight["artifact_write_execution_preflight"]["executes_training_now"] is False
+    assert artifact_write_execution_preflight["artifact_write_execution_preflight"]["training_started_now"] is False
+    assert artifact_write_execution_preflight["artifact_write_execution_preflight"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_dry_run_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_preflight["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_preflight["decision"]["writes_file"] is False
+    assert artifact_write_execution_preflight["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_preflights = (
+        service.list_dataset2_controlled_training_artifact_write_execution_preflights(limit=3)
+    )
+    assert artifact_write_execution_preflights[0]["id"] == artifact_write_execution_preflight["event_id"]
+    assert artifact_write_execution_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_artifact_write_execution_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_dry_run(
+            artifact_write_execution_preflight_event_id=blocked_artifact_write_execution_preflight["event_id"],
+            simulated_by="tester",
+            confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_DRY_RUN",
+            note="blocked execution preflight cannot run write execution dry-run",
+        )
+    )
+    assert blocked_artifact_write_execution_dry_run["stage"] == "V5.6-P102"
+    assert (
+        blocked_artifact_write_execution_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_dry_run_blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_dry_run_completed"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_dry_run_review_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_dry_run["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_dry_run["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_write_execution_dry_run["checks"]}
+    assert check_status["artifact_write_execution_preflight_ready"] == "blocked"
+
+    token_blocked_artifact_write_execution_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_dry_run(
+            artifact_write_execution_preflight_event_id=artifact_write_execution_preflight["event_id"],
+            simulated_by="tester",
+            confirmation_token=None,
+            note="missing token must block artifact write execution dry-run",
+        )
+    )
+    assert token_blocked_artifact_write_execution_dry_run["stage"] == "V5.6-P102"
+    assert (
+        token_blocked_artifact_write_execution_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_dry_run_blocked"
+    )
+    assert token_blocked_artifact_write_execution_dry_run["dry_run"]["confirmation_token_matched"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_write_execution_dry_run["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_dry_run_review_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_dry_run["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_dry_run["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_dry_run(
+            artifact_write_execution_preflight_event_id=artifact_write_execution_preflight["event_id"],
+            simulated_by="tester",
+            confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_DRY_RUN",
+            note="simulate metadata-only artifact write execution",
+        )
+    )
+    assert artifact_write_execution_dry_run["stage"] == "V5.6-P102"
+    assert (
+        artifact_write_execution_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_dry_run_completed"
+    )
+    assert artifact_write_execution_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert artifact_write_execution_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_dry_run["dry_run"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_dry_run["evidence"]["artifact_write_execution_preflight_event_id"]
+        == artifact_write_execution_preflight["event_id"]
+    )
+    assert artifact_write_execution_dry_run["evidence"]["artifact_write_approval_id"] == artifact_write_approval["event_id"]
+    assert artifact_write_execution_dry_run["evidence"]["artifact_write_execution_dry_run_manifest_hash"]
+    assert artifact_write_execution_dry_run["evidence"]["simulated_artifact_write_execution_payload_hash"]
+    assert (
+        artifact_write_execution_dry_run["artifact_write_execution_dry_run"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_dry_run_review"
+    )
+    assert (
+        artifact_write_execution_dry_run["artifact_write_execution_dry_run"]["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_approval"
+    )
+    assert artifact_write_execution_dry_run["artifact_write_execution_dry_run"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_dry_run["artifact_write_execution_dry_run"]["writes_file_now"] is False
+    assert artifact_write_execution_dry_run["artifact_write_execution_dry_run"]["persists_model_body_now"] is False
+    assert artifact_write_execution_dry_run["artifact_write_execution_dry_run"]["executes_training_now"] is False
+    assert artifact_write_execution_dry_run["artifact_write_execution_dry_run"]["training_started_now"] is False
+    assert artifact_write_execution_dry_run["artifact_write_execution_dry_run"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_dry_run_review_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_dry_run["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_dry_run["decision"]["writes_file"] is False
+    assert artifact_write_execution_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_dry_runs = (
+        service.list_dataset2_controlled_training_artifact_write_execution_dry_runs(limit=3)
+    )
+    assert artifact_write_execution_dry_runs[0]["id"] == artifact_write_execution_dry_run["event_id"]
+    assert artifact_write_execution_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_artifact_write_execution_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_dry_run_review(
+            artifact_write_execution_dry_run_event_id=blocked_artifact_write_execution_dry_run["event_id"],
+            reviewed_by="tester",
+            review_decision="accepted_for_controlled_dataset2_training_artifact_write_execution_final_approval",
+            note="blocked execution dry-run cannot be reviewed for final approval",
+        )
+    )
+    assert blocked_artifact_write_execution_dry_run_review["stage"] == "V5.6-P103"
+    assert (
+        blocked_artifact_write_execution_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_dry_run_review_blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_dry_run_review_accepted"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_approval_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_dry_run_review["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_dry_run_review["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_write_execution_dry_run_review["checks"]}
+    assert check_status["artifact_write_execution_dry_run_completed"] == "blocked"
+
+    decision_blocked_artifact_write_execution_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_dry_run_review(
+            artifact_write_execution_dry_run_event_id=artifact_write_execution_dry_run["event_id"],
+            reviewed_by="tester",
+            review_decision="rejected",
+            note="wrong review decision must block final approval path",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_dry_run_review["stage"] == "V5.6-P103"
+    assert (
+        decision_blocked_artifact_write_execution_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_dry_run_review["checks"]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_approval_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert decision_blocked_artifact_write_execution_dry_run_review["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_dry_run_review["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_dry_run_review(
+            artifact_write_execution_dry_run_event_id=artifact_write_execution_dry_run["event_id"],
+            reviewed_by="tester",
+            review_decision="accepted_for_controlled_dataset2_training_artifact_write_execution_final_approval",
+            note="accept execution dry-run for final approval",
+        )
+    )
+    assert artifact_write_execution_dry_run_review["stage"] == "V5.6-P103"
+    assert (
+        artifact_write_execution_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_dry_run_review_accepted"
+    )
+    assert artifact_write_execution_dry_run_review["review"]["reviewed_by"] == "tester"
+    assert (
+        artifact_write_execution_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_approval"
+        ]
+        is True
+    )
+    assert artifact_write_execution_dry_run_review["review"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_dry_run_review["evidence"]["artifact_write_execution_dry_run_event_id"]
+        == artifact_write_execution_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_dry_run_review["evidence"][
+            "artifact_write_execution_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_dry_run["evidence"][
+            "artifact_write_execution_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_dry_run_review["evidence"][
+            "simulated_artifact_write_execution_payload_hash"
+        ]
+        == artifact_write_execution_dry_run["evidence"][
+            "simulated_artifact_write_execution_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_dry_run_review["artifact_write_execution_dry_run_review"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_approval"
+    )
+    assert (
+        artifact_write_execution_dry_run_review["artifact_write_execution_dry_run_review"][
+            "expected_confirmation_token"
+        ]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL"
+    )
+    assert (
+        artifact_write_execution_dry_run_review["artifact_write_execution_dry_run_review"][
+            "writes_model_artifact_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_dry_run_review["artifact_write_execution_dry_run_review"]["writes_file_now"] is False
+    assert (
+        artifact_write_execution_dry_run_review["artifact_write_execution_dry_run_review"][
+            "persists_model_body_now"
+        ]
+        is False
+    )
+    assert (
+        artifact_write_execution_dry_run_review["artifact_write_execution_dry_run_review"][
+            "executes_training_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_dry_run_review["artifact_write_execution_dry_run_review"]["training_started_now"] is False
+    assert artifact_write_execution_dry_run_review["artifact_write_execution_dry_run_review"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_dry_run_review["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_dry_run_review["decision"]["writes_file"] is False
+    assert artifact_write_execution_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_dry_run_reviews = (
+        service.list_dataset2_controlled_training_artifact_write_execution_dry_run_reviews(limit=3)
+    )
+    assert artifact_write_execution_dry_run_reviews[0]["id"] == artifact_write_execution_dry_run_review["event_id"]
+    assert artifact_write_execution_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_artifact_write_execution_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_approval(
+            artifact_write_execution_dry_run_review_id=blocked_artifact_write_execution_dry_run_review["event_id"],
+            approved_by="tester",
+            approval_decision="approved_for_controlled_dataset2_training_artifact_write_execution_final_preflight",
+            confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL",
+            note="blocked execution dry-run review cannot be finally approved",
+        )
+    )
+    assert blocked_artifact_write_execution_final_approval["stage"] == "V5.6-P104"
+    assert (
+        blocked_artifact_write_execution_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_approval_blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_approval_accepted"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_preflight_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_approval["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_approval["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_approval["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_approval["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_approval["decision"]["training_started_now"] is False
+    check_status = {check["name"]: check["status"] for check in blocked_artifact_write_execution_final_approval["checks"]}
+    assert check_status["artifact_write_execution_dry_run_review_accepted"] == "blocked"
+
+    token_blocked_artifact_write_execution_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_approval(
+            artifact_write_execution_dry_run_review_id=artifact_write_execution_dry_run_review["event_id"],
+            approved_by="tester",
+            approval_decision="approved_for_controlled_dataset2_training_artifact_write_execution_final_preflight",
+            confirmation_token=None,
+            note="missing token must block final approval",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_approval["stage"] == "V5.6-P104"
+    assert (
+        token_blocked_artifact_write_execution_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_approval_blocked"
+    )
+    assert token_blocked_artifact_write_execution_final_approval["approval"]["confirmation_token_matched"] is False
+    check_status = {check["name"]: check["status"] for check in token_blocked_artifact_write_execution_final_approval["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_preflight_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_approval["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_approval["decision"]["can_start_training_now"] is False
+
+    decision_blocked_artifact_write_execution_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_approval(
+            artifact_write_execution_dry_run_review_id=artifact_write_execution_dry_run_review["event_id"],
+            approved_by="tester",
+            approval_decision="rejected",
+            confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL",
+            note="wrong approval decision must block final preflight path",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_final_approval["stage"] == "V5.6-P104"
+    assert (
+        decision_blocked_artifact_write_execution_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_approval_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_approval["checks"]
+    }
+    assert check_status["approval_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_preflight_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert decision_blocked_artifact_write_execution_final_approval["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_final_approval["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_approval(
+            artifact_write_execution_dry_run_review_id=artifact_write_execution_dry_run_review["event_id"],
+            approved_by="tester",
+            approval_decision="approved_for_controlled_dataset2_training_artifact_write_execution_final_preflight",
+            confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL",
+            note="approve metadata-only artifact write execution final preflight",
+        )
+    )
+    assert artifact_write_execution_final_approval["stage"] == "V5.6-P104"
+    assert (
+        artifact_write_execution_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_approval_accepted"
+    )
+    assert artifact_write_execution_final_approval["approval"]["approved_by"] == "tester"
+    assert artifact_write_execution_final_approval["approval"]["confirmation_token_matched"] is True
+    assert (
+        artifact_write_execution_final_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_preflight"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_approval["approval"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_approval["evidence"][
+            "artifact_write_execution_dry_run_review_id"
+        ]
+        == artifact_write_execution_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_approval["evidence"][
+            "artifact_write_execution_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_dry_run_review["evidence"][
+            "artifact_write_execution_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_approval["evidence"][
+            "simulated_artifact_write_execution_payload_hash"
+        ]
+        == artifact_write_execution_dry_run_review["evidence"][
+            "simulated_artifact_write_execution_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_approval["approval_scope"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_preflight"
+    )
+    assert (
+        artifact_write_execution_final_approval["approval_scope"]["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_PREFLIGHT"
+    )
+    assert artifact_write_execution_final_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_approval["approval_scope"]["writes_file_now"] is False
+    assert artifact_write_execution_final_approval["approval_scope"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_approval["approval_scope"]["executes_training_now"] is False
+    assert artifact_write_execution_final_approval["approval_scope"]["training_started_now"] is False
+    assert artifact_write_execution_final_approval["approval_scope"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_approval["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_approval["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_approval["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_approval["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+
+    blocked_artifact_write_execution_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_preflight(
+            artifact_write_execution_final_approval_id=blocked_artifact_write_execution_final_approval["event_id"],
+            requested_by="tester",
+            confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_PREFLIGHT",
+            note="blocked final approval cannot enter final preflight",
+        )
+    )
+    assert blocked_artifact_write_execution_final_preflight["stage"] == "V5.6-P105"
+    assert (
+        blocked_artifact_write_execution_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_preflight_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_preflight["checks"]
+    }
+    assert check_status["artifact_write_execution_final_approval_accepted"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_dry_run_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_preflight["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_preflight["decision"]["can_start_training_now"] is False
+
+    token_blocked_artifact_write_execution_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_preflight(
+            artifact_write_execution_final_approval_id=artifact_write_execution_final_approval["event_id"],
+            requested_by="tester",
+            confirmation_token=None,
+            note="missing token must block final preflight",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_preflight["stage"] == "V5.6-P105"
+    assert (
+        token_blocked_artifact_write_execution_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_preflight_blocked"
+    )
+    assert token_blocked_artifact_write_execution_final_preflight["preflight"]["confirmation_token_matched"] is False
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_preflight["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_dry_run_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_preflight["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_preflight["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_preflight(
+            artifact_write_execution_final_approval_id=artifact_write_execution_final_approval["event_id"],
+            requested_by="tester",
+            confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_PREFLIGHT",
+            note="prepare metadata-only artifact write execution final dry-run",
+        )
+    )
+    assert artifact_write_execution_final_preflight["stage"] == "V5.6-P105"
+    assert (
+        artifact_write_execution_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_preflight_ready"
+    )
+    assert artifact_write_execution_final_preflight["preflight"]["requested_by"] == "tester"
+    assert artifact_write_execution_final_preflight["preflight"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_preflight["preflight"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_preflight["evidence"][
+            "artifact_write_execution_final_approval_id"
+        ]
+        == artifact_write_execution_final_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_preflight["evidence"][
+            "artifact_write_execution_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_approval["evidence"][
+            "artifact_write_execution_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_preflight["evidence"][
+            "simulated_artifact_write_execution_payload_hash"
+        ]
+        == artifact_write_execution_final_approval["evidence"][
+            "simulated_artifact_write_execution_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_preflight["artifact_write_execution_final_preflight"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_dry_run"
+    )
+    assert (
+        artifact_write_execution_final_preflight["artifact_write_execution_final_preflight"][
+            "expected_confirmation_token"
+        ]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_DRY_RUN"
+    )
+    assert artifact_write_execution_final_preflight["artifact_write_execution_final_preflight"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_preflight["artifact_write_execution_final_preflight"]["writes_file_now"] is False
+    assert artifact_write_execution_final_preflight["artifact_write_execution_final_preflight"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_preflight["artifact_write_execution_final_preflight"]["executes_training_now"] is False
+    assert artifact_write_execution_final_preflight["artifact_write_execution_final_preflight"]["training_started_now"] is False
+    assert artifact_write_execution_final_preflight["artifact_write_execution_final_preflight"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_dry_run_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_preflight["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_preflight["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_preflight["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+
+    blocked_artifact_write_execution_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_dry_run(
+            artifact_write_execution_final_preflight_event_id=blocked_artifact_write_execution_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_DRY_RUN",
+            note="blocked final preflight cannot enter final dry-run",
+        )
+    )
+    assert blocked_artifact_write_execution_final_dry_run["stage"] == "V5.6-P106"
+    assert (
+        blocked_artifact_write_execution_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_dry_run_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_dry_run["checks"]
+    }
+    assert check_status["artifact_write_execution_final_preflight_ready"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_dry_run["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_dry_run["decision"]["can_start_training_now"] is False
+
+    token_blocked_artifact_write_execution_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_dry_run(
+            artifact_write_execution_final_preflight_event_id=artifact_write_execution_final_preflight["event_id"],
+            simulated_by="tester",
+            confirmation_token=None,
+            note="missing token must block final dry-run",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_dry_run["stage"] == "V5.6-P106"
+    assert (
+        token_blocked_artifact_write_execution_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_dry_run_blocked"
+    )
+    assert token_blocked_artifact_write_execution_final_dry_run["dry_run"]["confirmation_token_matched"] is False
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_dry_run["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_dry_run["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_dry_run["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_dry_run(
+            artifact_write_execution_final_preflight_event_id=artifact_write_execution_final_preflight["event_id"],
+            simulated_by="tester",
+            confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_DRY_RUN",
+            note="simulate metadata-only artifact write execution final dry-run",
+        )
+    )
+    assert artifact_write_execution_final_dry_run["stage"] == "V5.6-P106"
+    assert (
+        artifact_write_execution_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_dry_run_completed"
+    )
+    assert artifact_write_execution_final_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert artifact_write_execution_final_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_dry_run["dry_run"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_dry_run["evidence"][
+            "artifact_write_execution_final_preflight_event_id"
+        ]
+        == artifact_write_execution_final_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_dry_run["evidence"][
+            "artifact_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_dry_run["artifact_write_execution_final_dry_run"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_dry_run_review"
+    )
+    assert (
+        artifact_write_execution_final_dry_run["artifact_write_execution_final_dry_run"][
+            "expected_review_decision"
+        ]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_approval"
+    )
+    assert artifact_write_execution_final_dry_run["artifact_write_execution_final_dry_run"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_dry_run["artifact_write_execution_final_dry_run"]["writes_file_now"] is False
+    assert artifact_write_execution_final_dry_run["artifact_write_execution_final_dry_run"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_dry_run["artifact_write_execution_final_dry_run"]["executes_training_now"] is False
+    assert artifact_write_execution_final_dry_run["artifact_write_execution_final_dry_run"]["training_started_now"] is False
+    assert artifact_write_execution_final_dry_run["artifact_write_execution_final_dry_run"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_dry_run_review_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_dry_run["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_dry_run["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+
+    blocked_artifact_write_execution_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_dry_run_review(
+            artifact_write_execution_final_dry_run_event_id=blocked_artifact_write_execution_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision="accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_approval",
+            note="blocked final dry-run cannot be reviewed as accepted",
+        )
+    )
+    assert blocked_artifact_write_execution_final_dry_run_review["stage"] == "V5.6-P107"
+    assert (
+        blocked_artifact_write_execution_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_dry_run_review["checks"]
+    }
+    assert check_status["artifact_write_execution_final_dry_run_completed"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_approval_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_dry_run_review["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_dry_run_review["decision"]["can_start_training_now"] is False
+
+    decision_blocked_artifact_write_execution_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_dry_run_review(
+            artifact_write_execution_final_dry_run_event_id=artifact_write_execution_final_dry_run["event_id"],
+            reviewed_by="tester",
+            review_decision="rejected",
+            note="wrong review decision must block final write approval path",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_final_dry_run_review["stage"] == "V5.6-P107"
+    assert (
+        decision_blocked_artifact_write_execution_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_dry_run_review["checks"]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_approval_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert decision_blocked_artifact_write_execution_final_dry_run_review["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_final_dry_run_review["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_dry_run_review(
+            artifact_write_execution_final_dry_run_event_id=artifact_write_execution_final_dry_run["event_id"],
+            reviewed_by="tester",
+            review_decision="accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_approval",
+            note="review metadata-only artifact write execution final dry-run",
+        )
+    )
+    assert artifact_write_execution_final_dry_run_review["stage"] == "V5.6-P107"
+    assert (
+        artifact_write_execution_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_dry_run_review_accepted"
+    )
+    assert artifact_write_execution_final_dry_run_review["review"]["reviewed_by"] == "tester"
+    assert (
+        artifact_write_execution_final_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_approval"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_dry_run_review["review"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_dry_run_event_id"
+        ]
+        == artifact_write_execution_final_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_dry_run["evidence"][
+            "artifact_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_dry_run_review["evidence"][
+            "simulated_artifact_write_execution_final_payload_hash"
+        ]
+        == artifact_write_execution_final_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_dry_run_review["artifact_write_execution_final_dry_run_review"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_approval"
+    )
+    assert (
+        artifact_write_execution_final_dry_run_review["artifact_write_execution_final_dry_run_review"][
+            "expected_confirmation_token"
+        ]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE"
+    )
+    assert artifact_write_execution_final_dry_run_review["artifact_write_execution_final_dry_run_review"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_dry_run_review["artifact_write_execution_final_dry_run_review"]["writes_file_now"] is False
+    assert artifact_write_execution_final_dry_run_review["artifact_write_execution_final_dry_run_review"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_dry_run_review["artifact_write_execution_final_dry_run_review"]["executes_training_now"] is False
+    assert artifact_write_execution_final_dry_run_review["artifact_write_execution_final_dry_run_review"]["training_started_now"] is False
+    assert artifact_write_execution_final_dry_run_review["artifact_write_execution_final_dry_run_review"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_dry_run_review["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_dry_run_review["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_approvals = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_approvals(limit=3)
+    )
+    assert artifact_write_execution_final_approvals[0]["id"] == artifact_write_execution_final_approval["event_id"]
+    assert artifact_write_execution_final_approvals[0]["approval"]["approved_by"] == "tester"
+    artifact_write_execution_final_preflights = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_preflights(limit=3)
+    )
+    assert artifact_write_execution_final_preflights[0]["id"] == artifact_write_execution_final_preflight["event_id"]
+    assert artifact_write_execution_final_preflights[0]["preflight"]["requested_by"] == "tester"
+    artifact_write_execution_final_dry_runs = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_dry_runs(limit=3)
+    )
+    assert artifact_write_execution_final_dry_runs[0]["id"] == artifact_write_execution_final_dry_run["event_id"]
+    assert artifact_write_execution_final_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+    artifact_write_execution_final_dry_run_reviews = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_dry_run_reviews(limit=3)
+    )
+    assert artifact_write_execution_final_dry_run_reviews[0]["id"] == artifact_write_execution_final_dry_run_review["event_id"]
+    assert artifact_write_execution_final_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_approval(
+            artifact_write_execution_final_dry_run_review_id=blocked_artifact_write_execution_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=(
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_preflight"
+            ),
+            confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE",
+            note="blocked final dry-run review cannot be final-write approved",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_approval["stage"] == "V5.6-P108"
+    assert (
+        blocked_artifact_write_execution_final_write_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_approval_blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_approval_accepted"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_preflight_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_approval["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_approval["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_approval["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_approval["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_approval["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_approval["decision"]["training_started_now"] is False
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_approval["checks"]
+    }
+    assert check_status["artifact_write_execution_final_dry_run_review_accepted"] == "blocked"
+
+    token_blocked_artifact_write_execution_final_write_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_approval(
+            artifact_write_execution_final_dry_run_review_id=artifact_write_execution_final_dry_run_review["event_id"],
+            approved_by="tester",
+            approval_decision=(
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_preflight"
+            ),
+            confirmation_token=None,
+            note="missing token must block final-write approval",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_approval["stage"] == "V5.6-P108"
+    assert (
+        token_blocked_artifact_write_execution_final_write_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_approval_blocked"
+    )
+    assert token_blocked_artifact_write_execution_final_write_approval["approval"]["confirmation_token_matched"] is False
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_approval["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_preflight_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_approval["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_approval["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_approval["decision"]["can_start_training_now"] is False
+
+    decision_blocked_artifact_write_execution_final_write_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_approval(
+            artifact_write_execution_final_dry_run_review_id=artifact_write_execution_final_dry_run_review["event_id"],
+            approved_by="tester",
+            approval_decision="rejected",
+            confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE",
+            note="wrong approval decision must block final-write preflight path",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_final_write_approval["stage"] == "V5.6-P108"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_approval_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_approval["checks"]
+    }
+    assert check_status["approval_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_preflight_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_write_approval["decision"]["can_write_model_artifact_now"] is False
+    assert decision_blocked_artifact_write_execution_final_write_approval["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_final_write_approval["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_approval(
+            artifact_write_execution_final_dry_run_review_id=artifact_write_execution_final_dry_run_review["event_id"],
+            approved_by="tester",
+            approval_decision=(
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_preflight"
+            ),
+            confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE",
+            note="approve metadata-only artifact write execution final write preflight",
+        )
+    )
+    assert artifact_write_execution_final_write_approval["stage"] == "V5.6-P108"
+    assert (
+        artifact_write_execution_final_write_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_approval_accepted"
+    )
+    assert artifact_write_execution_final_write_approval["approval"]["approved_by"] == "tester"
+    assert artifact_write_execution_final_write_approval["approval"]["confirmation_token_matched"] is True
+    assert (
+        artifact_write_execution_final_write_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_preflight"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_approval["approval"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_approval["evidence"][
+            "artifact_write_execution_final_dry_run_review_id"
+        ]
+        == artifact_write_execution_final_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_approval["evidence"][
+            "artifact_write_execution_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_approval["evidence"][
+            "simulated_artifact_write_execution_final_payload_hash"
+        ]
+        == artifact_write_execution_final_dry_run_review["evidence"][
+            "simulated_artifact_write_execution_final_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_approval["approval_scope"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_preflight"
+    )
+    assert (
+        artifact_write_execution_final_write_approval["approval_scope"]["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_PREFLIGHT"
+    )
+    assert artifact_write_execution_final_write_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_approval["approval_scope"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_approval["approval_scope"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_approval["approval_scope"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_approval["approval_scope"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_approval["approval_scope"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_approval["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_approval["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_approval["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_approval["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_approval["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_approvals = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_approvals(limit=3)
+    )
+    assert artifact_write_execution_final_write_approvals[0]["id"] == artifact_write_execution_final_write_approval["event_id"]
+    assert artifact_write_execution_final_write_approvals[0]["approval"]["approved_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_preflight(
+            artifact_write_execution_final_write_approval_id=blocked_artifact_write_execution_final_write_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=(
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_PREFLIGHT"
+            ),
+            note="blocked final-write approval cannot enter final-write preflight",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_preflight["stage"] == "V5.6-P109"
+    assert (
+        blocked_artifact_write_execution_final_write_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_preflight_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_preflight["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_approval_accepted"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_dry_run_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_preflight["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_preflight["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_preflight["decision"]["training_started_now"] is False
+
+    token_blocked_artifact_write_execution_final_write_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_preflight(
+            artifact_write_execution_final_write_approval_id=artifact_write_execution_final_write_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-write preflight",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_preflight["stage"] == "V5.6-P109"
+    assert (
+        token_blocked_artifact_write_execution_final_write_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_preflight_blocked"
+    )
+    assert token_blocked_artifact_write_execution_final_write_preflight["preflight"]["confirmation_token_matched"] is False
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_preflight["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_dry_run_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_preflight["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_preflight["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_preflight(
+            artifact_write_execution_final_write_approval_id=artifact_write_execution_final_write_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=(
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_PREFLIGHT"
+            ),
+            note="prepare metadata-only artifact write execution final write dry-run",
+        )
+    )
+    assert artifact_write_execution_final_write_preflight["stage"] == "V5.6-P109"
+    assert (
+        artifact_write_execution_final_write_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_preflight_ready"
+    )
+    assert artifact_write_execution_final_write_preflight["preflight"]["requested_by"] == "tester"
+    assert artifact_write_execution_final_write_preflight["preflight"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_write_preflight["preflight"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_preflight["evidence"][
+            "artifact_write_execution_final_write_approval_id"
+        ]
+        == artifact_write_execution_final_write_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_preflight["evidence"][
+            "artifact_write_execution_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_approval["evidence"][
+            "artifact_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_preflight["evidence"][
+            "simulated_artifact_write_execution_final_payload_hash"
+        ]
+        == artifact_write_execution_final_write_approval["evidence"][
+            "simulated_artifact_write_execution_final_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_preflight["artifact_write_execution_final_write_preflight"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_dry_run"
+    )
+    assert (
+        artifact_write_execution_final_write_preflight["artifact_write_execution_final_write_preflight"][
+            "expected_confirmation_token"
+        ]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_DRY_RUN"
+    )
+    assert artifact_write_execution_final_write_preflight["artifact_write_execution_final_write_preflight"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_preflight["artifact_write_execution_final_write_preflight"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_preflight["artifact_write_execution_final_write_preflight"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_preflight["artifact_write_execution_final_write_preflight"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_preflight["artifact_write_execution_final_write_preflight"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_preflight["artifact_write_execution_final_write_preflight"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_dry_run_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_preflight["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_preflight["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_preflight["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_preflights = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_preflights(limit=3)
+    )
+    assert artifact_write_execution_final_write_preflights[0]["id"] == artifact_write_execution_final_write_preflight["event_id"]
+    assert artifact_write_execution_final_write_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_dry_run(
+            artifact_write_execution_final_write_preflight_event_id=blocked_artifact_write_execution_final_write_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=(
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_DRY_RUN"
+            ),
+            note="blocked final-write preflight cannot enter final-write dry-run",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_dry_run["stage"] == "V5.6-P110"
+    assert (
+        blocked_artifact_write_execution_final_write_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_dry_run_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_dry_run["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_preflight_ready"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_dry_run_review_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run["decision"]["training_started_now"] is False
+
+    token_blocked_artifact_write_execution_final_write_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_dry_run(
+            artifact_write_execution_final_write_preflight_event_id=artifact_write_execution_final_write_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-write dry-run",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_dry_run["stage"] == "V5.6-P110"
+    assert (
+        token_blocked_artifact_write_execution_final_write_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_dry_run_blocked"
+    )
+    assert token_blocked_artifact_write_execution_final_write_dry_run["dry_run"]["confirmation_token_matched"] is False
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_dry_run["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_dry_run_review_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_dry_run["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_dry_run["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_dry_run(
+            artifact_write_execution_final_write_preflight_event_id=artifact_write_execution_final_write_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=(
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_DRY_RUN"
+            ),
+            note="simulate metadata-only artifact write execution final write",
+        )
+    )
+    assert artifact_write_execution_final_write_dry_run["stage"] == "V5.6-P110"
+    assert (
+        artifact_write_execution_final_write_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_dry_run_completed"
+    )
+    assert artifact_write_execution_final_write_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert artifact_write_execution_final_write_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_write_dry_run["dry_run"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_dry_run["evidence"][
+            "artifact_write_execution_final_write_preflight_event_id"
+        ]
+        == artifact_write_execution_final_write_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_dry_run["evidence"][
+            "artifact_write_execution_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_preflight["evidence"][
+            "artifact_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_dry_run["evidence"][
+            "artifact_write_execution_final_write_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_write_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_dry_run["artifact_write_execution_final_write_dry_run"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_dry_run_review"
+    )
+    assert (
+        artifact_write_execution_final_write_dry_run["artifact_write_execution_final_write_dry_run"][
+            "expected_review_decision"
+        ]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval"
+    )
+    assert artifact_write_execution_final_write_dry_run["artifact_write_execution_final_write_dry_run"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_dry_run["artifact_write_execution_final_write_dry_run"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_dry_run["artifact_write_execution_final_write_dry_run"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_dry_run["artifact_write_execution_final_write_dry_run"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_dry_run["artifact_write_execution_final_write_dry_run"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_dry_run["artifact_write_execution_final_write_dry_run"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_dry_run_review_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_dry_run["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_dry_run["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_dry_runs = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_dry_runs(limit=3)
+    )
+    assert artifact_write_execution_final_write_dry_runs[0]["id"] == artifact_write_execution_final_write_dry_run["event_id"]
+    assert artifact_write_execution_final_write_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review(
+            artifact_write_execution_final_write_dry_run_event_id=blocked_artifact_write_execution_final_write_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision=(
+                "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval"
+            ),
+            note="blocked final-write dry-run cannot enter final-write dry-run review",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_dry_run_review["stage"] == "V5.6-P111"
+    assert (
+        blocked_artifact_write_execution_final_write_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_dry_run_review["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_dry_run_completed"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run_review["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_dry_run_review["decision"]["training_started_now"] is False
+
+    decision_blocked_artifact_write_execution_final_write_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review(
+            artifact_write_execution_final_write_dry_run_event_id=artifact_write_execution_final_write_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision="reject_final_write_execution_approval",
+            note="wrong review decision must block final-write dry-run review",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_final_write_dry_run_review["stage"] == "V5.6-P111"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review_blocked"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_dry_run_review["checks"]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_write_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert decision_blocked_artifact_write_execution_final_write_dry_run_review["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_final_write_dry_run_review["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review(
+            artifact_write_execution_final_write_dry_run_event_id=artifact_write_execution_final_write_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision=(
+                "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval"
+            ),
+            note="review metadata-only artifact write execution final write dry-run",
+        )
+    )
+    assert artifact_write_execution_final_write_dry_run_review["stage"] == "V5.6-P111"
+    assert (
+        artifact_write_execution_final_write_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review_accepted"
+    )
+    assert artifact_write_execution_final_write_dry_run_review["review"]["reviewed_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_dry_run_review["review"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_dry_run_event_id"
+        ]
+        == artifact_write_execution_final_write_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_dry_run["evidence"][
+            "artifact_write_execution_final_write_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_dry_run_review["artifact_write_execution_final_write_dry_run_review"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_approval"
+    )
+    assert (
+        artifact_write_execution_final_write_dry_run_review["artifact_write_execution_final_write_dry_run_review"][
+            "expected_confirmation_token"
+        ]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION"
+    )
+    assert artifact_write_execution_final_write_dry_run_review["artifact_write_execution_final_write_dry_run_review"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_dry_run_review["artifact_write_execution_final_write_dry_run_review"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_dry_run_review["artifact_write_execution_final_write_dry_run_review"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_dry_run_review["artifact_write_execution_final_write_dry_run_review"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_dry_run_review["artifact_write_execution_final_write_dry_run_review"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_dry_run_review["artifact_write_execution_final_write_dry_run_review"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_dry_run_review["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_dry_run_review["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_dry_run_reviews = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_dry_run_reviews(limit=3)
+    )
+    assert artifact_write_execution_final_write_dry_run_reviews[0]["id"] == artifact_write_execution_final_write_dry_run_review["event_id"]
+    assert artifact_write_execution_final_write_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_execution_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_approval(
+            artifact_write_execution_final_write_dry_run_review_id=blocked_artifact_write_execution_final_write_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=(
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight"
+            ),
+            confirmation_token=(
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION"
+            ),
+            note="blocked final-write dry-run review cannot enter final-write execution approval",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_approval["stage"] == "V5.6-P112"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_approval["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_dry_run_review_accepted"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_approval["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_approval["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_approval["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_approval["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_approval["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_approval["decision"]["training_started_now"] is False
+
+    token_blocked_artifact_write_execution_final_write_execution_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_approval(
+            artifact_write_execution_final_write_dry_run_review_id=artifact_write_execution_final_write_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=(
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight"
+            ),
+            confirmation_token=None,
+            note="missing token must block final-write execution approval",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_approval["stage"] == "V5.6-P112"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight"
+        ]
+        is True
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_approval["approval"]["confirmation_token_matched"] is False
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_approval["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_approval["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_approval["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_approval["decision"]["can_start_training_now"] is False
+
+    decision_blocked_artifact_write_execution_final_write_execution_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_approval(
+            artifact_write_execution_final_write_dry_run_review_id=artifact_write_execution_final_write_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision="approve_final_write_execution_now",
+            confirmation_token=(
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION"
+            ),
+            note="wrong decision must block final-write execution approval",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_approval["stage"] == "V5.6-P112"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_blocked"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_approval["approval"]["confirmation_token_matched"] is True
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_approval["checks"]
+    }
+    assert check_status["approval_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_approval["decision"]["can_write_model_artifact_now"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_approval["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_approval["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_execution_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_approval(
+            artifact_write_execution_final_write_dry_run_review_id=artifact_write_execution_final_write_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=(
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight"
+            ),
+            confirmation_token=(
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION"
+            ),
+            note="approval metadata-only artifact write execution final write execution",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_approval["stage"] == "V5.6-P112"
+    assert (
+        artifact_write_execution_final_write_execution_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_accepted"
+    )
+    assert artifact_write_execution_final_write_execution_approval["approval"]["approved_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_approval["approval"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_write_execution_approval["approval"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_execution_approval["evidence"][
+            "artifact_write_execution_final_write_dry_run_review_id"
+        ]
+        == artifact_write_execution_final_write_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_approval["evidence"][
+            "artifact_write_execution_final_write_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_approval["approval_scope"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_approval["approval_scope"]["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_PREFLIGHT"
+    )
+    assert artifact_write_execution_final_write_execution_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_approval["approval_scope"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_approval["approval_scope"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_approval["approval_scope"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_approval["approval_scope"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_approval["approval_scope"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_execution_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_approval["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_approval["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_approval["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_approval["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_approval["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_approvals = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_approvals(limit=3)
+    )
+    assert artifact_write_execution_final_write_execution_approvals[0]["id"] == artifact_write_execution_final_write_execution_approval["event_id"]
+    assert artifact_write_execution_final_write_execution_approvals[0]["approval"]["approved_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_execution_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight(
+            artifact_write_execution_final_write_execution_approval_id=blocked_artifact_write_execution_final_write_execution_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=(
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_PREFLIGHT"
+            ),
+            note="blocked final-write execution approval cannot enter final-write execution preflight",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_preflight["stage"] == "V5.6-P113"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_preflight["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_approval_accepted"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_preflight["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_preflight["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_preflight["decision"]["training_started_now"] is False
+
+    token_blocked_artifact_write_execution_final_write_execution_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight(
+            artifact_write_execution_final_write_execution_approval_id=artifact_write_execution_final_write_execution_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-write execution preflight",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_preflight["stage"] == "V5.6-P113"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_blocked"
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_preflight["preflight"]["confirmation_token_matched"] is False
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_preflight["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_preflight["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_preflight["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_execution_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight(
+            artifact_write_execution_final_write_execution_approval_id=artifact_write_execution_final_write_execution_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=(
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_PREFLIGHT"
+            ),
+            note="preflight metadata-only artifact write execution final write execution",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_preflight["stage"] == "V5.6-P113"
+    assert (
+        artifact_write_execution_final_write_execution_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_ready"
+    )
+    assert artifact_write_execution_final_write_execution_preflight["preflight"]["requested_by"] == "tester"
+    assert artifact_write_execution_final_write_execution_preflight["preflight"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_write_execution_preflight["preflight"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_execution_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_approval_id"
+        ]
+        == artifact_write_execution_final_write_execution_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_preflight["evidence"][
+            "artifact_write_execution_final_write_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_approval["evidence"][
+            "artifact_write_execution_final_write_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_preflight[
+            "artifact_write_execution_final_write_execution_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_preflight[
+            "artifact_write_execution_final_write_execution_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_DRY_RUN"
+    )
+    assert artifact_write_execution_final_write_execution_preflight["artifact_write_execution_final_write_execution_preflight"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_preflight["artifact_write_execution_final_write_execution_preflight"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_preflight["artifact_write_execution_final_write_execution_preflight"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_preflight["artifact_write_execution_final_write_execution_preflight"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_preflight["artifact_write_execution_final_write_execution_preflight"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_preflight["artifact_write_execution_final_write_execution_preflight"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_execution_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_preflight["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_preflight["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_preflight["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_preflights = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_preflights(limit=3)
+    )
+    assert artifact_write_execution_final_write_execution_preflights[0]["id"] == artifact_write_execution_final_write_execution_preflight["event_id"]
+    assert artifact_write_execution_final_write_execution_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_execution_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run(
+            artifact_write_execution_final_write_execution_preflight_event_id=blocked_artifact_write_execution_final_write_execution_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=(
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_DRY_RUN"
+            ),
+            note="blocked final-write execution preflight cannot enter final-write execution dry-run",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_dry_run["stage"] == "V5.6-P114"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_dry_run["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_preflight_ready"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_review_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run["decision"]["training_started_now"] is False
+
+    token_blocked_artifact_write_execution_final_write_execution_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run(
+            artifact_write_execution_final_write_execution_preflight_event_id=artifact_write_execution_final_write_execution_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-write execution dry-run",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_dry_run["stage"] == "V5.6-P114"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_blocked"
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_dry_run["dry_run"]["confirmation_token_matched"] is False
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_dry_run["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_review_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_dry_run["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_dry_run["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_execution_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run(
+            artifact_write_execution_final_write_execution_preflight_event_id=artifact_write_execution_final_write_execution_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=(
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_DRY_RUN"
+            ),
+            note="dry-run metadata-only artifact write execution final write execution",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_dry_run["stage"] == "V5.6-P114"
+    assert (
+        artifact_write_execution_final_write_execution_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_completed"
+    )
+    assert artifact_write_execution_final_write_execution_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert artifact_write_execution_final_write_execution_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_write_execution_dry_run["dry_run"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_execution_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_preflight_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run["evidence"][
+            "artifact_write_execution_final_write_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_preflight["evidence"][
+            "artifact_write_execution_final_write_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run[
+            "artifact_write_execution_final_write_execution_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_review"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run[
+            "artifact_write_execution_final_write_execution_dry_run"
+        ]["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval"
+    )
+    assert artifact_write_execution_final_write_execution_dry_run["artifact_write_execution_final_write_execution_dry_run"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["artifact_write_execution_final_write_execution_dry_run"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["artifact_write_execution_final_write_execution_dry_run"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["artifact_write_execution_final_write_execution_dry_run"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["artifact_write_execution_final_write_execution_dry_run"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["artifact_write_execution_final_write_execution_dry_run"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_execution_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_review_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_dry_runs = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_runs(limit=3)
+    )
+    assert artifact_write_execution_final_write_execution_dry_runs[0]["id"] == artifact_write_execution_final_write_execution_dry_run["event_id"]
+    assert artifact_write_execution_final_write_execution_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_execution_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review(
+            artifact_write_execution_final_write_execution_dry_run_event_id=blocked_artifact_write_execution_final_write_execution_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision=(
+                "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval"
+            ),
+            note="blocked final-write execution dry-run cannot enter review",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_dry_run_review["stage"] == "V5.6-P115"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_dry_run_review["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_dry_run_completed"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"]["training_started_now"] is False
+
+    decision_blocked_artifact_write_execution_final_write_execution_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review(
+            artifact_write_execution_final_write_execution_dry_run_event_id=artifact_write_execution_final_write_execution_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision="rejected_for_unexpected_final_write_execution_dry_run",
+            note="wrong decision must block final-write execution dry-run review",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_dry_run_review["stage"] == "V5.6-P115"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_blocked"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_dry_run_review["checks"]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_dry_run_review["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_execution_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review(
+            artifact_write_execution_final_write_execution_dry_run_event_id=artifact_write_execution_final_write_execution_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision=(
+                "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval"
+            ),
+            note="review final-write execution dry-run evidence only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_dry_run_review["stage"] == "V5.6-P115"
+    assert (
+        artifact_write_execution_final_write_execution_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_accepted"
+    )
+    assert artifact_write_execution_final_write_execution_dry_run_review["review"]["reviewed_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_dry_run_review["review"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_execution_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run_review["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_payload_hash"
+        ]
+        == artifact_write_execution_final_write_execution_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run_review[
+            "artifact_write_execution_final_write_execution_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run_review[
+            "artifact_write_execution_final_write_execution_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL"
+    )
+    assert artifact_write_execution_final_write_execution_dry_run_review["artifact_write_execution_final_write_execution_dry_run_review"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["artifact_write_execution_final_write_execution_dry_run_review"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["artifact_write_execution_final_write_execution_dry_run_review"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["artifact_write_execution_final_write_execution_dry_run_review"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["artifact_write_execution_final_write_execution_dry_run_review"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["artifact_write_execution_final_write_execution_dry_run_review"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_execution_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_dry_run_reviews = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_reviews(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_dry_run_reviews[0]["id"]
+        == artifact_write_execution_final_write_execution_dry_run_review["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_execution_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval(
+            artifact_write_execution_final_write_execution_dry_run_review_id=blocked_artifact_write_execution_final_write_execution_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=(
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight"
+            ),
+            confirmation_token=(
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL"
+            ),
+            note="blocked dry-run review cannot enter final approval",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_approval["stage"] == "V5.6-P116"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_approval["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_dry_run_review_accepted"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_approval["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_approval["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_approval["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_approval["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_approval["decision"]["training_started_now"] is False
+
+    decision_blocked_artifact_write_execution_final_write_execution_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval(
+            artifact_write_execution_final_write_execution_dry_run_review_id=artifact_write_execution_final_write_execution_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision="approved_for_unexpected_final_write_execution_final_preflight",
+            confirmation_token=None,
+            note="wrong decision and missing token must block final approval",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_approval["stage"] == "V5.6-P116"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_blocked"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight"
+        ]
+        is False
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_approval["approval"][
+            "confirmation_token_matched"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_final_approval["checks"]
+    }
+    assert check_status["approval_decision_allowed"] == "blocked"
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_approval["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_approval["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_execution_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval(
+            artifact_write_execution_final_write_execution_dry_run_review_id=artifact_write_execution_final_write_execution_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=(
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight"
+            ),
+            confirmation_token=(
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL"
+            ),
+            note="approve final-write execution final preflight metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_approval["stage"] == "V5.6-P116"
+    assert (
+        artifact_write_execution_final_write_execution_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_accepted"
+    )
+    assert artifact_write_execution_final_write_execution_final_approval["approval"]["approved_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_approval["approval"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_write_execution_final_approval["approval"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_review_id"
+        ]
+        == artifact_write_execution_final_write_execution_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_approval["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_payload_hash"
+        ]
+        == artifact_write_execution_final_write_execution_dry_run_review["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_approval["approval_scope"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_approval["approval_scope"][
+            "expected_confirmation_token"
+        ]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_PREFLIGHT"
+    )
+    assert artifact_write_execution_final_write_execution_final_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["approval_scope"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["approval_scope"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["approval_scope"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["approval_scope"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["approval_scope"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_approvals = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approvals(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_approvals[0]["id"]
+        == artifact_write_execution_final_write_execution_final_approval["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_approvals[0]["approval"]["approved_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_execution_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight(
+            artifact_write_execution_final_write_execution_final_approval_id=blocked_artifact_write_execution_final_write_execution_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=(
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_PREFLIGHT"
+            ),
+            note="blocked final approval cannot enter final preflight",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_preflight["stage"] == "V5.6-P117"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_preflight["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_approval_accepted"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_preflight["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_preflight["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_preflight["decision"]["training_started_now"] is False
+
+    token_blocked_artifact_write_execution_final_write_execution_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight(
+            artifact_write_execution_final_write_execution_final_approval_id=artifact_write_execution_final_write_execution_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=None,
+            note="missing token must block final preflight",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_final_preflight["stage"] == "V5.6-P117"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_preflight["preflight"][
+            "confirmation_token_matched"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_preflight["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_final_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_final_preflight["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_final_preflight["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_execution_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight(
+            artifact_write_execution_final_write_execution_final_approval_id=artifact_write_execution_final_write_execution_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=(
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_PREFLIGHT"
+            ),
+            note="preflight final-write execution final dry-run metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_preflight["stage"] == "V5.6-P117"
+    assert (
+        artifact_write_execution_final_write_execution_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_ready"
+    )
+    assert artifact_write_execution_final_write_execution_final_preflight["preflight"]["requested_by"] == "tester"
+    assert artifact_write_execution_final_write_execution_final_preflight["preflight"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_write_execution_final_preflight["preflight"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_approval_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_preflight["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_payload_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_approval["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_preflight[
+            "artifact_write_execution_final_write_execution_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_preflight[
+            "artifact_write_execution_final_write_execution_final_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_DRY_RUN"
+    )
+    assert artifact_write_execution_final_write_execution_final_preflight["artifact_write_execution_final_write_execution_final_preflight"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["artifact_write_execution_final_write_execution_final_preflight"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["artifact_write_execution_final_write_execution_final_preflight"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["artifact_write_execution_final_write_execution_final_preflight"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["artifact_write_execution_final_write_execution_final_preflight"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["artifact_write_execution_final_write_execution_final_preflight"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_preflights = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflights(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_preflights[0]["id"]
+        == artifact_write_execution_final_write_execution_final_preflight["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_execution_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run(
+            artifact_write_execution_final_write_execution_final_preflight_event_id=blocked_artifact_write_execution_final_write_execution_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=(
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_DRY_RUN"
+            ),
+            note="blocked final preflight cannot enter final dry-run",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run["stage"] == "V5.6-P118"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_dry_run["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_preflight_ready"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"]["training_started_now"] is False
+
+    token_blocked_artifact_write_execution_final_write_execution_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run(
+            artifact_write_execution_final_write_execution_final_preflight_event_id=artifact_write_execution_final_write_execution_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=None,
+            note="missing token must block final dry-run",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_final_dry_run["stage"] == "V5.6-P118"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_dry_run["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_dry_run["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_final_dry_run["decision"]["can_start_training_now"] is False
+
+    artifact_write_execution_final_write_execution_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run(
+            artifact_write_execution_final_write_execution_final_preflight_event_id=artifact_write_execution_final_write_execution_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=(
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_DRY_RUN"
+            ),
+            note="simulate final-write execution final output metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_run["stage"] == "V5.6-P118"
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_completed"
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert artifact_write_execution_final_write_execution_final_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_write_execution_final_dry_run["dry_run"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_preflight_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_payload_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_preflight["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_payload_hash"
+        ]
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_run["evidence"]["artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"]
+    assert artifact_write_execution_final_write_execution_final_dry_run["evidence"]["simulated_artifact_write_execution_final_write_execution_final_payload_hash"]
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_review"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_dry_run"
+        ]["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_dry_run"
+        ]["artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"]
+        == artifact_write_execution_final_write_execution_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_run["artifact_write_execution_final_write_execution_final_dry_run"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["artifact_write_execution_final_write_execution_final_dry_run"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["artifact_write_execution_final_write_execution_final_dry_run"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["artifact_write_execution_final_write_execution_final_dry_run"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["artifact_write_execution_final_write_execution_final_dry_run"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["artifact_write_execution_final_write_execution_final_dry_run"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_review_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_dry_runs = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_runs(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_runs[0]["id"]
+        == artifact_write_execution_final_write_execution_final_dry_run["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    p119_expected_decision = (
+        "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_dry_run_event_id=blocked_artifact_write_execution_final_write_execution_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision=p119_expected_decision,
+            note="blocked dry-run cannot enter final-final approval review",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run_review["stage"] == "V5.6-P119"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_dry_run_review["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_dry_run_completed"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["training_started_now"] is False
+
+    decision_blocked_artifact_write_execution_final_write_execution_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision="unexpected_final_final_approval_decision",
+            note="unexpected review decision must block final-final approval request",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_dry_run_review["stage"] == "V5.6-P119"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_blocked"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_final_dry_run_review["checks"]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["training_started_now"] is False
+
+    artifact_write_execution_final_write_execution_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision=p119_expected_decision,
+            note="accept final-write execution final dry-run for final-final approval metadata",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["stage"] == "V5.6-P119"
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_accepted"
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["review"]["reviewed_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_review["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_payload_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_dry_run_review"
+        ]["artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"]
+        == artifact_write_execution_final_write_execution_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["artifact_write_execution_final_write_execution_final_dry_run_review"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["artifact_write_execution_final_write_execution_final_dry_run_review"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["artifact_write_execution_final_write_execution_final_dry_run_review"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["artifact_write_execution_final_write_execution_final_dry_run_review"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["artifact_write_execution_final_write_execution_final_dry_run_review"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["artifact_write_execution_final_write_execution_final_dry_run_review"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["artifact_write_execution_final_write_execution_final_dry_run_review"]["requires_manual_final_final_approval"] is True
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_dry_run_reviews = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_reviews(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_dry_run_reviews[0]["id"]
+        == artifact_write_execution_final_write_execution_final_dry_run_review["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    p120_expected_decision = (
+        "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight"
+    )
+    p120_expected_token = (
+        "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval(
+            artifact_write_execution_final_write_execution_final_dry_run_review_id=blocked_artifact_write_execution_final_write_execution_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=p120_expected_decision,
+            confirmation_token=p120_expected_token,
+            note="blocked P119 review cannot enter final-final preflight approval",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_approval["stage"] == "V5.6-P120"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_approval["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_dry_run_review_accepted"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["training_started_now"] is False
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval(
+            artifact_write_execution_final_write_execution_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=p120_expected_decision,
+            confirmation_token=None,
+            note="missing token must block final-final approval",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_approval["stage"] == "V5.6-P120"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_approval["approval"][
+            "confirmation_token_matched"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_approval["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["can_start_training_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["training_started_now"] is False
+
+    decision_blocked_artifact_write_execution_final_write_execution_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval(
+            artifact_write_execution_final_write_execution_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision="unexpected_final_final_preflight_decision",
+            confirmation_token=p120_expected_token,
+            note="unexpected approval decision must block final-final preflight",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_final_approval["stage"] == "V5.6-P120"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_blocked"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_final_final_approval["checks"]
+    }
+    assert check_status["approval_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["can_start_training_now"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_final_approval["decision"]["training_started_now"] is False
+
+    artifact_write_execution_final_write_execution_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval(
+            artifact_write_execution_final_write_execution_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=p120_expected_decision,
+            confirmation_token=p120_expected_token,
+            note="approve final-write execution final evidence for final-final preflight metadata",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_final_approval["stage"] == "V5.6-P120"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_accepted"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_approval["approval"]["approved_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_approval["approval"]["confirmation_token_matched"] is True
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_review_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approval["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_payload_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_dry_run_review["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approval["approval_scope"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approval["approval_scope"][
+            "expected_confirmation_token"
+        ]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_PREFLIGHT"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approval["approval_scope"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["approval_scope"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["approval_scope"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["approval_scope"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["approval_scope"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["approval_scope"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["approval_scope"]["requires_manual_final_final_preflight"] is True
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_approval["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_approvals = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approvals(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_approvals[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_approval["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_approvals[0]["approval"]["approved_by"] == "tester"
+
+    p121_expected_token = (
+        "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_PREFLIGHT"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_approval_id=blocked_artifact_write_execution_final_write_execution_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=p121_expected_token,
+            note="blocked final-final approval cannot enter final-final preflight",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_preflight["stage"] == "V5.6-P121"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_preflight["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_final_approval_accepted"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"]["training_started_now"] is False
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_approval_id=artifact_write_execution_final_write_execution_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final preflight",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_preflight["stage"] == "V5.6-P121"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_preflight["preflight"][
+            "confirmation_token_matched"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_preflight["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"]["can_start_training_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_preflight["decision"]["training_started_now"] is False
+
+    artifact_write_execution_final_write_execution_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_approval_id=artifact_write_execution_final_write_execution_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=p121_expected_token,
+            note="prepare final-final dry-run metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_final_preflight["stage"] == "V5.6-P121"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_ready"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_preflight["preflight"]["requested_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight["preflight"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_approval_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_payload_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_approval["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_DRY_RUN"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_preflight"
+        ]["artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"]
+        == artifact_write_execution_final_write_execution_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_preflight["artifact_write_execution_final_write_execution_final_final_preflight"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["artifact_write_execution_final_write_execution_final_final_preflight"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["artifact_write_execution_final_write_execution_final_final_preflight"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["artifact_write_execution_final_write_execution_final_final_preflight"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["artifact_write_execution_final_write_execution_final_final_preflight"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["artifact_write_execution_final_write_execution_final_final_preflight"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["artifact_write_execution_final_write_execution_final_final_preflight"]["preflight_only"] is True
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_preflight"
+        ]["requires_manual_final_write_execution_final_final_dry_run"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_preflights = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflights(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_preflights[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_preflight["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    p122_expected_token = (
+        "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_DRY_RUN"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_preflight_event_id=blocked_artifact_write_execution_final_write_execution_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=p122_expected_token,
+            note="blocked final-final preflight cannot enter final-final dry-run",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run["stage"] == "V5.6-P122"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_dry_run["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_final_preflight_ready"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["training_started_now"] is False
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_preflight_event_id=artifact_write_execution_final_write_execution_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final dry-run",
+        )
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_dry_run["stage"] == "V5.6-P122"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_dry_run["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_dry_run["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["writes_file"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["can_start_training_now"] is False
+    assert token_blocked_artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["training_started_now"] is False
+
+    artifact_write_execution_final_write_execution_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_preflight_event_id=artifact_write_execution_final_write_execution_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=p122_expected_token,
+            note="simulate final-final dry-run metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["stage"] == "V5.6-P122"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_completed"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["dry_run"]["record_bodies_included"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_preflight_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"
+        ]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["evidence"][
+        "artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"
+    ]
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["evidence"][
+        "simulated_artifact_write_execution_final_write_execution_final_final_payload_hash"
+    ]
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_review"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_dry_run"
+        ]["artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"]
+        == artifact_write_execution_final_write_execution_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["artifact_write_execution_final_write_execution_final_final_dry_run"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["artifact_write_execution_final_write_execution_final_final_dry_run"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["artifact_write_execution_final_write_execution_final_final_dry_run"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["artifact_write_execution_final_write_execution_final_final_dry_run"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["artifact_write_execution_final_write_execution_final_final_dry_run"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["artifact_write_execution_final_write_execution_final_final_dry_run"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["artifact_write_execution_final_write_execution_final_final_dry_run"]["dry_run_only"] is True
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_dry_run"
+        ]["requires_manual_final_final_dry_run_review"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_dry_runs = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_runs(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_runs[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_dry_run["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    p123_expected_decision = (
+        "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_dry_run_event_id=blocked_artifact_write_execution_final_write_execution_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision=p123_expected_decision,
+            note="blocked final-final dry-run cannot enter final-final dry-run review",
+        )
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["stage"] == "V5.6-P123"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_final_dry_run_completed"] == "blocked"
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["model_artifact_written"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["writes_file"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["training_started_now"] is False
+
+    decision_blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision="unexpected_final_final_final_approval_decision",
+            note="unexpected decision must block final-final dry-run review",
+        )
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["stage"] == "V5.6-P123"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_blocked"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review[
+            "checks"
+        ]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval_now"
+        ]
+        is False
+    )
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["writes_file"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["training_started_now"] is False
+
+    artifact_write_execution_final_write_execution_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision=p123_expected_decision,
+            note="accept final-final dry-run metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["stage"] == "V5.6-P123"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_accepted"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["review"]["reviewed_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["artifact_write_execution_final_write_execution_final_final_dry_run_review"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["artifact_write_execution_final_write_execution_final_final_dry_run_review"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["artifact_write_execution_final_write_execution_final_final_dry_run_review"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["artifact_write_execution_final_write_execution_final_final_dry_run_review"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["artifact_write_execution_final_write_execution_final_final_dry_run_review"]["training_started_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["artifact_write_execution_final_write_execution_final_final_dry_run_review"]["model_artifact_written"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_dry_run_review"
+        ]["requires_manual_final_final_final_approval"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["can_write_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["model_artifact_written"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["can_execute_dataset2_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_dry_run_reviews = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_reviews(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_dry_run_reviews[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_dry_run_review["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_dry_run_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    p124_expected_decision = (
+        "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight"
+    )
+    p124_expected_token = (
+        "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_dry_run_review_id=blocked_artifact_write_execution_final_write_execution_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=p124_expected_decision,
+            confirmation_token=p124_expected_token,
+            note="blocked final-final dry-run review cannot enter final-final-final approval",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_approval["stage"]
+        == "V5.6-P124"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_approval["checks"]
+    }
+    assert (
+        check_status["artifact_write_execution_final_write_execution_final_final_dry_run_review_accepted"]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_final_approval["decision"]["writes_file"] is False
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_approval["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_approval["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_approval["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=p124_expected_decision,
+            confirmation_token=None,
+            note="missing token must block final-final-final approval",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_approval["stage"]
+        == "V5.6-P124"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_approval["approval"][
+            "confirmation_token_matched"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_approval["checks"]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight_now"
+        ]
+        is False
+    )
+
+    decision_blocked_artifact_write_execution_final_write_execution_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision="unexpected_final_final_final_preflight_decision",
+            confirmation_token=p124_expected_token,
+            note="unexpected decision must block final-final-final approval",
+        )
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_approval["stage"]
+        == "V5.6-P124"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_blocked"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_final_final_final_approval[
+            "checks"
+        ]
+    }
+    assert check_status["approval_decision_allowed"] == "blocked"
+    assert decision_blocked_artifact_write_execution_final_write_execution_final_final_final_approval["decision"]["writes_file"] is False
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_approval["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            approval_decision=p124_expected_decision,
+            confirmation_token=p124_expected_token,
+            note="approve final-final-final preflight metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["stage"] == "V5.6-P124"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_accepted"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["approval"]["approved_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["approval"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_review_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_payload_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_dry_run_review["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["approval_scope"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["approval_scope"][
+            "expected_confirmation_token"
+        ]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["approval_scope"][
+            "requires_manual_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["approval_scope"]["writes_file_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["approval_scope"]["persists_model_body_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["approval_scope"]["executes_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["approval_scope"]["training_started_now"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_approvals = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approvals(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_approvals[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_approval["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_approvals[0]["approval"]["approved_by"] == "tester"
+
+    p125_expected_token = (
+        "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_approval_id=blocked_artifact_write_execution_final_write_execution_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=p125_expected_token,
+            note="blocked final-final-final approval cannot enter preflight",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["stage"]
+        == "V5.6-P125"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["checks"]
+    }
+    assert (
+        check_status["artifact_write_execution_final_write_execution_final_final_final_approval_accepted"]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["decision"]["writes_file"] is False
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_approval_id=artifact_write_execution_final_write_execution_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final preflight",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["stage"]
+        == "V5.6-P125"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["preflight"][
+            "confirmation_token_matched"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_preflight[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_now"
+        ]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_approval_id=artifact_write_execution_final_write_execution_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=p125_expected_token,
+            note="preflight final-final-final dry-run metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_preflight["stage"] == "V5.6-P125"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_ready"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_preflight["preflight"]["requested_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight["preflight"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_approval_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_payload_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_approval["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]["preflight_only"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]["requires_manual_final_write_execution_final_final_final_dry_run"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]["writes_model_artifact_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]["writes_file_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]["executes_training_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]["training_started_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_preflight["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_preflight["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_preflights = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflights(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_preflights[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_preflight["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    p126_expected_token = (
+        "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_preflight_event_id=blocked_artifact_write_execution_final_write_execution_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=p126_expected_token,
+            note="blocked final-final-final preflight cannot enter dry-run",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["stage"]
+        == "V5.6-P126"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["checks"]
+    }
+    assert (
+        check_status["artifact_write_execution_final_write_execution_final_final_final_preflight_ready"]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"]["writes_file"] is False
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_preflight_event_id=artifact_write_execution_final_write_execution_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final dry-run",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["stage"]
+        == "V5.6-P126"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_preflight_event_id=artifact_write_execution_final_write_execution_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=p126_expected_token,
+            note="simulate final-final-final artifact output metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run["stage"] == "V5.6-P126"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_completed"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_preflight_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_preflight["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run["evidence"][
+        "artifact_write_execution_final_write_execution_final_final_final_dry_run_manifest_hash"
+    ]
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run["evidence"][
+        "simulated_artifact_write_execution_final_write_execution_final_final_final_payload_hash"
+    ]
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run"
+        ]["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run"
+        ]["dry_run_only"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run"
+        ]["requires_manual_final_final_final_dry_run_review"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run"
+        ]["writes_model_artifact_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run"
+        ]["writes_file_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run"
+        ]["executes_training_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run"
+        ]["training_started_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"]["writes_file"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_dry_runs = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_runs(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_runs[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_dry_run["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_dry_run_event_id=blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            note="blocked final-final-final dry-run cannot be accepted",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review["stage"]
+        == "V5.6-P127"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+            "checks"
+        ]
+    }
+    assert (
+        check_status["artifact_write_execution_final_write_execution_final_final_final_dry_run_completed"]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_now"
+        ]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+
+    decision_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision="rejected_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval",
+            note="unexpected review decision must block",
+        )
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review["stage"]
+        == "V5.6-P127"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+            "checks"
+        ]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            note="accept final-final-final dry-run metadata only",
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review["stage"]
+        == "V5.6-P127"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_accepted"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run_review["review"]["reviewed_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review"
+        ]["requires_manual_final_final_final_final_approval"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review"
+        ]["writes_model_artifact_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review"
+        ]["writes_file_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review"
+        ]["executes_training_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run_review["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_review["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_dry_run_reviews = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_reviews(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_reviews[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_dry_run_reviews[0]["review"][
+            "reviewed_by"
+        ]
+        == "tester"
+    )
+
+    p128_expected_token = (
+        "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_final_dry_run_review_id=blocked_artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            confirmation_token=p128_expected_token,
+            note="blocked final-final-final dry-run review cannot be approved",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval["stage"]
+        == "V5.6-P128"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval["decision"]["writes_file"] is False
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final-final approval",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval["stage"]
+        == "V5.6-P128"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval[
+            "approval"
+        ]["confirmation_token_matched"]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            confirmation_token=p128_expected_token,
+            note="approve final-final-final-final preflight metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_approval["stage"] == "V5.6-P128"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_accepted"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_approval["approval"]["approved_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["approval"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["approval_scope"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["approval_scope"][
+            "expected_confirmation_token"
+        ]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["approval_scope"][
+            "requires_manual_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_approval["approval_scope"]["writes_file_now"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["approval_scope"][
+            "executes_training_now"
+        ]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_approval["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approval["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_approval["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_approvals = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approvals(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approvals[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_approvals[0]["approval"][
+            "approved_by"
+        ]
+        == "tester"
+    )
+
+    p129_expected_token = (
+        "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_final_approval_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=p129_expected_token,
+            note="blocked final-final-final-final approval cannot enter preflight",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight["stage"]
+        == "V5.6-P129"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_approval_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight["decision"]["writes_file"] is False
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_final_approval_id=artifact_write_execution_final_write_execution_final_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final-final preflight",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight["stage"]
+        == "V5.6-P129"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "preflight"
+        ]["confirmation_token_matched"]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_final_approval_id=artifact_write_execution_final_write_execution_final_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=p129_expected_token,
+            note="preflight final-final-final-final dry-run metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_preflight["stage"] == "V5.6-P129"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_ready"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight["preflight"][
+            "requested_by"
+        ]
+        == "tester"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight["preflight"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_approval_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+        ]["preflight_only"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+        ]["requires_manual_final_write_execution_final_final_final_final_dry_run"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+        ]["writes_model_artifact_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+        ]["writes_file_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+        ]["executes_training_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_preflight["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflight["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_preflights = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflights(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflights[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_preflights[0]["preflight"][
+            "requested_by"
+        ]
+        == "tester"
+    )
+
+    p130_expected_token = (
+        "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_final_preflight_event_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=p130_expected_token,
+            note="blocked final-final-final-final preflight cannot run dry-run",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run["stage"]
+        == "V5.6-P130"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight_ready"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run["decision"]["writes_file"] is False
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_final_preflight_event_id=artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final-final dry-run",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run["stage"]
+        == "V5.6-P130"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "dry_run"
+        ]["confirmation_token_matched"]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_final_preflight_event_id=artifact_write_execution_final_write_execution_final_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=p130_expected_token,
+            note="simulate final-final-final-final artifact output metadata only",
+        )
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_dry_run["stage"] == "V5.6-P130"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_completed"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_final_final_payload_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+        ]["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+        ]["dry_run_only"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+        ]["requires_manual_final_final_final_final_dry_run_review"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+        ]["writes_model_artifact_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+        ]["writes_file_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+        ]["executes_training_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_dry_run["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_dry_runs = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_runs(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_runs[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_dry_run["event_id"]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_final_dry_run_event_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            note="blocked final-final-final-final dry-run cannot be accepted",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["stage"]
+        == "V5.6-P131"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_completed"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_now"]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+
+    decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision="rejected_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval",
+            note="unexpected review decision must block",
+        )
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "stage"
+        ]
+        == "V5.6-P131"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "checks"
+        ]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            note="accept final-final-final-final dry-run metadata only",
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["stage"]
+        == "V5.6-P131"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_accepted"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["review"][
+            "reviewed_by"
+        ]
+        == "tester"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review"
+        ]["requires_manual_final_final_final_final_final_approval"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review"
+        ]["writes_model_artifact_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review"
+        ]["writes_file_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review"
+        ]["executes_training_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_dry_run_reviews = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_reviews(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_reviews[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_dry_run_reviews[0]["review"][
+            "reviewed_by"
+        ]
+        == "tester"
+    )
+
+    p132_expected_token = (
+        "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            confirmation_token=p132_expected_token,
+            note="blocked final-final-final-final dry-run review cannot be approved",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval["stage"]
+        == "V5.6-P132"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_now"]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final-final-final approval",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval["stage"]
+        == "V5.6-P132"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval[
+            "approval"
+        ]["confirmation_token_matched"]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            confirmation_token=p132_expected_token,
+            note="approve final-final-final-final-final preflight metadata only",
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["stage"]
+        == "V5.6-P132"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_accepted"
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_approval["approval"]["approved_by"] == "tester"
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["approval"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["approval_scope"][
+            "allowed_next_stage"
+        ]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["approval_scope"][
+            "expected_confirmation_token"
+        ]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["approval_scope"][
+            "requires_manual_final_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_approval["approval_scope"]["writes_file_now"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_approval["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approval["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_approval["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_final_approvals = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approvals(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approvals[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_approvals[0]["approval"][
+            "approved_by"
+        ]
+        == "tester"
+    )
+
+    p133_expected_token = (
+        "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_approval_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=p133_expected_token,
+            note="blocked final-final-final-final-final approval cannot enter preflight",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["stage"]
+        == "V5.6-P133"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_approval_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_now"]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_approval_id=artifact_write_execution_final_write_execution_final_final_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final-final-final preflight",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["stage"]
+        == "V5.6-P133"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "preflight"
+        ]["confirmation_token_matched"]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_approval_id=artifact_write_execution_final_write_execution_final_final_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=p133_expected_token,
+            note="preflight final-final-final-final-final dry-run metadata only",
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["stage"]
+        == "V5.6-P133"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_ready"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["preflight"][
+            "requested_by"
+        ]
+        == "tester"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["preflight"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_approval_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+        ]["preflight_only"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+        ]["requires_manual_final_write_execution_final_final_final_final_final_dry_run"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+        ]["writes_model_artifact_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_final_preflights = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflights(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflights[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_preflights[0]["preflight"][
+            "requested_by"
+        ]
+        == "tester"
+    )
+
+    p134_expected_token = (
+        "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_event_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=p134_expected_token,
+            note="blocked final-final-final-final-final preflight cannot enter dry-run",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["stage"]
+        == "V5.6-P134"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_ready"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_now"]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_event_id=artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final-final-final dry-run",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["stage"]
+        == "V5.6-P134"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run[
+            "dry_run"
+        ]["confirmation_token_matched"]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_event_id=artifact_write_execution_final_write_execution_final_final_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=p134_expected_token,
+            note="simulate final-final-final-final-final artifact output only",
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["stage"]
+        == "V5.6-P134"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_completed"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["dry_run"][
+            "simulated_by"
+        ]
+        == "tester"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["evidence"][
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_manifest_hash"
+    ]
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["evidence"][
+        "simulated_artifact_write_execution_final_write_execution_final_final_final_final_final_payload_hash"
+    ]
+    dry_run_scope = artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run[
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run"
+    ]
+    assert (
+        dry_run_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review"
+    )
+    assert (
+        dry_run_scope["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval"
+    )
+    assert dry_run_scope["dry_run_only"] is True
+    assert dry_run_scope["requires_manual_final_final_final_final_final_dry_run_review"] is True
+    assert dry_run_scope["writes_model_artifact_now"] is False
+    assert (
+        dry_run_scope[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_final_dry_runs = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_runs(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_runs[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_runs[0]["dry_run"][
+            "simulated_by"
+        ]
+        == "tester"
+    )
+
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_event_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            note="blocked final-final-final-final-final dry-run cannot enter review acceptance",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["stage"]
+        == "V5.6-P135"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_completed"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_now"]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+
+    decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision="reject_for_now",
+            note="wrong review decision must block final-final-final-final-final dry-run review",
+        )
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+            "stage"
+        ]
+        == "V5.6-P135"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+            "checks"
+        ]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            note="review final-final-final-final-final dry-run evidence only",
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["stage"]
+        == "V5.6-P135"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_accepted"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["review"][
+            "reviewed_by"
+        ]
+        == "tester"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    review_scope = artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review"
+    ]
+    assert (
+        review_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval"
+    )
+    assert (
+        review_scope["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL"
+    )
+    assert review_scope["requires_manual_final_final_final_final_final_final_approval"] is True
+    assert review_scope["writes_model_artifact_now"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_reviews = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_reviews(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_reviews[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_reviews[0]["review"][
+            "reviewed_by"
+        ]
+        == "tester"
+    )
+
+    p136_expected_token = (
+        "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            confirmation_token=p136_expected_token,
+            note="blocked final-final-final-final-final dry-run review cannot enter approval",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["stage"]
+        == "V5.6-P136"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_now"]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final-final-final-final approval",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+            "stage"
+        ]
+        == "V5.6-P136"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+            "approval"
+        ]["confirmation_token_matched"]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review[
+                "event_id"
+            ],
+            approved_by="tester",
+            confirmation_token=p136_expected_token,
+            note="approve final-final-final-final-final-final preflight metadata only",
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["stage"]
+        == "V5.6-P136"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_accepted"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["approval"][
+            "approved_by"
+        ]
+        == "tester"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    approval_scope = artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+        "approval_scope"
+    ]
+    assert (
+        approval_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+    )
+    assert (
+        approval_scope["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    assert approval_scope["requires_manual_final_final_final_final_final_final_preflight"] is True
+    assert approval_scope["writes_model_artifact_now"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_approvals = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approvals(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approvals[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_approvals[0]["approval"][
+            "approved_by"
+        ]
+        == "tester"
+    )
+
+    p137_expected_token = (
+        "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=p137_expected_token,
+            note="blocked final-final-final-final-final-final approval cannot enter preflight",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["stage"]
+        == "V5.6-P137"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_now"]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_id=artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final-final-final-final preflight",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["stage"]
+        == "V5.6-P137"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "preflight"
+        ]["confirmation_token_matched"]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_id=artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval[
+                "event_id"
+            ],
+            requested_by="tester",
+            confirmation_token=p137_expected_token,
+            note="preflight final-final-final-final-final-final dry-run metadata only",
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["stage"]
+        == "V5.6-P137"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_ready"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["preflight"][
+            "requested_by"
+        ]
+        == "tester"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["preflight"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+        ]["preflight_only"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+        ]["requires_manual_final_write_execution_final_final_final_final_final_final_dry_run"]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+        ]["writes_model_artifact_now"]
+        is False
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflights = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflights(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflights[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflights[0]["preflight"][
+            "requested_by"
+        ]
+        == "tester"
+    )
+
+    p138_expected_token = (
+        "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_event_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=p138_expected_token,
+            note="blocked final-final-final-final-final-final preflight cannot enter dry-run",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["stage"]
+        == "V5.6-P138"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_ready"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_now"]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+
+    token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_event_id=artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=None,
+            note="missing token must block final-final-final-final-final-final dry-run",
+        )
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["stage"]
+        == "V5.6-P138"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_blocked"
+    )
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run[
+            "dry_run"
+        ]["confirmation_token_matched"]
+        is False
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run[
+            "checks"
+        ]
+    }
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        token_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_event_id=artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight[
+                "event_id"
+            ],
+            simulated_by="tester",
+            confirmation_token=p138_expected_token,
+            note="simulate final-final-final-final-final-final artifact output only",
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["stage"]
+        == "V5.6-P138"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_completed"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["dry_run"][
+            "simulated_by"
+        ]
+        == "tester"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["evidence"][
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_manifest_hash"
+    ]
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["evidence"][
+        "simulated_artifact_write_execution_final_write_execution_final_final_final_final_final_final_payload_hash"
+    ]
+    dry_run_scope = artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run[
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run"
+    ]
+    assert (
+        dry_run_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review"
+    )
+    assert (
+        dry_run_scope["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval"
+    )
+    assert dry_run_scope["dry_run_only"] is True
+    assert dry_run_scope["requires_manual_final_final_final_final_final_final_dry_run_review"] is True
+    assert dry_run_scope["writes_model_artifact_now"] is False
+    assert (
+        dry_run_scope[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_runs = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_runs(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_runs[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_runs[0]["dry_run"][
+            "simulated_by"
+        ]
+        == "tester"
+    )
+
+    blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_event_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            note="blocked final-final-final-final-final-final dry-run cannot be accepted",
+        )
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "stage"
+        ]
+        == "V5.6-P139"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_completed"
+        ]
+        == "blocked"
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_now"]
+        is False
+    )
+    assert (
+        blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+
+    decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            review_decision="rejected_for_test",
+            note="wrong decision must block final-final-final-final-final-final dry-run review",
+        )
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "stage"
+        ]
+        == "V5.6-P139"
+    )
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "checks"
+        ]
+    }
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        decision_blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_now"]
+        is False
+    )
+
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review = (
+        service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review(
+            artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_event_id=artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run[
+                "event_id"
+            ],
+            reviewed_by="tester",
+            note="accept final-final-final-final-final-final dry-run for next approval",
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["stage"]
+        == "V5.6-P139"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_accepted"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["review"][
+            "reviewed_by"
+        ]
+        == "tester"
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_event_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    review_scope = artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review"
+    ]
+    assert (
+        review_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval"
+    )
+    assert (
+        review_scope["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL"
+    )
+    assert review_scope["requires_manual_final_final_final_final_final_final_final_approval"] is True
+    assert review_scope["writes_model_artifact_now"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_now"
+        ]
+        is True
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["decision"]["writes_file"] is False
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["decision"]["can_start_training_now"] is False
+    assert artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_reviews = (
+        service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_reviews(
+            limit=3
+        )
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_reviews[0]["id"]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review["event_id"]
+    )
+    assert (
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_reviews[0]["review"][
+            "reviewed_by"
+        ]
+        == "tester"
+    )
+
+    p140_blocked_approval = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_id=blocked_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL",
+        note="blocked dry-run review cannot be approved",
+    )
+    assert p140_blocked_approval["stage"] == "V5.6-P140"
+    assert (
+        p140_blocked_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p140_blocked_approval["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        p140_blocked_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert p140_blocked_approval["decision"]["writes_file"] is False
+    assert p140_blocked_approval["decision"]["writes_learning_samples_now"] is False
+
+    p140_token_blocked_approval = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        confirmation_token="WRONG_TOKEN",
+        note="wrong token must block approval",
+    )
+    assert (
+        p140_token_blocked_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p140_token_blocked_approval["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        p140_token_blocked_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is False
+    )
+
+    p140_approval = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_id=artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL",
+        note="approve final-final-final-final-final-final-final preflight metadata",
+    )
+    assert p140_approval["stage"] == "V5.6-P140"
+    assert (
+        p140_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_accepted"
+    )
+    assert p140_approval["approval"]["approved_by"] == "tester"
+    assert (
+        p140_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert p140_approval["approval"]["confirmation_token_matched"] is True
+    assert (
+        p140_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_id"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "event_id"
+        ]
+    )
+    assert (
+        p140_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review[
+            "evidence"
+        ][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        p140_approval["approval_scope"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight"
+    )
+    assert (
+        p140_approval["approval_scope"]["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    assert p140_approval["approval_scope"]["requires_manual_final_final_final_final_final_final_final_preflight"] is True
+    assert p140_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert (
+        p140_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        p140_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is True
+    )
+    assert p140_approval["decision"]["can_write_model_artifact_now"] is False
+    assert p140_approval["decision"]["writes_file"] is False
+    assert p140_approval["decision"]["writes_learning_samples_now"] is False
+    assert p140_approval["decision"]["can_start_training_now"] is False
+    assert p140_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    p140_approvals = service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approvals(
+        limit=3
+    )
+    assert p140_approvals[0]["id"] == p140_approval["event_id"]
+    assert p140_approvals[0]["approval"]["approved_by"] == "tester"
+
+    p141_blocked_preflight = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_id=p140_blocked_approval[
+            "event_id"
+        ],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT",
+        note="blocked approval cannot prepare preflight",
+    )
+    assert p141_blocked_preflight["stage"] == "V5.6-P141"
+    assert (
+        p141_blocked_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p141_blocked_preflight["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        p141_blocked_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_now"
+        ]
+        is False
+    )
+    assert p141_blocked_preflight["decision"]["writes_file"] is False
+    assert p141_blocked_preflight["decision"]["writes_learning_samples_now"] is False
+
+    p141_token_blocked_preflight = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_id=p140_approval[
+            "event_id"
+        ],
+        requested_by="tester",
+        confirmation_token="WRONG_TOKEN",
+        note="wrong token must block preflight",
+    )
+    assert (
+        p141_token_blocked_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p141_token_blocked_preflight["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        p141_token_blocked_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_now"
+        ]
+        is False
+    )
+
+    p141_preflight = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_id=p140_approval[
+            "event_id"
+        ],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT",
+        note="prepare final-final-final-final-final-final-final dry-run metadata",
+    )
+    assert p141_preflight["stage"] == "V5.6-P141"
+    assert (
+        p141_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_ready"
+    )
+    assert p141_preflight["preflight"]["requested_by"] == "tester"
+    assert p141_preflight["preflight"]["confirmation_token_matched"] is True
+    assert (
+        p141_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_id"
+        ]
+        == p140_approval["event_id"]
+    )
+    assert (
+        p141_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == p140_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    p141_scope = p141_preflight[
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight"
+    ]
+    assert (
+        p141_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run"
+    )
+    assert (
+        p141_scope["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    assert p141_scope["requires_manual_final_final_final_final_final_final_final_dry_run"] is True
+    assert p141_scope["writes_model_artifact_now"] is False
+    assert (
+        p141_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        p141_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_now"
+        ]
+        is True
+    )
+    assert p141_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert p141_preflight["decision"]["writes_file"] is False
+    assert p141_preflight["decision"]["writes_learning_samples_now"] is False
+    assert p141_preflight["decision"]["can_start_training_now"] is False
+    assert p141_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    p141_preflights = service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflights(
+        limit=3
+    )
+    assert p141_preflights[0]["id"] == p141_preflight["event_id"]
+    assert p141_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    p142_blocked_dry_run = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_event_id=p141_blocked_preflight[
+            "event_id"
+        ],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN",
+        note="blocked preflight cannot dry-run",
+    )
+    assert p142_blocked_dry_run["stage"] == "V5.6-P142"
+    assert (
+        p142_blocked_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p142_blocked_dry_run["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_ready"
+        ]
+        == "blocked"
+    )
+    assert (
+        p142_blocked_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert p142_blocked_dry_run["decision"]["writes_file"] is False
+    assert p142_blocked_dry_run["decision"]["writes_learning_samples_now"] is False
+
+    p142_token_blocked_dry_run = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_event_id=p141_preflight[
+            "event_id"
+        ],
+        simulated_by="tester",
+        confirmation_token="WRONG_TOKEN",
+        note="wrong token must block dry-run",
+    )
+    assert (
+        p142_token_blocked_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p142_token_blocked_dry_run["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        p142_token_blocked_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+
+    p142_dry_run = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_event_id=p141_preflight[
+            "event_id"
+        ],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN",
+        note="simulate final-final-final-final-final-final-final artifact output",
+    )
+    assert p142_dry_run["stage"] == "V5.6-P142"
+    assert (
+        p142_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_completed"
+    )
+    assert p142_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert p142_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert (
+        p142_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_event_id"
+        ]
+        == p141_preflight["event_id"]
+    )
+    assert bool(
+        p142_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert bool(
+        p142_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_payload_hash"
+        ]
+    )
+    p142_scope = p142_dry_run[
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run"
+    ]
+    assert (
+        p142_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review"
+    )
+    assert (
+        p142_scope["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval"
+    )
+    assert p142_scope["requires_manual_final_final_final_final_final_final_final_dry_run_review"] is True
+    assert p142_scope["writes_model_artifact_now"] is False
+    assert (
+        p142_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        p142_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_now"
+        ]
+        is True
+    )
+    assert p142_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert p142_dry_run["decision"]["writes_file"] is False
+    assert p142_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert p142_dry_run["decision"]["can_start_training_now"] is False
+    assert p142_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    p142_dry_runs = service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_runs(
+        limit=3
+    )
+    assert p142_dry_runs[0]["id"] == p142_dry_run["event_id"]
+    assert p142_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    p143_blocked_review = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_event_id=p142_blocked_dry_run[
+            "event_id"
+        ],
+        reviewed_by="tester",
+        note="blocked dry-run cannot be accepted",
+    )
+    assert p143_blocked_review["stage"] == "V5.6-P143"
+    assert (
+        p143_blocked_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p143_blocked_review["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_completed"
+        ]
+        == "blocked"
+    )
+    assert (
+        p143_blocked_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_now"
+        ]
+        is False
+    )
+    assert p143_blocked_review["decision"]["writes_file"] is False
+    assert p143_blocked_review["decision"]["writes_learning_samples_now"] is False
+
+    p143_decision_blocked_review = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_event_id=p142_dry_run[
+            "event_id"
+        ],
+        reviewed_by="tester",
+        review_decision="rejected_for_test",
+        note="wrong decision must block review",
+    )
+    assert (
+        p143_decision_blocked_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p143_decision_blocked_review["checks"]}
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        p143_decision_blocked_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_now"
+        ]
+        is False
+    )
+
+    p143_review = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_event_id=p142_dry_run[
+            "event_id"
+        ],
+        reviewed_by="tester",
+        note="accept final-final-final-final-final-final-final dry-run",
+    )
+    assert p143_review["stage"] == "V5.6-P143"
+    assert (
+        p143_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_accepted"
+    )
+    assert p143_review["review"]["reviewed_by"] == "tester"
+    assert (
+        p143_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval"
+        ]
+        is True
+    )
+    assert (
+        p143_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_event_id"
+        ]
+        == p142_dry_run["event_id"]
+    )
+    assert (
+        p143_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == p142_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    p143_scope = p143_review[
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review"
+    ]
+    assert (
+        p143_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval"
+    )
+    assert (
+        p143_scope["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL"
+    )
+    assert p143_scope["requires_manual_final_final_final_final_final_final_final_final_approval"] is True
+    assert p143_scope["writes_model_artifact_now"] is False
+    assert (
+        p143_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        p143_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_now"
+        ]
+        is True
+    )
+    assert p143_review["decision"]["can_write_model_artifact_now"] is False
+    assert p143_review["decision"]["writes_file"] is False
+    assert p143_review["decision"]["writes_learning_samples_now"] is False
+    assert p143_review["decision"]["can_start_training_now"] is False
+    assert p143_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    p143_reviews = service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_reviews(
+        limit=3
+    )
+    assert p143_reviews[0]["id"] == p143_review["event_id"]
+    assert p143_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    p144_blocked_approval = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_id=p143_blocked_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL",
+        note="blocked review cannot be approved",
+    )
+    assert p144_blocked_approval["stage"] == "V5.6-P144"
+    assert (
+        p144_blocked_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p144_blocked_approval["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        p144_blocked_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert p144_blocked_approval["decision"]["writes_file"] is False
+    assert p144_blocked_approval["decision"]["writes_learning_samples_now"] is False
+
+    p144_token_blocked_approval = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_id=p143_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        confirmation_token="WRONG_TOKEN",
+        note="wrong token must block approval",
+    )
+    assert (
+        p144_token_blocked_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p144_token_blocked_approval["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        p144_token_blocked_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is False
+    )
+
+    p144_approval = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_id=p143_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL",
+        note="approve final-final-final-final-final-final-final-final preflight",
+    )
+    assert p144_approval["stage"] == "V5.6-P144"
+    assert (
+        p144_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_accepted"
+    )
+    assert p144_approval["approval"]["approved_by"] == "tester"
+    assert (
+        p144_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert p144_approval["approval"]["confirmation_token_matched"] is True
+    assert (
+        p144_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_id"
+        ]
+        == p143_review["event_id"]
+    )
+    assert (
+        p144_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == p143_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    p144_scope = p144_approval["approval_scope"]
+    assert (
+        p144_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight"
+    )
+    assert (
+        p144_scope["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    assert p144_scope["requires_manual_final_final_final_final_final_final_final_final_preflight"] is True
+    assert p144_scope["writes_model_artifact_now"] is False
+    assert (
+        p144_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        p144_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is True
+    )
+    assert p144_approval["decision"]["can_write_model_artifact_now"] is False
+    assert p144_approval["decision"]["writes_file"] is False
+    assert p144_approval["decision"]["writes_learning_samples_now"] is False
+    assert p144_approval["decision"]["can_start_training_now"] is False
+    assert p144_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    p144_approvals = service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approvals(
+        limit=3
+    )
+    assert p144_approvals[0]["id"] == p144_approval["event_id"]
+    assert p144_approvals[0]["approval"]["approved_by"] == "tester"
+
+    p145_blocked_preflight = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_id=p144_blocked_approval[
+            "event_id"
+        ],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT",
+        note="blocked approval cannot preflight",
+    )
+    assert p145_blocked_preflight["stage"] == "V5.6-P145"
+    assert (
+        p145_blocked_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p145_blocked_preflight["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        p145_blocked_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_now"
+        ]
+        is False
+    )
+    assert p145_blocked_preflight["decision"]["writes_file"] is False
+    assert p145_blocked_preflight["decision"]["writes_learning_samples_now"] is False
+
+    p145_token_blocked_preflight = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_id=p144_approval[
+            "event_id"
+        ],
+        requested_by="tester",
+        confirmation_token="WRONG_TOKEN",
+        note="wrong token must block preflight",
+    )
+    assert (
+        p145_token_blocked_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p145_token_blocked_preflight["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        p145_token_blocked_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_now"
+        ]
+        is False
+    )
+
+    p145_preflight = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_id=p144_approval[
+            "event_id"
+        ],
+        requested_by="tester",
+        confirmation_token="PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT",
+        note="prepare final-final-final-final-final-final-final-final dry-run",
+    )
+    assert p145_preflight["stage"] == "V5.6-P145"
+    assert (
+        p145_preflight["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_ready"
+    )
+    assert p145_preflight["preflight"]["requested_by"] == "tester"
+    assert p145_preflight["preflight"]["confirmation_token_matched"] is True
+    assert (
+        p145_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_id"
+        ]
+        == p144_approval["event_id"]
+    )
+    assert (
+        p145_preflight["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == p144_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    p145_scope = p145_preflight[
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight"
+    ]
+    assert (
+        p145_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run"
+    )
+    assert (
+        p145_scope["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    assert p145_scope["requires_manual_final_final_final_final_final_final_final_final_dry_run"] is True
+    assert p145_scope["writes_model_artifact_now"] is False
+    assert (
+        p145_preflight["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_ready"
+        ]
+        is True
+    )
+    assert (
+        p145_preflight["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_now"
+        ]
+        is True
+    )
+    assert p145_preflight["decision"]["can_write_model_artifact_now"] is False
+    assert p145_preflight["decision"]["writes_file"] is False
+    assert p145_preflight["decision"]["writes_learning_samples_now"] is False
+    assert p145_preflight["decision"]["can_start_training_now"] is False
+    assert p145_preflight["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    p145_preflights = service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflights(
+        limit=3
+    )
+    assert p145_preflights[0]["id"] == p145_preflight["event_id"]
+    assert p145_preflights[0]["preflight"]["requested_by"] == "tester"
+
+    p146_blocked_dry_run = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_event_id=p145_blocked_preflight[
+            "event_id"
+        ],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN",
+        note="blocked preflight cannot dry-run",
+    )
+    assert p146_blocked_dry_run["stage"] == "V5.6-P146"
+    assert (
+        p146_blocked_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p146_blocked_dry_run["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_ready"
+        ]
+        == "blocked"
+    )
+    assert (
+        p146_blocked_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert p146_blocked_dry_run["decision"]["writes_file"] is False
+    assert p146_blocked_dry_run["decision"]["writes_learning_samples_now"] is False
+
+    p146_token_blocked_dry_run = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_event_id=p145_preflight[
+            "event_id"
+        ],
+        simulated_by="tester",
+        confirmation_token="WRONG_TOKEN",
+        note="wrong token must block dry-run",
+    )
+    assert (
+        p146_token_blocked_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p146_token_blocked_dry_run["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert (
+        p146_token_blocked_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+
+    p146_dry_run = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_event_id=p145_preflight[
+            "event_id"
+        ],
+        simulated_by="tester",
+        confirmation_token="RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN",
+        note="simulate final-final-final-final-final-final-final-final dry-run",
+    )
+    assert p146_dry_run["stage"] == "V5.6-P146"
+    assert (
+        p146_dry_run["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_completed"
+    )
+    assert p146_dry_run["dry_run"]["simulated_by"] == "tester"
+    assert p146_dry_run["dry_run"]["confirmation_token_matched"] is True
+    assert (
+        p146_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_event_id"
+        ]
+        == p145_preflight["event_id"]
+    )
+    assert bool(
+        p146_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert bool(
+        p146_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_payload_hash"
+        ]
+    )
+    p146_scope = p146_dry_run[
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run"
+    ]
+    assert (
+        p146_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review"
+    )
+    assert (
+        p146_scope["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval"
+    )
+    assert p146_scope["requires_manual_final_final_final_final_final_final_final_final_dry_run_review"] is True
+    assert p146_scope["writes_model_artifact_now"] is False
+    assert (
+        p146_dry_run["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_completed"
+        ]
+        is True
+    )
+    assert (
+        p146_dry_run["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_now"
+        ]
+        is True
+    )
+    assert p146_dry_run["decision"]["can_write_model_artifact_now"] is False
+    assert p146_dry_run["decision"]["writes_file"] is False
+    assert p146_dry_run["decision"]["writes_learning_samples_now"] is False
+    assert p146_dry_run["decision"]["can_start_training_now"] is False
+    assert p146_dry_run["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    p146_dry_runs = service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_runs(
+        limit=3
+    )
+    assert p146_dry_runs[0]["id"] == p146_dry_run["event_id"]
+    assert p146_dry_runs[0]["dry_run"]["simulated_by"] == "tester"
+
+    p147_blocked_review = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_event_id=p146_blocked_dry_run[
+            "event_id"
+        ],
+        reviewed_by="tester",
+        note="blocked dry-run cannot be accepted for approval",
+    )
+    assert p147_blocked_review["stage"] == "V5.6-P147"
+    assert (
+        p147_blocked_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p147_blocked_review["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_completed"
+        ]
+        == "blocked"
+    )
+    assert (
+        p147_blocked_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval_now"
+        ]
+        is False
+    )
+    assert p147_blocked_review["decision"]["writes_file"] is False
+    assert p147_blocked_review["decision"]["writes_learning_samples_now"] is False
+
+    p147_decision_blocked_review = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_event_id=p146_dry_run[
+            "event_id"
+        ],
+        reviewed_by="tester",
+        review_decision="rejected_for_test",
+        note="wrong review decision must block approval request",
+    )
+    assert (
+        p147_decision_blocked_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p147_decision_blocked_review["checks"]}
+    assert check_status["review_decision_allowed"] == "blocked"
+    assert (
+        p147_decision_blocked_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval_now"
+        ]
+        is False
+    )
+
+    p147_review = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_event_id=p146_dry_run[
+            "event_id"
+        ],
+        reviewed_by="tester",
+        note="accept final-final-final-final-final-final-final-final dry-run review",
+    )
+    assert p147_review["stage"] == "V5.6-P147"
+    assert (
+        p147_review["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_accepted"
+    )
+    assert p147_review["review"]["reviewed_by"] == "tester"
+    assert (
+        p147_review["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval"
+        ]
+        is True
+    )
+    assert (
+        p147_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_event_id"
+        ]
+        == p146_dry_run["event_id"]
+    )
+    assert (
+        p147_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == p146_dry_run["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        p147_review["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_payload_hash"
+        ]
+        == p146_dry_run["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_payload_hash"
+        ]
+    )
+    p147_scope = p147_review[
+        "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review"
+    ]
+    assert (
+        p147_scope["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval"
+    )
+    assert (
+        p147_scope["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL"
+    )
+    assert p147_scope["requires_manual_final_final_final_final_final_final_final_final_final_approval"] is True
+    assert p147_scope["writes_model_artifact_now"] is False
+    assert (
+        p147_review["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        is True
+    )
+    assert (
+        p147_review["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval_now"
+        ]
+        is True
+    )
+    assert p147_review["decision"]["can_write_model_artifact_now"] is False
+    assert p147_review["decision"]["writes_file"] is False
+    assert p147_review["decision"]["writes_learning_samples_now"] is False
+    assert p147_review["decision"]["can_start_training_now"] is False
+    assert p147_review["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    p147_reviews = service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_reviews(
+        limit=3
+    )
+    assert p147_reviews[0]["id"] == p147_review["event_id"]
+    assert p147_reviews[0]["review"]["reviewed_by"] == "tester"
+
+    p148_blocked_approval = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_id=p147_blocked_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL",
+        note="blocked P147 review cannot approve final-final-final-final-final-final-final-final-final preflight",
+    )
+    assert p148_blocked_approval["stage"] == "V5.6-P148"
+    assert (
+        p148_blocked_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p148_blocked_approval["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        p148_blocked_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert p148_blocked_approval["decision"]["can_write_model_artifact_now"] is False
+    assert p148_blocked_approval["decision"]["writes_file"] is False
+    assert p148_blocked_approval["decision"]["writes_learning_samples_now"] is False
+
+    p148_token_blocked_approval = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_id=p147_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        confirmation_token="WRONG_TOKEN",
+        note="wrong token must block final-final-final-final-final-final-final-final-final approval",
+    )
+    assert p148_token_blocked_approval["stage"] == "V5.6-P148"
+    assert (
+        p148_token_blocked_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval_blocked"
+    )
+    check_status = {check["name"]: check["status"] for check in p148_token_blocked_approval["checks"]}
+    assert check_status["confirmation_token_required"] == "blocked"
+    assert p148_token_blocked_approval["approval"]["confirmation_token_matched"] is False
+    assert (
+        p148_token_blocked_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is False
+    )
+
+    p148_approval = service.dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval(
+        artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_id=p147_review[
+            "event_id"
+        ],
+        approved_by="tester",
+        confirmation_token="APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL",
+        note="metadata-only approval for later final-final-final-final-final-final-final-final-final preflight",
+    )
+    assert p148_approval["stage"] == "V5.6-P148"
+    assert (
+        p148_approval["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval_accepted"
+    )
+    assert p148_approval["approval"]["approved_by"] == "tester"
+    assert (
+        p148_approval["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert p148_approval["approval"]["confirmation_token_matched"] is True
+    assert (
+        p148_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_id"
+        ]
+        == p147_review["event_id"]
+    )
+    assert (
+        p148_approval["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+        == p147_review["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        p148_approval["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_payload_hash"
+        ]
+        == p147_review["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_payload_hash"
+        ]
+    )
+    assert (
+        p148_approval["approval_scope"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_preflight"
+    )
+    assert (
+        p148_approval["approval_scope"]["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    assert p148_approval["approval_scope"]["requires_manual_final_final_final_final_final_final_final_final_final_preflight"] is True
+    assert p148_approval["approval_scope"]["writes_model_artifact_now"] is False
+    assert p148_approval["approval_scope"]["writes_file_now"] is False
+    assert p148_approval["approval_scope"]["executes_training_now"] is False
+    assert (
+        p148_approval["decision"][
+            "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval_accepted"
+        ]
+        is True
+    )
+    assert (
+        p148_approval["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is True
+    )
+    assert p148_approval["decision"]["can_write_model_artifact_now"] is False
+    assert p148_approval["decision"]["writes_file"] is False
+    assert p148_approval["decision"]["writes_learning_samples_now"] is False
+    assert p148_approval["decision"]["can_start_training_now"] is False
+    assert p148_approval["decision"]["training_started_now"] is False
+    assert test_db.fetch_one("SELECT COUNT(*) AS cnt FROM learning_samples")["cnt"] == learning_after_promotion
+    p148_approvals = service.list_dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approvals(
+        limit=3
+    )
+    assert p148_approvals[0]["id"] == p148_approval["event_id"]
+    assert p148_approvals[0]["approval"]["approved_by"] == "tester"
+
+    duplicate_apply = service.apply_learning_sample_promotion(
+        package_id=applied["package_id"],
+        preflight_event_id=promotion["event_id"],
+        promoted_by="tester",
+        confirmation_token="PROMOTE_DATASET2_LEARNING_SAMPLES",
+    )
+    assert duplicate_apply["status"] == "dataset2_learning_sample_promotion_blocked"
+    assert duplicate_apply["decision"]["writes_learning_samples_now"] is False
+    check_status = {check["name"]: check["status"] for check in duplicate_apply["checks"]}
+    assert check_status["learning_sample_source_ids_not_existing"] == "blocked"
 
 
 def test_dataset2_readiness_api_smoke(client, tmp_path):
@@ -9932,6 +20869,1255 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
         "/api/learning/dataset2/training-convergence-reviews",
         params={"limit": 3},
     )
+    automated_cleanup_apply = client.post(
+        "/api/learning/dataset2/staging/apply-automated-cleanup",
+        json={
+            "applied_by": "api-test",
+            "confirmation_token": "APPLY_DATASET2_STAGING_AUTOMATED_CLEANUP",
+        },
+    )
+    automated_cleanup_applications = client.get(
+        "/api/learning/dataset2/staging/automated-cleanup-applications",
+        params={"limit": 3},
+    )
+    post_cleanup_freeze_review = client.post(
+        "/api/learning/dataset2/staging/post-cleanup-training-freeze-review",
+        json={"reviewed_by": "api-test"},
+    )
+    post_cleanup_freeze_reviews = client.get(
+        "/api/learning/dataset2/staging/post-cleanup-training-freeze-reviews",
+        params={"limit": 3},
+    )
+    learning_sample_promotion_preflight = client.post(
+        "/api/learning/dataset2/staging/learning-sample-promotion-preflight",
+        json={"planned_by": "api-test"},
+    )
+    learning_sample_promotion_preflights = client.get(
+        "/api/learning/dataset2/staging/learning-sample-promotion-preflights",
+        params={"limit": 3},
+    )
+    learning_sample_promotion_apply = client.post(
+        "/api/learning/dataset2/staging/apply-learning-sample-promotion",
+        json={"promoted_by": "api-test"},
+    )
+    learning_sample_promotion_applications = client.get(
+        "/api/learning/dataset2/staging/learning-sample-promotion-applications",
+        params={"limit": 3},
+    )
+    post_promotion_freeze_review = client.post(
+        "/api/learning/dataset2/staging/post-promotion-training-freeze-review",
+        json={"reviewed_by": "api-test"},
+    )
+    post_promotion_freeze_reviews = client.get(
+        "/api/learning/dataset2/staging/post-promotion-training-freeze-reviews",
+        params={"limit": 3},
+    )
+    dataset2_training_run_plan = client.post(
+        "/api/learning/dataset2/training-run-plan",
+        json={"planned_by": "api-test"},
+    )
+    dataset2_training_run_plans = client.get(
+        "/api/learning/dataset2/training-run-plans",
+        params={"limit": 3},
+    )
+    dataset2_training_execution_approval = client.post(
+        "/api/learning/dataset2/training-execution-approval",
+        json={"approved_by": "api-test"},
+    )
+    dataset2_training_execution_approvals = client.get(
+        "/api/learning/dataset2/training-execution-approvals",
+        params={"limit": 3},
+    )
+    dataset2_training_dry_run = client.post(
+        "/api/learning/dataset2/training-dry-run",
+        json={"run_by": "api-test"},
+    )
+    dataset2_training_dry_runs = client.get(
+        "/api/learning/dataset2/training-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_training_dry_run_review = client.post(
+        "/api/learning/dataset2/training-dry-run-review",
+        json={"reviewed_by": "api-test"},
+    )
+    dataset2_training_dry_run_reviews = client.get(
+        "/api/learning/dataset2/training-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_plan = client.post(
+        "/api/learning/dataset2/controlled-training-execution-plan",
+        json={"planned_by": "api-test"},
+    )
+    dataset2_controlled_training_execution_plans = client.get(
+        "/api/learning/dataset2/controlled-training-execution-plans",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-execution-preflight",
+        json={"requested_by": "api-test"},
+    )
+    dataset2_controlled_training_execution_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-execution-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-execution-dry-run",
+        json={"simulated_by": "api-test"},
+    )
+    dataset2_controlled_training_execution_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-execution-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-execution-dry-run-review",
+        json={"reviewed_by": "api-test"},
+    )
+    dataset2_controlled_training_execution_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-execution-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_release_plan = client.post(
+        "/api/learning/dataset2/controlled-training-execution-release-plan",
+        json={"planned_by": "api-test"},
+    )
+    dataset2_controlled_training_execution_release_plans = client.get(
+        "/api/learning/dataset2/controlled-training-execution-release-plans",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_release_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-execution-release-preflight",
+        json={"requested_by": "api-test"},
+    )
+    dataset2_controlled_training_execution_release_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-execution-release-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_release_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-execution-release-dry-run",
+        json={"simulated_by": "api-test"},
+    )
+    dataset2_controlled_training_execution_release_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-execution-release-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_release_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-execution-release-dry-run-review",
+        json={"reviewed_by": "api-test"},
+    )
+    dataset2_controlled_training_execution_release_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-execution-release-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_final_approval = client.post(
+        "/api/learning/dataset2/controlled-training-execution-final-approval",
+        json={
+            "approved_by": "api-test",
+            "confirmation_token": "APPROVE_DATASET2_CONTROLLED_TRAINING_FINAL_EXECUTION",
+        },
+    )
+    dataset2_controlled_training_execution_final_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-execution-final-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_final_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-execution-final-preflight",
+        json={
+            "requested_by": "api-test",
+            "confirmation_token": "PREPARE_DATASET2_CONTROLLED_TRAINING_FINAL_PREFLIGHT",
+        },
+    )
+    dataset2_controlled_training_execution_final_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-execution-final-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_final_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-execution-final-dry-run",
+        json={
+            "simulated_by": "api-test",
+            "confirmation_token": "RUN_DATASET2_CONTROLLED_TRAINING_FINAL_DRY_RUN",
+        },
+    )
+    dataset2_controlled_training_execution_final_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-execution-final-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_final_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-execution-final-dry-run-review",
+        json={"reviewed_by": "api-test"},
+    )
+    dataset2_controlled_training_execution_final_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-execution-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_run_approval = client.post(
+        "/api/learning/dataset2/controlled-training-execution-run-approval",
+        json={
+            "approved_by": "api-test",
+            "confirmation_token": "APPROVE_DATASET2_CONTROLLED_TRAINING_EXECUTION_RUN",
+        },
+    )
+    dataset2_controlled_training_execution_run_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-execution-run-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_run_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-execution-run-preflight",
+        json={
+            "run_approval_id": dataset2_controlled_training_execution_run_approval.json().get("event_id"),
+            "requested_by": "api-test",
+            "confirmation_token": "PREPARE_DATASET2_CONTROLLED_TRAINING_EXECUTION_RUN_PREFLIGHT",
+        },
+    )
+    dataset2_controlled_training_execution_run_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-execution-run-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_run = client.post(
+        "/api/learning/dataset2/controlled-training-execution-run",
+        json={
+            "run_preflight_event_id": dataset2_controlled_training_execution_run_preflight.json().get("event_id"),
+            "run_by": "api-test",
+            "confirmation_token": "RUN_DATASET2_CONTROLLED_TRAINING_EXECUTION",
+        },
+    )
+    dataset2_controlled_training_execution_runs = client.get(
+        "/api/learning/dataset2/controlled-training-execution-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_execution_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-execution-run-review",
+        json={
+            "run_event_id": dataset2_controlled_training_execution_run.json().get("event_id"),
+            "reviewed_by": "api-test",
+        },
+    )
+    dataset2_controlled_training_execution_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-execution-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_plan = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-plan",
+        json={
+            "run_review_id": dataset2_controlled_training_execution_run_review.json().get("event_id"),
+            "planned_by": "api-test",
+        },
+    )
+    dataset2_controlled_training_artifact_plans = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-plans",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_plan_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-plan-approval",
+        json={
+            "artifact_plan_event_id": dataset2_controlled_training_artifact_plan.json().get("event_id"),
+            "approved_by": "api-test",
+            "confirmation_token": "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_PLAN",
+        },
+    )
+    dataset2_controlled_training_artifact_plan_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-plan-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-preflight",
+        json={
+            "artifact_plan_approval_id": dataset2_controlled_training_artifact_plan_approval.json().get("event_id"),
+            "requested_by": "api-test",
+            "confirmation_token": "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_PREFLIGHT",
+        },
+    )
+    dataset2_controlled_training_artifact_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-dry-run",
+        json={
+            "artifact_preflight_event_id": dataset2_controlled_training_artifact_preflight.json().get("event_id"),
+            "simulated_by": "api-test",
+            "confirmation_token": "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_DRY_RUN",
+        },
+    )
+    dataset2_controlled_training_artifact_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-dry-run-review",
+        json={
+            "artifact_dry_run_event_id": dataset2_controlled_training_artifact_dry_run.json().get("event_id"),
+            "reviewed_by": "api-test",
+        },
+    )
+    dataset2_controlled_training_artifact_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_release_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-release-approval",
+        json={
+            "artifact_dry_run_review_id": dataset2_controlled_training_artifact_dry_run_review.json().get("event_id"),
+            "approved_by": "api-test",
+            "confirmation_token": "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE",
+        },
+    )
+    dataset2_controlled_training_artifact_release_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-release-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_release_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-release-preflight",
+        json={
+            "artifact_release_approval_id": dataset2_controlled_training_artifact_release_approval.json().get("event_id"),
+            "requested_by": "api-test",
+            "confirmation_token": "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE_PREFLIGHT",
+        },
+    )
+    dataset2_controlled_training_artifact_release_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-release-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_release_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-release-dry-run",
+        json={
+            "artifact_release_preflight_event_id": dataset2_controlled_training_artifact_release_preflight.json().get("event_id"),
+            "simulated_by": "api-test",
+            "confirmation_token": "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_RELEASE_DRY_RUN",
+        },
+    )
+    dataset2_controlled_training_artifact_release_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-release-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_release_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-release-dry-run-review",
+        json={
+            "artifact_release_dry_run_event_id": dataset2_controlled_training_artifact_release_dry_run.json().get("event_id"),
+            "reviewed_by": "api-test",
+        },
+    )
+    dataset2_controlled_training_artifact_release_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-release-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_final_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-final-approval",
+        json={
+            "artifact_release_dry_run_review_id": dataset2_controlled_training_artifact_release_dry_run_review.json().get("event_id"),
+            "approved_by": "api-test",
+            "confirmation_token": "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL",
+        },
+    )
+    dataset2_controlled_training_artifact_final_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-final-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_final_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-final-preflight",
+        json={
+            "artifact_final_approval_id": dataset2_controlled_training_artifact_final_approval.json().get("event_id"),
+            "requested_by": "api-test",
+            "confirmation_token": "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL_PREFLIGHT",
+        },
+    )
+    dataset2_controlled_training_artifact_final_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-final-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_final_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-final-dry-run",
+        json={
+            "artifact_final_preflight_event_id": dataset2_controlled_training_artifact_final_preflight.json().get("event_id"),
+            "simulated_by": "api-test",
+            "confirmation_token": "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_FINAL_DRY_RUN",
+        },
+    )
+    dataset2_controlled_training_artifact_final_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-final-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_final_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-final-dry-run-review",
+        json={
+            "artifact_final_dry_run_event_id": dataset2_controlled_training_artifact_final_dry_run.json().get("event_id"),
+            "reviewed_by": "api-test",
+        },
+    )
+    dataset2_controlled_training_artifact_final_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-preflight",
+        json={
+            "artifact_final_dry_run_review_id": dataset2_controlled_training_artifact_final_dry_run_review.json().get("event_id"),
+            "requested_by": "api-test",
+            "confirmation_token": "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_PREFLIGHT",
+        },
+    )
+    dataset2_controlled_training_artifact_write_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-dry-run",
+        json={
+            "artifact_write_preflight_event_id": dataset2_controlled_training_artifact_write_preflight.json().get("event_id"),
+            "simulated_by": "api-test",
+            "confirmation_token": "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_DRY_RUN",
+        },
+    )
+    dataset2_controlled_training_artifact_write_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-dry-run-review",
+        json={
+            "artifact_write_dry_run_event_id": dataset2_controlled_training_artifact_write_dry_run.json().get(
+                "event_id"
+            ),
+            "reviewed_by": "api-test",
+            "review_decision": "accepted_for_controlled_dataset2_training_artifact_write_approval",
+        },
+    )
+    dataset2_controlled_training_artifact_write_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-approval",
+        json={
+            "artifact_write_dry_run_review_id": dataset2_controlled_training_artifact_write_dry_run_review.json().get(
+                "event_id"
+            ),
+            "approved_by": "api-test",
+            "approval_decision": "approved_for_controlled_dataset2_training_artifact_write_execution_preflight",
+            "confirmation_token": "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE",
+        },
+    )
+    dataset2_controlled_training_artifact_write_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-preflight",
+        json={
+            "artifact_write_approval_id": dataset2_controlled_training_artifact_write_approval.json().get(
+                "event_id"
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_PREFLIGHT",
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-dry-run",
+        json={
+            "artifact_write_execution_preflight_event_id": (
+                dataset2_controlled_training_artifact_write_execution_preflight.json().get("event_id")
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_DRY_RUN",
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-dry-run-review",
+        json={
+            "artifact_write_execution_dry_run_event_id": (
+                dataset2_controlled_training_artifact_write_execution_dry_run.json().get("event_id")
+            ),
+            "reviewed_by": "api-test",
+            "review_decision": "accepted_for_controlled_dataset2_training_artifact_write_execution_final_approval",
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-approval",
+        json={
+            "artifact_write_execution_dry_run_review_id": (
+                dataset2_controlled_training_artifact_write_execution_dry_run_review.json().get("event_id")
+            ),
+            "approved_by": "api-test",
+            "approval_decision": "approved_for_controlled_dataset2_training_artifact_write_execution_final_preflight",
+            "confirmation_token": "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL",
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-preflight",
+        json={
+            "artifact_write_execution_final_approval_id": (
+                dataset2_controlled_training_artifact_write_execution_final_approval.json().get("event_id")
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_PREFLIGHT"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-dry-run",
+        json={
+            "artifact_write_execution_final_preflight_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_preflight.json().get("event_id")
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_DRY_RUN"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-dry-run-review",
+        json={
+            "artifact_write_execution_final_dry_run_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_dry_run.json().get("event_id")
+            ),
+            "reviewed_by": "api-test",
+            "review_decision": (
+                "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_approval"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-approval",
+        json={
+            "artifact_write_execution_final_dry_run_review_id": (
+                dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json().get("event_id")
+            ),
+            "approved_by": "api-test",
+            "approval_decision": (
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_preflight"
+            ),
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-preflight",
+        json={
+            "artifact_write_execution_final_write_approval_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_approval.json().get("event_id")
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_PREFLIGHT"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-run",
+        json={
+            "artifact_write_execution_final_write_preflight_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_preflight.json().get("event_id")
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_DRY_RUN"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-run-review",
+        json={
+            "artifact_write_execution_final_write_dry_run_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json().get("event_id")
+            ),
+            "reviewed_by": "api-test",
+            "review_decision": (
+                "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-approval",
+        json={
+            "artifact_write_execution_final_write_dry_run_review_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json().get(
+                    "event_id"
+                )
+            ),
+            "approved_by": "api-test",
+            "approval_decision": (
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight"
+            ),
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-preflight",
+        json={
+            "artifact_write_execution_final_write_execution_approval_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_approval.json().get(
+                    "event_id"
+                )
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_PREFLIGHT"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-run",
+        json={
+            "artifact_write_execution_final_write_execution_preflight_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight.json().get(
+                    "event_id"
+                )
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_DRY_RUN"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-run-review",
+        json={
+            "artifact_write_execution_final_write_execution_dry_run_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run.json().get(
+                    "event_id"
+                )
+            ),
+            "reviewed_by": "api-test",
+            "review_decision": (
+                "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-approval",
+        json={
+            "artifact_write_execution_final_write_execution_dry_run_review_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review.json().get(
+                    "event_id"
+                )
+            ),
+            "approved_by": "api-test",
+            "approval_decision": (
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight"
+            ),
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-preflight",
+        json={
+            "artifact_write_execution_final_write_execution_final_approval_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval.json().get(
+                    "event_id"
+                )
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_PREFLIGHT"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-run",
+        json={
+            "artifact_write_execution_final_write_execution_final_preflight_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight.json().get(
+                    "event_id"
+                )
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_DRY_RUN"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-run-review",
+        json={
+            "artifact_write_execution_final_write_execution_final_dry_run_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run.json().get(
+                    "event_id"
+                )
+            ),
+            "reviewed_by": "api-test",
+            "review_decision": (
+                "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-approval",
+        json={
+            "artifact_write_execution_final_write_execution_final_dry_run_review_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review.json().get(
+                    "event_id"
+                )
+            ),
+            "approved_by": "api-test",
+            "approval_decision": (
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight"
+            ),
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-preflight",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_approval_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval.json().get(
+                    "event_id"
+                )
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_PREFLIGHT"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_preflight_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight.json().get(
+                    "event_id"
+                )
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_DRY_RUN"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run-review",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_dry_run_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run.json().get(
+                    "event_id"
+                )
+            ),
+            "reviewed_by": "api-test",
+            "review_decision": (
+                "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-approval",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_dry_run_review_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review.json().get(
+                    "event_id"
+                )
+            ),
+            "approved_by": "api-test",
+            "approval_decision": (
+                "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight"
+            ),
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-preflight",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_approval_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval.json().get(
+                    "event_id"
+                )
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_PREFLIGHT"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-dry-run",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_preflight_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight.json().get(
+                    "event_id"
+                )
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_DRY_RUN"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-dry-run-review",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run.json().get(
+                    "event_id"
+                )
+            ),
+            "reviewed_by": "api-test",
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-approval",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review.json().get(
+                    "event_id"
+                )
+            ),
+            "approved_by": "api-test",
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-preflight",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_approval_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval.json().get(
+                    "event_id"
+                )
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-dry-run",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight.json().get(
+                    "event_id"
+                )
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-dry-run-review",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run.json().get(
+                    "event_id"
+                )
+            ),
+            "reviewed_by": "api-test",
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-approval",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review.json().get(
+                    "event_id"
+                )
+            ),
+            "approved_by": "api-test",
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-approvals",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-preflight",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_approval_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval.json().get(
+                    "event_id"
+                )
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-dry-run",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight.json().get(
+                    "event_id"
+                )
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-dry-run-review",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run.json().get(
+                    "event_id"
+                )
+            ),
+            "reviewed_by": "api-test",
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-approval",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review.json().get(
+                    "event_id"
+                )
+            ),
+            "approved_by": "api-test",
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-approvals",
+        params={"limit": 3},
+    )
+
+
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-preflight",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval.json().get(
+                    "event_id"
+                )
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-preflights",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-dry-run",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight.json().get(
+                    "event_id"
+                )
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+            ),
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-dry-runs",
+        params={"limit": 3},
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-dry-run-review",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_event_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run.json().get(
+                    "event_id"
+                )
+            ),
+            "reviewed_by": "api-test",
+        },
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    p140_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-approval",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_id": (
+                dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review.json().get(
+                    "event_id"
+                )
+            ),
+            "approved_by": "api-test",
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL"
+            ),
+        },
+    )
+    p140_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-approvals",
+        params={"limit": 3},
+    )
+    p141_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-preflight",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_id": (
+                p140_approval.json().get("event_id")
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+            ),
+        },
+    )
+    p141_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-preflights",
+        params={"limit": 3},
+    )
+    p142_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-dry-run",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_event_id": (
+                p141_preflight.json().get("event_id")
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+            ),
+        },
+    )
+    p142_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-dry-runs",
+        params={"limit": 3},
+    )
+    p143_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-dry-run-review",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_event_id": (
+                p142_dry_run.json().get("event_id")
+            ),
+            "reviewed_by": "api-test",
+        },
+    )
+    p143_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    p144_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-approval",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_id": (
+                p143_review.json().get("event_id")
+            ),
+            "approved_by": "api-test",
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL"
+            ),
+        },
+    )
+    p144_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-approvals",
+        params={"limit": 3},
+    )
+    p145_preflight = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-preflight",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_id": (
+                p144_approval.json().get("event_id")
+            ),
+            "requested_by": "api-test",
+            "confirmation_token": (
+                "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+            ),
+        },
+    )
+    p145_preflights = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-preflights",
+        params={"limit": 3},
+    )
+    p146_dry_run = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-dry-run",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_event_id": (
+                p145_preflight.json().get("event_id")
+            ),
+            "simulated_by": "api-test",
+            "confirmation_token": (
+                "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_DRY_RUN"
+            ),
+        },
+    )
+    p146_dry_runs = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-dry-runs",
+        params={"limit": 3},
+    )
+    p147_review = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-dry-run-review",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_event_id": (
+                p146_dry_run.json().get("event_id")
+            ),
+            "reviewed_by": "api-test",
+        },
+    )
+    p147_reviews = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-dry-run-reviews",
+        params={"limit": 3},
+    )
+    p148_approval = client.post(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-final-approval",
+        json={
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_id": (
+                p147_review.json().get("event_id")
+            ),
+            "approved_by": "api-test",
+            "confirmation_token": (
+                "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL"
+            ),
+        },
+    )
+    p148_approvals = client.get(
+        "/api/learning/dataset2/controlled-training-artifact-write-execution-final-write-execution-final-final-final-final-final-final-final-final-final-approvals",
+        params={"limit": 3},
+    )
 
     assert readiness.status_code == 200
     assert preview.status_code == 200
@@ -10047,10 +22233,4231 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
     assert cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_execution_approvals.status_code == 200
     assert training_convergence_review.status_code == 200
     assert training_convergence_reviews.status_code == 200
+    assert automated_cleanup_apply.status_code == 200
+    assert automated_cleanup_applications.status_code == 200
+    assert post_cleanup_freeze_review.status_code == 200
+    assert post_cleanup_freeze_reviews.status_code == 200
+    assert learning_sample_promotion_preflight.status_code == 200
+    assert learning_sample_promotion_preflights.status_code == 200
+    assert learning_sample_promotion_apply.status_code == 200
+    assert learning_sample_promotion_applications.status_code == 200
+    assert post_promotion_freeze_review.status_code == 200
+    assert post_promotion_freeze_reviews.status_code == 200
+    assert dataset2_training_run_plan.status_code == 200
+    assert dataset2_training_run_plans.status_code == 200
+    assert dataset2_training_execution_approval.status_code == 200
+    assert dataset2_training_execution_approvals.status_code == 200
+    assert dataset2_training_dry_run.status_code == 200
+    assert dataset2_training_dry_runs.status_code == 200
+    assert dataset2_training_dry_run_review.status_code == 200
+    assert dataset2_training_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_execution_plan.status_code == 200
+    assert dataset2_controlled_training_execution_plans.status_code == 200
+    assert dataset2_controlled_training_execution_preflight.status_code == 200
+    assert dataset2_controlled_training_execution_preflights.status_code == 200
+    assert dataset2_controlled_training_execution_dry_run.status_code == 200
+    assert dataset2_controlled_training_execution_dry_runs.status_code == 200
+    assert dataset2_controlled_training_execution_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_execution_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_execution_release_plan.status_code == 200
+    assert dataset2_controlled_training_execution_release_plans.status_code == 200
+    assert dataset2_controlled_training_execution_release_preflight.status_code == 200
+    assert dataset2_controlled_training_execution_release_preflights.status_code == 200
+    assert dataset2_controlled_training_execution_release_dry_run.status_code == 200
+    assert dataset2_controlled_training_execution_release_dry_runs.status_code == 200
     assert training_convergence_review.json()["stage"] == "V5.6-P58"
     assert training_convergence_review.json()["decision"]["can_start_training_now"] is False
     assert training_convergence_review.json()["decision"]["writes_learning_samples_now"] is False
     assert training_convergence_reviews.json()[0]["review"]["reviewed_by"] == "api-test"
+    assert automated_cleanup_apply.json()["stage"] == "V5.6-P59"
+    assert automated_cleanup_apply.json()["request"]["applied_by"] == "api-test"
+    assert automated_cleanup_apply.json()["decision"]["writes_learning_samples_now"] is False
+    assert automated_cleanup_apply.json()["decision"]["can_start_training_now"] is False
+    assert isinstance(automated_cleanup_applications.json(), list)
+    assert post_cleanup_freeze_review.json()["stage"] == "V5.6-P60"
+    assert post_cleanup_freeze_review.json()["decision"]["writes_learning_samples_now"] is False
+    assert post_cleanup_freeze_review.json()["decision"]["can_start_training_now"] is False
+    assert isinstance(post_cleanup_freeze_reviews.json(), list)
+    assert learning_sample_promotion_preflight.json()["stage"] == "V5.6-P61"
+    assert learning_sample_promotion_preflight.json()["decision"]["writes_learning_samples_now"] is False
+    assert learning_sample_promotion_preflight.json()["decision"]["can_promote_to_learning_samples_now"] is False
+    assert learning_sample_promotion_preflight.json()["decision"]["can_start_training_now"] is False
+    assert isinstance(learning_sample_promotion_preflights.json(), list)
+    assert learning_sample_promotion_apply.json()["stage"] == "V5.6-P62"
+    assert learning_sample_promotion_apply.json()["decision"]["writes_learning_samples_now"] is False
+    assert learning_sample_promotion_apply.json()["decision"]["can_start_training_now"] is False
+    assert isinstance(learning_sample_promotion_applications.json(), list)
+    assert post_promotion_freeze_review.json()["stage"] == "V5.6-P63"
+    assert post_promotion_freeze_review.json()["decision"]["writes_learning_samples_now"] is False
+    assert post_promotion_freeze_review.json()["decision"]["can_start_training_now"] is False
+    assert isinstance(post_promotion_freeze_reviews.json(), list)
+    assert dataset2_training_run_plan.json()["stage"] == "V5.6-P64"
+    assert dataset2_training_run_plan.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_training_run_plan.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_training_run_plan.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_training_run_plans.json(), list)
+    assert dataset2_training_execution_approval.json()["stage"] == "V5.6-P65"
+    assert dataset2_training_execution_approval.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_training_execution_approval.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_training_execution_approval.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_training_execution_approvals.json(), list)
+    assert dataset2_training_dry_run.json()["stage"] == "V5.6-P66"
+    assert dataset2_training_dry_run.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_training_dry_run.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_training_dry_run.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_training_dry_run.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_training_dry_runs.json(), list)
+    assert dataset2_training_dry_run_review.json()["stage"] == "V5.6-P67"
+    assert dataset2_training_dry_run_review.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_training_dry_run_review.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_training_dry_run_review.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_training_dry_run_review.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_training_dry_run_reviews.json(), list)
+    assert dataset2_controlled_training_execution_plan.json()["stage"] == "V5.6-P68"
+    assert dataset2_controlled_training_execution_plan.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_plan.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_plan.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_plan.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_plans.json(), list)
+    assert dataset2_controlled_training_execution_preflight.json()["stage"] == "V5.6-P69"
+    assert dataset2_controlled_training_execution_preflight.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_preflight.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_preflight.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_preflight.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_preflights.json(), list)
+    assert dataset2_controlled_training_execution_dry_run.json()["stage"] == "V5.6-P70"
+    assert dataset2_controlled_training_execution_dry_run.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_dry_run.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_dry_run.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_dry_run.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_dry_run.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_dry_runs.json(), list)
+    assert dataset2_controlled_training_execution_dry_run_review.json()["stage"] == "V5.6-P71"
+    assert dataset2_controlled_training_execution_dry_run_review.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_dry_run_review.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_dry_run_review.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_dry_run_review.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_dry_run_review.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_dry_run_reviews.json(), list)
+    assert dataset2_controlled_training_execution_release_plan.json()["stage"] == "V5.6-P72"
+    assert dataset2_controlled_training_execution_release_plan.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_release_plan.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_release_plan.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_release_plan.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_release_plan.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_release_plans.json(), list)
+    assert dataset2_controlled_training_execution_release_preflight.json()["stage"] == "V5.6-P73"
+    assert dataset2_controlled_training_execution_release_preflight.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_release_preflight.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_release_preflight.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_release_preflight.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_release_preflight.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_release_preflights.json(), list)
+    assert dataset2_controlled_training_execution_release_dry_run.json()["stage"] == "V5.6-P74"
+    assert dataset2_controlled_training_execution_release_dry_run.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_release_dry_run.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_release_dry_run.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_release_dry_run.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_release_dry_run.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_release_dry_runs.json(), list)
+    assert dataset2_controlled_training_execution_release_dry_run_review.json()["stage"] == "V5.6-P75"
+    assert dataset2_controlled_training_execution_release_dry_run_review.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_release_dry_run_review.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_release_dry_run_review.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_release_dry_run_review.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_release_dry_run_review.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_release_dry_run_reviews.json(), list)
+    assert dataset2_controlled_training_execution_final_approval.json()["stage"] == "V5.6-P76"
+    assert dataset2_controlled_training_execution_final_approval.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_final_approval.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_final_approval.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_final_approval.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_final_approval.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_final_approvals.json(), list)
+    assert dataset2_controlled_training_execution_final_preflight.status_code == 200
+    assert dataset2_controlled_training_execution_final_preflights.status_code == 200
+    assert dataset2_controlled_training_execution_final_preflight.json()["stage"] == "V5.6-P77"
+    assert dataset2_controlled_training_execution_final_preflight.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_final_preflight.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_final_preflight.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_final_preflight.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_final_preflight.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_final_preflights.json(), list)
+    assert dataset2_controlled_training_execution_final_dry_run.status_code == 200
+    assert dataset2_controlled_training_execution_final_dry_runs.status_code == 200
+    assert dataset2_controlled_training_execution_final_dry_run.json()["stage"] == "V5.6-P78"
+    assert dataset2_controlled_training_execution_final_dry_run.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_final_dry_run.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_final_dry_run.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_final_dry_run.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_final_dry_run.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_final_dry_runs.json(), list)
+    assert dataset2_controlled_training_execution_final_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_execution_final_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_execution_final_dry_run_review.json()["stage"] == "V5.6-P79"
+    assert dataset2_controlled_training_execution_final_dry_run_review.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_final_dry_run_review.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_final_dry_run_review.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_final_dry_run_review.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_final_dry_run_review.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_final_dry_run_reviews.json(), list)
+    assert dataset2_controlled_training_execution_run_approval.status_code == 200
+    assert dataset2_controlled_training_execution_run_approvals.status_code == 200
+    assert dataset2_controlled_training_execution_run_approval.json()["stage"] == "V5.6-P80"
+    assert dataset2_controlled_training_execution_run_approval.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_run_approval.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_run_approval.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_run_approval.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_run_approval.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_run_approvals.json(), list)
+    assert dataset2_controlled_training_execution_run_preflight.status_code == 200
+    assert dataset2_controlled_training_execution_run_preflights.status_code == 200
+    assert dataset2_controlled_training_execution_run_preflight.json()["stage"] == "V5.6-P81"
+    assert dataset2_controlled_training_execution_run_preflight.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_run_preflight.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_run_preflight.json()["decision"]["can_run_controlled_dataset2_training_execution_now"] is False
+    assert dataset2_controlled_training_execution_run_preflight.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_run_preflight.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_run_preflight.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_run_preflights.json(), list)
+    assert dataset2_controlled_training_execution_run.status_code == 200
+    assert dataset2_controlled_training_execution_runs.status_code == 200
+    assert dataset2_controlled_training_execution_run.json()["stage"] == "V5.6-P82"
+    assert dataset2_controlled_training_execution_run.json()["training_result"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_run.json()["training_result"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_run.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_run.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_run.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_execution_run.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_run.json()["decision"]["can_start_training_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_runs.json(), list)
+    assert dataset2_controlled_training_execution_run_review.status_code == 200
+    assert dataset2_controlled_training_execution_run_reviews.status_code == 200
+    assert dataset2_controlled_training_execution_run_review.json()["stage"] == "V5.6-P83"
+    assert dataset2_controlled_training_execution_run_review.json()["run_review"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_run_review.json()["run_review"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_run_review.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_execution_run_review.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_execution_run_review.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_execution_run_review.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_execution_run_review.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_execution_run_review.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_execution_run_reviews.json(), list)
+    assert dataset2_controlled_training_artifact_plan.status_code == 200
+    assert dataset2_controlled_training_artifact_plans.status_code == 200
+    assert dataset2_controlled_training_artifact_plan.json()["stage"] == "V5.6-P84"
+    assert dataset2_controlled_training_artifact_plan.json()["artifact_plan"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_plan.json()["artifact_plan"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_plan.json()["artifact_plan"]["artifact_manifest"]["artifact_path"] is None
+    assert dataset2_controlled_training_artifact_plan.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_plan.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_plan.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_plan.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_plan.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_plan.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_plan.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_plans.json(), list)
+    assert dataset2_controlled_training_artifact_plan_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_plan_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_plan_approval.json()["stage"] == "V5.6-P85"
+    assert dataset2_controlled_training_artifact_plan_approval.json()["approval"]["confirmation_token_matched"] is True
+    assert dataset2_controlled_training_artifact_plan_approval.json()["approval_scope"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_plan_approval.json()["approval_scope"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_plan_approval.json()["approval_scope"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_plan_approval.json()["approval_scope"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_plan_approval.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_plan_approval.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_plan_approval.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_plan_approval.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_plan_approval.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_plan_approval.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_plan_approval.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_plan_approvals.json(), list)
+    assert dataset2_controlled_training_artifact_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_release_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_release_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_release_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_release_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_release_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_release_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_release_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_release_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_final_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_final_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_final_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_final_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_final_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_final_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_final_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_final_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_write_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_reviews.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflights.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_runs.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review.status_code == 200
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_reviews.status_code == 200
+    assert p140_approval.status_code == 200
+    assert p140_approvals.status_code == 200
+    assert p141_preflight.status_code == 200
+    assert p141_preflights.status_code == 200
+    assert p142_dry_run.status_code == 200
+    assert p142_dry_runs.status_code == 200
+    assert p143_review.status_code == 200
+    assert p143_reviews.status_code == 200
+    assert p144_approval.status_code == 200
+    assert p144_approvals.status_code == 200
+    assert p145_preflight.status_code == 200
+    assert p145_preflights.status_code == 200
+    assert p146_dry_run.status_code == 200
+    assert p146_dry_runs.status_code == 200
+    assert p147_review.status_code == 200
+    assert p147_reviews.status_code == 200
+    assert p148_approval.status_code == 200
+    assert p148_approvals.status_code == 200
+    assert dataset2_controlled_training_artifact_preflight.json()["stage"] == "V5.6-P86"
+    assert dataset2_controlled_training_artifact_preflight.json()["preflight"]["confirmation_token_matched"] is True
+    assert dataset2_controlled_training_artifact_preflight.json()["artifact_preflight"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_preflight.json()["artifact_preflight"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_preflight.json()["artifact_preflight"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_preflight.json()["artifact_preflight"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_preflight.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_preflight.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_preflight.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_preflight.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_preflight.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_preflight.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_preflight.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_preflights.json(), list)
+    assert dataset2_controlled_training_artifact_dry_run.json()["stage"] == "V5.6-P87"
+    assert dataset2_controlled_training_artifact_dry_run.json()["dry_run"]["confirmation_token_matched"] is True
+    assert dataset2_controlled_training_artifact_dry_run.json()["artifact_dry_run"]["artifact_dry_run_manifest_hash"]
+    assert dataset2_controlled_training_artifact_dry_run.json()["artifact_dry_run"]["simulated_artifact_payload_hash"]
+    assert dataset2_controlled_training_artifact_dry_run.json()["artifact_dry_run"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run.json()["artifact_dry_run"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run.json()["artifact_dry_run"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run.json()["artifact_dry_run"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_dry_run.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_dry_run.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_dry_runs.json(), list)
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["stage"] == "V5.6-P88"
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["review"]["accepted_for_controlled_dataset2_training_artifact_release_approval"] is True
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["artifact_review"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["artifact_review"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["artifact_review"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["artifact_review"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_dry_run_review.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_dry_run_reviews.json(), list)
+    assert dataset2_controlled_training_artifact_release_approval.json()["stage"] == "V5.6-P89"
+    assert dataset2_controlled_training_artifact_release_approval.json()["approval"]["confirmation_token_matched"] is True
+    assert dataset2_controlled_training_artifact_release_approval.json()["approval"]["approved_for_controlled_dataset2_training_artifact_release_preflight"] is True
+    assert dataset2_controlled_training_artifact_release_approval.json()["approval_scope"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_release_approval.json()["approval_scope"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_release_approval.json()["approval_scope"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_approval.json()["approval_scope"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_release_approval.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_release_approval.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_release_approval.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_release_approval.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_release_approval.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_approval.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_approval.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_release_approvals.json(), list)
+    assert dataset2_controlled_training_artifact_release_preflight.json()["stage"] == "V5.6-P90"
+    assert dataset2_controlled_training_artifact_release_preflight.json()["preflight"]["confirmation_token_matched"] is True
+    assert dataset2_controlled_training_artifact_release_preflight.json()["artifact_release_preflight"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_release_preflight.json()["artifact_release_preflight"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_release_preflight.json()["artifact_release_preflight"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_preflight.json()["artifact_release_preflight"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_release_preflight.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_release_preflight.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_release_preflight.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_release_preflight.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_release_preflight.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_preflight.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_preflight.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_release_preflights.json(), list)
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["stage"] == "V5.6-P91"
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["dry_run"]["confirmation_token_matched"] is True
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["artifact_release_dry_run"]["release_manifest_hash"]
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["artifact_release_dry_run"]["release_payload_hash"]
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["artifact_release_dry_run"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["artifact_release_dry_run"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["artifact_release_dry_run"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["artifact_release_dry_run"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_release_dry_runs.json(), list)
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["stage"] == "V5.6-P92"
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["review"]["accepted_for_controlled_dataset2_training_artifact_final_approval"] is True
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["release_review"]["release_manifest_hash"]
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["release_review"]["release_payload_hash"]
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["release_review"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["release_review"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["release_review"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["release_review"]["training_started_now"] is False
+    assert isinstance(
+        dataset2_controlled_training_artifact_release_dry_run_review.json()["decision"][
+            "can_request_controlled_dataset2_training_artifact_final_approval_now"
+        ],
+        bool,
+    )
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["decision"][
+        "controlled_dataset2_training_artifact_release_dry_run_review_recorded"
+    ] is True
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_release_dry_run_review.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_release_dry_run_reviews.json(), list)
+    assert dataset2_controlled_training_artifact_final_approval.json()["stage"] == "V5.6-P93"
+    assert dataset2_controlled_training_artifact_final_approval.json()["approval"]["confirmation_token_matched"] is True
+    assert dataset2_controlled_training_artifact_final_approval.json()["approval"]["approved_for_controlled_dataset2_training_artifact_final_preflight"] is True
+    assert dataset2_controlled_training_artifact_final_approval.json()["approval_scope"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_final_approval.json()["approval_scope"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_final_approval.json()["approval_scope"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_approval.json()["approval_scope"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_final_approval.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_final_approval.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_final_approval.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_final_approval.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_final_approval.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_approval.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_approval.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_final_approvals.json(), list)
+    assert dataset2_controlled_training_artifact_final_preflight.json()["stage"] == "V5.6-P94"
+    assert dataset2_controlled_training_artifact_final_preflight.json()["preflight"]["confirmation_token_matched"] is True
+    assert dataset2_controlled_training_artifact_final_preflight.json()["artifact_final_preflight"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_final_preflight.json()["artifact_final_preflight"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_final_preflight.json()["artifact_final_preflight"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_preflight.json()["artifact_final_preflight"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_final_preflight.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_final_preflight.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_final_preflight.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_final_preflight.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_final_preflight.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_preflight.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_preflight.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_final_preflights.json(), list)
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["stage"] == "V5.6-P95"
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["dry_run"]["confirmation_token_matched"] is True
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["artifact_final_dry_run"]["final_artifact_manifest_hash"]
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["artifact_final_dry_run"]["simulated_final_artifact_payload_hash"]
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["artifact_final_dry_run"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["artifact_final_dry_run"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["artifact_final_dry_run"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["artifact_final_dry_run"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_final_dry_runs.json(), list)
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["stage"] == "V5.6-P96"
+    assert (
+        dataset2_controlled_training_artifact_final_dry_run_review.json()["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_preflight"
+        ]
+        is True
+    )
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["final_dry_run_review"]["final_artifact_manifest_hash"]
+    assert (
+        dataset2_controlled_training_artifact_final_dry_run_review.json()["final_dry_run_review"][
+            "simulated_final_artifact_payload_hash"
+        ]
+    )
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["final_dry_run_review"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["final_dry_run_review"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["final_dry_run_review"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["final_dry_run_review"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_final_dry_run_review.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_final_dry_run_reviews.json(), list)
+    assert dataset2_controlled_training_artifact_write_preflight.json()["stage"] == "V5.6-P97"
+    assert (
+        dataset2_controlled_training_artifact_write_preflight.json()["status"]
+        == "dataset2_controlled_training_artifact_write_preflight_blocked"
+    )
+    assert dataset2_controlled_training_artifact_write_preflight.json()["preflight"]["confirmation_token_matched"] is True
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_preflight.json()["checks"]
+    }
+    assert check_status["artifact_final_dry_run_review_accepted"] == "blocked"
+    assert dataset2_controlled_training_artifact_write_preflight.json()["evidence"]["planned_artifact_manifest_hash"]
+    assert (
+        dataset2_controlled_training_artifact_write_preflight.json()["artifact_write_preflight"][
+            "expected_confirmation_token"
+        ]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_DRY_RUN"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_preflight.json()["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_dry_run_now"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_preflight.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_write_preflight.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_write_preflight.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_write_preflight.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_write_preflight.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_preflight.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_preflight.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_write_preflights.json(), list)
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["stage"] == "V5.6-P98"
+    assert (
+        dataset2_controlled_training_artifact_write_dry_run.json()["status"]
+        == "dataset2_controlled_training_artifact_write_dry_run_blocked"
+    )
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["dry_run"]["confirmation_token_matched"] is True
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_dry_run.json()["checks"]
+    }
+    assert check_status["artifact_write_preflight_ready"] == "blocked"
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["evidence"]["artifact_write_dry_run_manifest_hash"]
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["evidence"]["simulated_artifact_write_payload_hash"]
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["artifact_write_dry_run"]["writes_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["artifact_write_dry_run"]["writes_file_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["artifact_write_dry_run"]["persists_model_body_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["artifact_write_dry_run"]["executes_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["artifact_write_dry_run"]["training_started_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_write_dry_runs.json(), list)
+    assert dataset2_controlled_training_artifact_write_dry_run_review.json()["stage"] == "V5.6-P99"
+    assert (
+        dataset2_controlled_training_artifact_write_dry_run_review.json()["status"]
+        == "dataset2_controlled_training_artifact_write_dry_run_review_blocked"
+    )
+    assert dataset2_controlled_training_artifact_write_dry_run_review.json()["review"]["reviewed_by"] == "api-test"
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_dry_run_review.json()["checks"]
+    }
+    assert check_status["artifact_write_dry_run_completed"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_dry_run_review.json()["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_approval_now"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_dry_run_review.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run_review.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run_review.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run_review.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run_review.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run_review.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_dry_run_review.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_write_dry_run_reviews.json(), list)
+    assert dataset2_controlled_training_artifact_write_approval.json()["stage"] == "V5.6-P100"
+    assert (
+        dataset2_controlled_training_artifact_write_approval.json()["status"]
+        == "dataset2_controlled_training_artifact_write_approval_blocked"
+    )
+    assert dataset2_controlled_training_artifact_write_approval.json()["approval"]["approved_by"] == "api-test"
+    assert dataset2_controlled_training_artifact_write_approval.json()["approval"]["confirmation_token_matched"] is True
+    assert (
+        dataset2_controlled_training_artifact_write_approval.json()["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_preflight"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_approval.json()["checks"]
+    }
+    assert check_status["artifact_write_dry_run_review_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_approval.json()["approval_scope"][
+            "expected_confirmation_token"
+        ]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_PREFLIGHT"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_approval.json()["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_preflight_now"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_approval.json()["decision"]["can_write_model_artifact_now"] is False
+    assert dataset2_controlled_training_artifact_write_approval.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_write_approval.json()["decision"]["writes_file"] is False
+    assert dataset2_controlled_training_artifact_write_approval.json()["decision"]["writes_learning_samples_now"] is False
+    assert dataset2_controlled_training_artifact_write_approval.json()["decision"]["can_execute_dataset2_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_approval.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_approval.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_write_approvals.json(), list)
+    assert dataset2_controlled_training_artifact_write_execution_preflight.json()["stage"] == "V5.6-P101"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_preflight.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_preflight_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_preflight.json()["preflight"]["requested_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_preflight.json()["preflight"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_preflight.json()["checks"]
+    }
+    assert check_status["artifact_write_approval_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_preflight.json()[
+            "artifact_write_execution_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_DRY_RUN"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_preflight.json()["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_dry_run_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_preflight.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_execution_preflight.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_write_execution_preflight.json()["decision"]["writes_file"] is False
+    assert (
+        dataset2_controlled_training_artifact_write_execution_preflight.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_preflight.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_execution_preflight.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_execution_preflight.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_preflights.json(), list)
+    assert dataset2_controlled_training_artifact_write_execution_dry_run.json()["stage"] == "V5.6-P102"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_dry_run_blocked"
+    )
+    assert dataset2_controlled_training_artifact_write_execution_dry_run.json()["dry_run"]["simulated_by"] == "api-test"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run.json()["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_dry_run.json()["checks"]
+    }
+    assert check_status["artifact_write_execution_preflight_ready"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run.json()["evidence"][
+            "artifact_write_execution_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run.json()["evidence"][
+            "simulated_artifact_write_execution_payload_hash"
+        ]
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run.json()[
+            "artifact_write_execution_dry_run"
+        ]["writes_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run.json()[
+            "artifact_write_execution_dry_run"
+        ]["writes_file_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run.json()["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_dry_run_review_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_execution_dry_run.json()["decision"]["model_artifact_written"] is False
+    assert dataset2_controlled_training_artifact_write_execution_dry_run.json()["decision"]["writes_file"] is False
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_execution_dry_run.json()["decision"]["can_start_training_now"] is False
+    assert dataset2_controlled_training_artifact_write_execution_dry_run.json()["decision"]["training_started_now"] is False
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_dry_runs.json(), list)
+    assert dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["stage"] == "V5.6-P103"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_dry_run_review_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["review"]["reviewed_by"]
+        == "api-test"
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["checks"]
+    }
+    assert check_status["artifact_write_execution_dry_run_completed"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_approval_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()[
+            "artifact_write_execution_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()[
+            "artifact_write_execution_dry_run_review"
+        ]["writes_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()[
+            "artifact_write_execution_dry_run_review"
+        ]["writes_file_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["decision"]["writes_file"] is False
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_dry_run_review.json()["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_dry_run_reviews.json(), list)
+    assert dataset2_controlled_training_artifact_write_execution_final_approval.json()["stage"] == "V5.6-P104"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_approval_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["approval"]["approved_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["approval"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_preflight"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_approval.json()["checks"]
+    }
+    assert check_status["artifact_write_execution_dry_run_review_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["approval_scope"][
+            "expected_confirmation_token"
+        ]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_PREFLIGHT"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_preflight_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_execution_final_approval.json()["decision"]["writes_file"] is False
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_approval.json()["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_approvals.json(), list)
+    assert dataset2_controlled_training_artifact_write_execution_final_preflight.json()["stage"] == "V5.6-P105"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_preflight_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()["preflight"][
+            "requested_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()["preflight"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_preflight.json()["checks"]
+    }
+    assert check_status["artifact_write_execution_final_approval_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()[
+            "artifact_write_execution_final_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_DRY_RUN"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_dry_run_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_execution_final_preflight.json()["decision"]["writes_file"] is False
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_preflight.json()["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_preflights.json(), list)
+    assert dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["stage"] == "V5.6-P106"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_dry_run_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["dry_run"][
+            "simulated_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["checks"]
+    }
+    assert check_status["artifact_write_execution_final_preflight_ready"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()[
+            "artifact_write_execution_final_dry_run"
+        ]["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_approval"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["decision"]["writes_file"] is False
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run.json()["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_dry_runs.json(), list)
+    assert dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["stage"] == "V5.6-P107"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_dry_run_review_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["review"][
+            "reviewed_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_approval"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["checks"]
+    }
+    assert check_status["artifact_write_execution_final_dry_run_completed"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()[
+            "artifact_write_execution_final_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_approval_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["decision"]["writes_file"] is False
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_dry_run_review.json()["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_dry_run_reviews.json(), list)
+    assert dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["stage"] == "V5.6-P108"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_approval_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["approval"][
+            "approved_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["approval"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_preflight"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["checks"]
+    }
+    assert check_status["artifact_write_execution_final_dry_run_review_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["approval_scope"][
+            "expected_confirmation_token"
+        ]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_PREFLIGHT"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_preflight_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["decision"][
+            "writes_file"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_approval.json()["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_write_approvals.json(), list)
+    assert dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["stage"] == "V5.6-P109"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_preflight_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["preflight"][
+            "requested_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["preflight"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_approval_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()[
+            "artifact_write_execution_final_write_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_DRY_RUN"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_dry_run_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["decision"][
+            "writes_file"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_preflight.json()["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_write_preflights.json(), list)
+    assert dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["stage"] == "V5.6-P110"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_dry_run_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["dry_run"][
+            "simulated_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["checks"]
+    }
+    assert check_status["artifact_write_execution_final_write_preflight_ready"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()[
+            "artifact_write_execution_final_write_dry_run"
+        ]["artifact_write_execution_final_write_dry_run_manifest_hash"]
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()[
+            "artifact_write_execution_final_write_dry_run"
+        ]["simulated_artifact_write_execution_final_write_payload_hash"]
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_dry_run_review_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["decision"][
+            "writes_file"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run.json()["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_write_dry_runs.json(), list)
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["stage"]
+        == "V5.6-P111"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["review"][
+            "reviewed_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_dry_run_completed"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()[
+            "artifact_write_execution_final_write_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_approval_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["decision"][
+            "writes_file"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_dry_run_review.json()["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_write_dry_run_reviews.json(), list)
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval.json()
+    )
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["stage"] == "V5.6-P112"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["approval"][
+            "approved_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight"
+        ]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["approval"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_dry_run_review_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["approval_scope"][
+            "expected_confirmation_token"
+        ]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_PREFLIGHT"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_preflight_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["decision"][
+            "writes_file"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_approval_json["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_write_execution_approvals.json(), list)
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight.json()
+    )
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["stage"] == "V5.6-P113"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["preflight"][
+            "requested_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["preflight"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_approval_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json[
+            "artifact_write_execution_final_write_execution_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_DRY_RUN"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["decision"][
+            "writes_file"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_preflight_json["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_write_execution_preflights.json(), list)
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run.json()
+    )
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["stage"] == "V5.6-P114"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["dry_run"][
+            "simulated_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["dry_run"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_preflight_ready"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json[
+            "artifact_write_execution_final_write_execution_dry_run"
+        ]["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_dry_run_review_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["decision"][
+            "writes_file"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_json["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_runs.json(), list)
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review.json()
+    )
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["stage"] == "V5.6-P115"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["review"][
+            "reviewed_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_dry_run_completed"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_approval_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["decision"][
+            "writes_file"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_review_json["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_dry_run_reviews.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["stage"]
+        == "V5.6-P116"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["approval"][
+            "approved_by"
+        ]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight"
+        ]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["approval"][
+            "confirmation_token_matched"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_dry_run_review_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json[
+            "approval_scope"
+        ]["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_PREFLIGHT"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_preflight_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["decision"][
+            "can_write_model_artifact_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["decision"][
+            "model_artifact_written"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["decision"][
+            "writes_file"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["decision"][
+            "writes_learning_samples_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["decision"][
+            "can_execute_dataset2_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["decision"][
+            "can_start_training_now"
+        ]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approval_json["decision"][
+            "training_started_now"
+        ]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_approvals.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json["stage"]
+        == "V5.6-P117"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "preflight"
+        ]["requested_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "preflight"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_approval_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "artifact_write_execution_final_write_execution_final_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_DRY_RUN"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "decision"
+        ]["model_artifact_written"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "decision"
+        ]["can_execute_dataset2_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflight_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_preflights.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json["stage"]
+        == "V5.6-P118"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "dry_run"
+        ]["simulated_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "dry_run"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_preflight_ready"] == "blocked"
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json["evidence"]["artifact_write_execution_final_write_execution_final_dry_run_manifest_hash"]
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json["evidence"]["simulated_artifact_write_execution_final_write_execution_final_payload_hash"]
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_dry_run"
+        ]["expected_review_decision"]
+        == "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_dry_run_review_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "decision"
+        ]["model_artifact_written"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "decision"
+        ]["writes_learning_samples_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "decision"
+        ]["can_execute_dataset2_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_runs.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "stage"
+        ]
+        == "V5.6-P119"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "review"
+        ]["reviewed_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "review"
+        ][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval"
+        ]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_dry_run_completed"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_final_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_approval_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_review_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_dry_run_reviews.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "stage"
+        ]
+        == "V5.6-P120"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "approval"
+        ]["approved_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "approval"
+        ][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight"
+        ]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "approval"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_dry_run_review_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "approval_scope"
+        ]["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_PREFLIGHT"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_preflight_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approval_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_approvals.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "stage"
+        ]
+        == "V5.6-P121"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "preflight"
+        ]["requested_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "preflight"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_final_approval_accepted"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_DRY_RUN"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflight_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_preflights.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "stage"
+        ]
+        == "V5.6-P122"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "dry_run"
+        ]["simulated_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "dry_run"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_final_preflight_ready"] == "blocked"
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+        "evidence"
+    ]["artifact_write_execution_final_write_execution_final_final_dry_run_manifest_hash"]
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+        "evidence"
+    ]["simulated_artifact_write_execution_final_write_execution_final_final_payload_hash"]
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_review"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_runs.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "stage"
+        ]
+        == "V5.6-P123"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "review"
+        ]["reviewed_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "review"
+        ]["accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "checks"
+        ]
+    }
+    assert check_status["artifact_write_execution_final_write_execution_final_final_dry_run_completed"] == "blocked"
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_final_final_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_approval_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_review_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_dry_run_reviews.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "stage"
+        ]
+        == "V5.6-P124"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "approval"
+        ]["approved_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "approval"
+        ][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "approval"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status["artifact_write_execution_final_write_execution_final_final_dry_run_review_accepted"]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "approval_scope"
+        ]["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "approval_scope"
+        ]["requires_manual_final_final_final_preflight"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_preflight_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approval_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_approvals.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "stage"
+        ]
+        == "V5.6-P125"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "preflight"
+        ]["requested_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "preflight"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status["artifact_write_execution_final_write_execution_final_final_final_approval_accepted"]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]["expected_confirmation_token"]
+        == "RUN_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_DRY_RUN"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_preflight"
+        ]["preflight_only"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflight_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_preflights.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "stage"
+        ]
+        == "V5.6-P126"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "dry_run"
+        ]["simulated_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "dry_run"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status["artifact_write_execution_final_write_execution_final_final_final_preflight_ready"]
+        == "blocked"
+    )
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+        "evidence"
+    ]["artifact_write_execution_final_write_execution_final_final_final_dry_run_manifest_hash"]
+    assert dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+        "evidence"
+    ]["simulated_artifact_write_execution_final_write_execution_final_final_final_payload_hash"]
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run"
+        ]["dry_run_only"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_runs.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "stage"
+        ]
+        == "V5.6-P127"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "review"
+        ]["reviewed_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "review"
+        ]["accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status["artifact_write_execution_final_write_execution_final_final_final_dry_run_completed"]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review"
+        ]["requires_manual_final_final_final_final_approval"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_review_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_dry_run_reviews.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "stage"
+        ]
+        == "V5.6-P128"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "approval"
+        ]["approved_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "approval"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "approval_scope"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "approval_scope"
+        ]["requires_manual_final_final_final_final_preflight"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approval_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_approvals.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "stage"
+        ]
+        == "V5.6-P129"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "preflight"
+        ]["requested_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "preflight"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_approval_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight"
+        ]["preflight_only"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflight_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_preflights.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "stage"
+        ]
+        == "V5.6-P130"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "dry_run"
+        ]["simulated_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "dry_run"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_preflight_ready"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run"
+        ]["dry_run_only"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_runs.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "stage"
+        ]
+        == "V5.6-P131"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "review"
+        ]["reviewed_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "review"
+        ]["accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_completed"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review"
+        ]["requires_manual_final_final_final_final_final_approval"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_dry_run_reviews.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "stage"
+        ]
+        == "V5.6-P132"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "approval"
+        ]["approved_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "approval"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "approval_scope"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "approval_scope"
+        ]["requires_manual_final_final_final_final_final_preflight"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approval_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_approvals.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "stage"
+        ]
+        == "V5.6-P133"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "preflight"
+        ]["requested_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "preflight"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_approval_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight"
+        ]["preflight_only"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_preflights.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "stage"
+        ]
+        == "V5.6-P134"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "dry_run"
+        ]["simulated_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "dry_run"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_preflight_ready"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run"
+        ]["dry_run_only"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_runs.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "stage"
+        ]
+        == "V5.6-P135"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "review"
+        ]["reviewed_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "review"
+        ]["accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_completed"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review"
+        ]["requires_manual_final_final_final_final_final_final_approval"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_reviews.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "stage"
+        ]
+        == "V5.6-P136"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "approval"
+        ]["approved_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "approval"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "approval_scope"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "approval_scope"
+        ]["requires_manual_final_final_final_final_final_final_preflight"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_approvals.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "stage"
+        ]
+        == "V5.6-P137"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "preflight"
+        ]["requested_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "preflight"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_approval_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight"
+        ]["preflight_only"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "decision"
+        ]["can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflights.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "stage"
+        ]
+        == "V5.6-P138"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "dry_run"
+        ]["simulated_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "dry_run"
+        ]["confirmation_token_matched"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_preflight_ready"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run"
+        ]["dry_run_only"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "decision"
+        ]["can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_runs.json(),
+        list,
+    )
+    dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json = (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review.json()
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "stage"
+        ]
+        == "V5.6-P139"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "status"
+        ]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "review"
+        ]["reviewed_by"]
+        == "api-test"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "review"
+        ]["accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval"]
+        is True
+    )
+    check_status = {
+        check["name"]: check["status"]
+        for check in dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "checks"
+        ]
+    }
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_completed"
+        ]
+        == "blocked"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval"
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review"
+        ]["requires_manual_final_final_final_final_final_final_final_approval"]
+        is True
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_write_model_artifact_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["writes_file"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["can_start_training_now"]
+        is False
+    )
+    assert (
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_json[
+            "decision"
+        ]["training_started_now"]
+        is False
+    )
+    assert isinstance(
+        dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_reviews.json(),
+        list,
+    )
+    p140_approval_json = p140_approval.json()
+    assert p140_approval_json["stage"] == "V5.6-P140"
+    assert (
+        p140_approval_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_blocked"
+    )
+    assert p140_approval_json["approval"]["approved_by"] == "api-test"
+    assert (
+        p140_approval_json["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    check_status = {check["name"]: check["status"] for check in p140_approval_json["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        p140_approval_json["approval_scope"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight"
+    )
+    assert (
+        p140_approval_json["approval_scope"]["requires_manual_final_final_final_final_final_final_final_preflight"]
+        is True
+    )
+    assert (
+        p140_approval_json["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert p140_approval_json["decision"]["can_write_model_artifact_now"] is False
+    assert p140_approval_json["decision"]["writes_file"] is False
+    assert p140_approval_json["decision"]["can_start_training_now"] is False
+    assert p140_approval_json["decision"]["training_started_now"] is False
+    assert isinstance(p140_approvals.json(), list)
+    p141_preflight_json = p141_preflight.json()
+    assert p141_preflight_json["stage"] == "V5.6-P141"
+    assert (
+        p141_preflight_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_blocked"
+    )
+    assert p141_preflight_json["preflight"]["requested_by"] == "api-test"
+    assert p141_preflight_json["preflight"]["confirmation_token_matched"] is True
+    check_status = {check["name"]: check["status"] for check in p141_preflight_json["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_approval_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        p141_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run"
+    )
+    assert (
+        p141_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight"
+        ]["requires_manual_final_final_final_final_final_final_final_dry_run"]
+        is True
+    )
+    assert (
+        p141_preflight_json["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_now"
+        ]
+        is False
+    )
+    assert p141_preflight_json["decision"]["can_write_model_artifact_now"] is False
+    assert p141_preflight_json["decision"]["writes_file"] is False
+    assert p141_preflight_json["decision"]["can_start_training_now"] is False
+    assert p141_preflight_json["decision"]["training_started_now"] is False
+    assert isinstance(p141_preflights.json(), list)
+    p142_dry_run_json = p142_dry_run.json()
+    assert p142_dry_run_json["stage"] == "V5.6-P142"
+    assert (
+        p142_dry_run_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_blocked"
+    )
+    assert p142_dry_run_json["dry_run"]["simulated_by"] == "api-test"
+    assert p142_dry_run_json["dry_run"]["confirmation_token_matched"] is True
+    check_status = {check["name"]: check["status"] for check in p142_dry_run_json["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_preflight_ready"
+        ]
+        == "blocked"
+    )
+    assert bool(
+        p142_dry_run_json["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert (
+        p142_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review"
+    )
+    assert (
+        p142_dry_run_json["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert p142_dry_run_json["decision"]["can_write_model_artifact_now"] is False
+    assert p142_dry_run_json["decision"]["writes_file"] is False
+    assert p142_dry_run_json["decision"]["can_start_training_now"] is False
+    assert p142_dry_run_json["decision"]["training_started_now"] is False
+    assert isinstance(p142_dry_runs.json(), list)
+    p143_review_json = p143_review.json()
+    assert p143_review_json["stage"] == "V5.6-P143"
+    assert (
+        p143_review_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_blocked"
+    )
+    assert p143_review_json["review"]["reviewed_by"] == "api-test"
+    assert (
+        p143_review_json["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval"
+        ]
+        is True
+    )
+    check_status = {check["name"]: check["status"] for check in p143_review_json["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_completed"
+        ]
+        == "blocked"
+    )
+    assert (
+        p143_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval"
+    )
+    assert (
+        p143_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review"
+        ]["requires_manual_final_final_final_final_final_final_final_final_approval"]
+        is True
+    )
+    assert (
+        p143_review_json["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_now"
+        ]
+        is False
+    )
+    assert p143_review_json["decision"]["can_write_model_artifact_now"] is False
+    assert p143_review_json["decision"]["writes_file"] is False
+    assert p143_review_json["decision"]["can_start_training_now"] is False
+    assert p143_review_json["decision"]["training_started_now"] is False
+    assert isinstance(p143_reviews.json(), list)
+    p144_approval_json = p144_approval.json()
+    assert p144_approval_json["stage"] == "V5.6-P144"
+    assert (
+        p144_approval_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_blocked"
+    )
+    assert p144_approval_json["approval"]["approved_by"] == "api-test"
+    assert (
+        p144_approval_json["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert p144_approval_json["approval"]["confirmation_token_matched"] is True
+    check_status = {check["name"]: check["status"] for check in p144_approval_json["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        p144_approval_json["approval_scope"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight"
+    )
+    assert (
+        p144_approval_json["approval_scope"]["requires_manual_final_final_final_final_final_final_final_final_preflight"]
+        is True
+    )
+    assert (
+        p144_approval_json["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert p144_approval_json["decision"]["can_write_model_artifact_now"] is False
+    assert p144_approval_json["decision"]["writes_file"] is False
+    assert p144_approval_json["decision"]["can_start_training_now"] is False
+    assert p144_approval_json["decision"]["training_started_now"] is False
+    assert isinstance(p144_approvals.json(), list)
+    p145_preflight_json = p145_preflight.json()
+    assert p145_preflight_json["stage"] == "V5.6-P145"
+    assert (
+        p145_preflight_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_blocked"
+    )
+    assert p145_preflight_json["preflight"]["requested_by"] == "api-test"
+    assert p145_preflight_json["preflight"]["confirmation_token_matched"] is True
+    check_status = {check["name"]: check["status"] for check in p145_preflight_json["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_approval_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        p145_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run"
+    )
+    assert (
+        p145_preflight_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight"
+        ]["requires_manual_final_final_final_final_final_final_final_final_dry_run"]
+        is True
+    )
+    assert (
+        p145_preflight_json["decision"][
+            "can_run_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_now"
+        ]
+        is False
+    )
+    assert p145_preflight_json["decision"]["can_write_model_artifact_now"] is False
+    assert p145_preflight_json["decision"]["writes_file"] is False
+    assert p145_preflight_json["decision"]["can_start_training_now"] is False
+    assert p145_preflight_json["decision"]["training_started_now"] is False
+    assert isinstance(p145_preflights.json(), list)
+    p146_dry_run_json = p146_dry_run.json()
+    assert p146_dry_run_json["stage"] == "V5.6-P146"
+    assert (
+        p146_dry_run_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_blocked"
+    )
+    assert p146_dry_run_json["dry_run"]["simulated_by"] == "api-test"
+    assert p146_dry_run_json["dry_run"]["confirmation_token_matched"] is True
+    check_status = {check["name"]: check["status"] for check in p146_dry_run_json["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_preflight_ready"
+        ]
+        == "blocked"
+    )
+    assert bool(
+        p146_dry_run_json["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_manifest_hash"
+        ]
+    )
+    assert bool(
+        p146_dry_run_json["evidence"][
+            "simulated_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_payload_hash"
+        ]
+    )
+    assert (
+        p146_dry_run_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review"
+    )
+    assert (
+        p146_dry_run_json["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_now"
+        ]
+        is False
+    )
+    assert p146_dry_run_json["decision"]["can_write_model_artifact_now"] is False
+    assert p146_dry_run_json["decision"]["writes_file"] is False
+    assert p146_dry_run_json["decision"]["can_start_training_now"] is False
+    assert p146_dry_run_json["decision"]["training_started_now"] is False
+    assert isinstance(p146_dry_runs.json(), list)
+    p147_review_json = p147_review.json()
+    assert p147_review_json["stage"] == "V5.6-P147"
+    assert (
+        p147_review_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_blocked"
+    )
+    assert p147_review_json["review"]["reviewed_by"] == "api-test"
+    assert (
+        p147_review_json["review"][
+            "accepted_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval"
+        ]
+        is True
+    )
+    check_status = {check["name"]: check["status"] for check in p147_review_json["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_completed"
+        ]
+        == "blocked"
+    )
+    assert (
+        p147_review_json["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_event_id"
+        ]
+        == p146_dry_run_json["event_id"]
+    )
+    assert (
+        p147_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review"
+        ]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval"
+    )
+    assert (
+        p147_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review"
+        ]["expected_confirmation_token"]
+        == "APPROVE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL"
+    )
+    assert (
+        p147_review_json[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review"
+        ]["requires_manual_final_final_final_final_final_final_final_final_final_approval"]
+        is True
+    )
+    assert (
+        p147_review_json["decision"][
+            "can_request_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval_now"
+        ]
+        is False
+    )
+    assert p147_review_json["decision"]["can_write_model_artifact_now"] is False
+    assert p147_review_json["decision"]["writes_file"] is False
+    assert p147_review_json["decision"]["can_start_training_now"] is False
+    assert p147_review_json["decision"]["training_started_now"] is False
+    assert isinstance(p147_reviews.json(), list)
+    p148_approval_json = p148_approval.json()
+    assert p148_approval_json["stage"] == "V5.6-P148"
+    assert (
+        p148_approval_json["status"]
+        == "dataset2_controlled_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_approval_blocked"
+    )
+    assert p148_approval_json["approval"]["approved_by"] == "api-test"
+    assert (
+        p148_approval_json["approval"][
+            "approved_for_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_preflight"
+        ]
+        is True
+    )
+    assert p148_approval_json["approval"]["confirmation_token_matched"] is True
+    check_status = {check["name"]: check["status"] for check in p148_approval_json["checks"]}
+    assert (
+        check_status[
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_accepted"
+        ]
+        == "blocked"
+    )
+    assert (
+        p148_approval_json["evidence"][
+            "artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_dry_run_review_id"
+        ]
+        == p147_review_json["event_id"]
+    )
+    assert (
+        p148_approval_json["approval_scope"]["allowed_next_stage"]
+        == "controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_preflight"
+    )
+    assert (
+        p148_approval_json["approval_scope"]["expected_confirmation_token"]
+        == "PREPARE_DATASET2_CONTROLLED_TRAINING_ARTIFACT_WRITE_EXECUTION_FINAL_WRITE_EXECUTION_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_FINAL_PREFLIGHT"
+    )
+    assert p148_approval_json["approval_scope"]["requires_manual_final_final_final_final_final_final_final_final_final_preflight"] is True
+    assert (
+        p148_approval_json["decision"][
+            "can_prepare_controlled_dataset2_training_artifact_write_execution_final_write_execution_final_final_final_final_final_final_final_final_final_preflight_now"
+        ]
+        is False
+    )
+    assert p148_approval_json["decision"]["can_write_model_artifact_now"] is False
+    assert p148_approval_json["decision"]["writes_file"] is False
+    assert p148_approval_json["decision"]["can_start_training_now"] is False
+    assert p148_approval_json["decision"]["training_started_now"] is False
+    assert isinstance(p148_approvals.json(), list)
     assert cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflight.status_code == 200
     assert cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_preflights.status_code == 200
     assert readiness.json()["decision"]["can_start_training_now"] is False

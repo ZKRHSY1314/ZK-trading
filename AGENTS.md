@@ -1,67 +1,27 @@
-# Agent Operating Rules
+# Codex Operating Rules
 
-This project uses a low-Codex-budget, high-Antigravity-budget workflow.
+This project is a controlled A-share analysis, simulation, monitoring, and review cockpit. Continue development directly with Codex unless the user explicitly asks for an external agent workflow.
 
-Codex is the supervisor. Antigravity is the executor.
+## Safety Boundaries
 
-## Roles
+- Keep live trading disabled by default.
+- Do not add broker login, credential storage, account/fund access, real order placement, real cancellation, or unrestricted screen-click trading.
+- Treat general screen monitoring as read-only. The reviewed `/api/sim-cockpit/*` gateway is the only exception, and only for verified Tonghuashun `mncg` / simulated-account windows with desktop-adapter evidence, explicit `screen_click_simulation` mode, coordinate anchors, `SIMULATION_SCREEN_CLICK` confirmation, and passing simulation risk gates.
+- Never use the simulation cockpit gateway for real accounts, broker login, credentials, fund-account views, bank-transfer views, or live entrusted orders.
+- Do not modify local datasets, SQLite data, or knowledge files unless the task explicitly requires that mutation and includes validation.
+- If data quality, market data, model confidence, or risk checks are unclear, degrade to review-only simulation or monitoring.
 
-- Codex owns product framing, architecture choices, task decomposition, acceptance criteria, risk review, final code review, and small critical fixes.
-- Antigravity owns bulk implementation, repetitive edits, UI wiring, refactors that follow an accepted plan, and first-pass bug fixing.
-- Human approval is required for live trading behavior, account credentials, broker automation, destructive file operations, and dependency changes that materially expand the project.
+## Implementation Loop
 
-## Project Safety Boundaries
+1. Inspect current code and runtime state.
+2. Make the smallest stage-aligned change.
+3. Prove review-only / simulation-only / live-trading-disabled behavior in tests.
+4. Run focused validation before broader checks.
+5. Keep generated data, local databases, caches, `.venv`, `node_modules`, `frontend/dist`, logs, and `.codegraph` out of Git.
 
-- The first version remains simulation-first. Do not enable live trading by default.
-- Do not add code that clicks real broker buy/sell controls.
-- Do not store secrets, cookies, tokens, account numbers, or broker credentials in this repo.
-- Do not overwrite local SQLite data or user knowledge files unless the task explicitly asks for data migration and includes a backup step.
-- Prefer local-only operation. Network data is allowed for market data providers already used by the project.
-- Keep generated outputs out of source unless they are intentional docs or fixtures.
+## Project Conventions
 
-## Required Loop
-
-Every non-trivial task should pass through these stages:
-
-1. Plan
-   - Codex writes the goal, scope, files likely affected, risks, and acceptance checks.
-   - Antigravity must not start broad implementation until the plan is explicit.
-
-2. Implement
-   - Antigravity implements only the accepted task scope.
-   - Keep changes small enough for review.
-   - Preserve existing backend FastAPI, frontend Vue/Vite, and local-first patterns.
-
-3. Self-check
-   - Antigravity runs the relevant checks before handing back.
-   - Backend changes should run focused Python tests or import checks.
-   - Frontend changes should run `npm run build` when UI or TypeScript changes are involved.
-
-4. Review
-   - Codex reviews the diff for correctness, safety, missing tests, and scope creep.
-   - Codex either accepts, requests fixes, or applies final narrow edits.
-
-5. Record
-   - Summarize what changed, what was verified, and what remains risky.
-
-## Implementation Preferences
-
-- Backend code lives under `backend/app`; scripts live under `backend/scripts`.
-- Frontend source lives under `frontend/src`; do not edit `frontend/dist` by hand.
-- Use the existing SQLite store and service boundaries before adding new persistence layers.
-- Keep trading decisions explainable and auditable.
-- If market data fails, degrade to conservative simulation or observation instead of inventing prices.
-- UI should be operational and dense, not a landing page.
-
-## Handoff Format
-
-Use `tools/agent_task_template.md` for Antigravity execution requests.
-
-Antigravity should return:
-
-- Files changed
-- Commands run
-- Test/build results
-- Known failures or skipped checks
-- Questions for Codex review
-
+- Backend code lives under `backend/app`; backend scripts live under `backend/scripts`.
+- Frontend code lives under `frontend/src`; do not edit `frontend/dist`.
+- Prefer existing SQLite/service/API patterns over new infrastructure.
+- Keep trading decisions auditable, explainable, and conservative.

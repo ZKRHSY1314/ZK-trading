@@ -1,5 +1,7 @@
-import json
+﻿import json
 from typing import Any
+from datetime import datetime
+from datetime import timezone
 
 from app.candidates.lifecycle import CandidateLifecycleService
 from app.candidates.local_scanner import LocalCandidateScanner
@@ -8,6 +10,10 @@ from app.data.snapshot_builder import MarketDataError, MarketSnapshotBuilder
 from app.models import MarketSnapshot
 from app.simulation.planner import SimulationPlanner
 from app.storage.sqlite_store import SQLiteStore
+
+
+STALE_LATENCY_MS = 60_000
+CRITICAL_STALE_MS = STALE_LATENCY_MS * 2
 
 
 class MonitoringService:
@@ -50,6 +56,17 @@ class MonitoringService:
         symbols = session.get("symbols", [])[: max(1, min(limit, 20))]
         events = [self._monitor_symbol(int(session["id"]), item) for item in symbols]
         alerts = [alert for event in events for alert in event.get("alerts", [])]
+        risk_blocked_reasons = self._risk_blocked_reasons_from_events(events)
+        quality_gates = self._quality_gates(events)
+        quality_gates_count = len(quality_gates)
+        quality_events_count = len(
+            [item for item in quality_gates if str(item.get("quality_grade") or "").lower() != "good"]
+        )
+        suppressed_by_quality_symbols = list(
+            dict.fromkeys(
+                [item["symbol"] for item in quality_gates if item.get("symbol") and item.get("suppress_actions")]
+            )
+        )
         summary = {
             "session_id": session["id"],
             "event_count": len(events),
@@ -57,6 +74,11 @@ class MonitoringService:
             "allowed_count": len([event for event in events if event.get("allowed")]),
             "alert_count": len(alerts),
             "signals": self._signal_counts(events),
+            "risk_blocked_reasons": risk_blocked_reasons,
+            "quality_gates": quality_gates,
+            "quality_events_count": quality_events_count,
+            "suppressed_by_quality_symbols": suppressed_by_quality_symbols,
+            "quality_next_action": self._quality_next_action(quality_gates),
             "alerts": alerts[:20],
             "events": events,
         }
@@ -201,8 +223,18 @@ class MonitoringService:
         latest = replay.get("latest_event") or {}
         name = latest.get("name")
         risk_blocked_count = len([event for event in events if event.get("signal") == "risk_blocked"])
+        risk_blocked_reasons = self._risk_blocked_reasons_from_events(events)
         allowed_count = len([event for event in events if event.get("allowed")])
         fallback_count = len([event for event in events if event.get("data_source") == "tencent_quote_fallback"])
+        quality_gates = self._quality_gates(events)
+        quality_events_count = len(
+            [item for item in quality_gates if str(item.get("quality_grade") or "").lower() != "good"]
+        )
+        suppressed_by_quality_symbols = list(
+            dict.fromkeys(
+                [item["symbol"] for item in quality_gates if item.get("symbol") and item.get("suppress_actions")]
+            )
+        )
         severity_counts = self._severity_counts(alerts)
         summary = {
             "symbol": symbol,
@@ -212,6 +244,11 @@ class MonitoringService:
             "alert_count": len(alerts),
             "allowed_count": allowed_count,
             "risk_blocked_count": risk_blocked_count,
+            "risk_blocked_reasons": risk_blocked_reasons,
+            "quality_gates": quality_gates,
+            "quality_events_count": quality_events_count,
+            "suppressed_by_quality_symbols": suppressed_by_quality_symbols,
+            "quality_next_action": self._quality_next_action(quality_gates),
             "signals": signals,
             "severity_counts": severity_counts,
             "data_sources": data_sources,
@@ -249,7 +286,7 @@ class MonitoringService:
                 "note": "This review is for simulation and observation only.",
             },
         }
-        title = f"{symbol} {name or ''}监控复盘".strip()
+        title = f"{symbol} {name or ''}鐩戞帶澶嶇洏".strip()
         review_id = self._persist_review(
             session_id=replay.get("session_id"),
             symbol=symbol,
@@ -470,6 +507,15 @@ class MonitoringService:
         try:
             snapshot = MarketSnapshotBuilder().build(symbol, name)
             plan = SimulationPlanner().create_plan(snapshot)
+            plan_payload = plan.model_dump(mode="json")
+            risk_blocked = plan_payload.get("risk_blocked") or []
+            quality_context = self._quality_context_from_snapshot(snapshot, previous)
+            quality_context.update(
+                {
+                    "symbol": snapshot.symbol,
+                    "quality_grade": quality_context.get("quality_grade") or "good",
+                }
+            )
             price_delta = self._delta(snapshot.price, previous.get("price") if previous else None)
             pct_delta = self._delta(snapshot.pct_change, previous.get("pct_change") if previous else None)
             if previous and price_delta == 0 and previous.get("data_source") == snapshot.metadata.get("source"):
@@ -481,7 +527,7 @@ class MonitoringService:
                 snapshot.price,
                 price_delta,
                 pct_delta,
-                plan.model_dump(mode="json"),
+                plan_payload,
                 snapshot,
                 previous,
             )
@@ -498,8 +544,11 @@ class MonitoringService:
                 "action": plan.action,
                 "allowed": plan.allowed,
                 "data_source": snapshot.metadata.get("source"),
+                "quality_context": quality_context,
                 "snapshot": snapshot.model_dump(mode="json"),
-                "plan": plan.model_dump(mode="json"),
+                "plan": plan_payload,
+                "risk_blocked": risk_blocked,
+                "risk_blocked_count": len(risk_blocked),
             }
             payload["summary"] = self._summary(payload)
         except (ValueError, MarketDataError) as exc:
@@ -516,8 +565,25 @@ class MonitoringService:
                 "action": None,
                 "allowed": False,
                 "data_source": None,
-                "summary": f"{symbol} 行情失败: {exc}",
+                "quality_context": {
+                    "symbol": symbol,
+                    "quality_grade": "warn",
+                    "quality_source": "monitoring_service",
+                    "source": "unknown",
+                    "fallback_used": False,
+                    "fallback_chain": [],
+                    "quote_time": None,
+                    "quote_age_ms": None,
+                    "staleness_ms": None,
+                    "gap_status": "unknown",
+                    "missing_fields": ["unknown_snapshot"],
+                    "risk_blocked": [],
+                    "suppress_actions": False,
+                },
+                "summary": f"{symbol} 琛屾儏澶辫触: {exc}",
                 "snapshot": {},
+                "risk_blocked": [],
+                "risk_blocked_count": 0,
                 "plan": {},
             }
 
@@ -529,6 +595,8 @@ class MonitoringService:
 
     def _persist_event(self, payload: dict[str, Any]) -> int:
         with self.store.connect() as conn:
+            snapshot_payload = dict(payload.get("snapshot", {}))
+            snapshot_payload["quality_context"] = payload.get("quality_context")
             cursor = conn.execute(
                 """
                 INSERT INTO monitoring_events(
@@ -552,7 +620,7 @@ class MonitoringService:
                     1 if payload.get("allowed") else 0,
                     payload.get("data_source"),
                     payload.get("summary"),
-                    json.dumps(payload.get("snapshot", {}), ensure_ascii=False, default=str),
+                    json.dumps(snapshot_payload, ensure_ascii=False, default=str),
                     json.dumps(payload.get("plan", {}), ensure_ascii=False, default=str),
                 ),
             )
@@ -667,6 +735,35 @@ class MonitoringService:
             counts[severity] = counts.get(severity, 0) + 1
         return counts
 
+    def _risk_blocked_from_event(self, event: dict[str, Any]) -> list[dict[str, Any]]:
+        if isinstance(event.get("risk_blocked"), list):
+            return [item for item in event.get("risk_blocked") if isinstance(item, dict)]
+
+        plan = event.get("plan")
+        if isinstance(plan, dict) and isinstance(plan.get("risk_blocked"), list):
+            return [item for item in plan.get("risk_blocked") if isinstance(item, dict)]
+
+        return []
+
+    def _risk_blocked_reasons(self, blocked_items: list[dict[str, Any]]) -> list[str]:
+        reasons: list[str] = []
+        for item in blocked_items:
+            rule_id = item.get("rule_id") or "unknown_rule"
+            reason = item.get("reason") or item.get("rule_name") or ""
+            reasons.append(f"{rule_id}:{reason}" if reason else rule_id)
+        return reasons
+
+    def _risk_blocked_reasons_from_events(self, events: list[dict[str, Any]]) -> list[str]:
+        reasons: list[str] = []
+        seen: set[str] = set()
+        for event in events:
+            for reason in self._risk_blocked_reasons(self._risk_blocked_from_event(event)):
+                if reason in seen:
+                    continue
+                seen.add(reason)
+                reasons.append(reason)
+        return reasons
+
     def _delta(self, current: float | None, previous: float | None) -> float | None:
         if current is None or previous is None:
             return None
@@ -703,14 +800,183 @@ class MonitoringService:
         return "observe"
 
     def _summary(self, event: dict[str, Any]) -> str:
-        parts = [f"{event['symbol']} {event.get('name') or ''}".strip(), f"信号 {event['signal']}"]
+        parts = [f"{event['symbol']} {event.get('name') or ''}".strip(), f"淇″彿 {event['signal']}"]
         if event.get("price_delta") is not None:
-            parts.append(f"价格变化 {float(event['price_delta']):+.2f}")
+            parts.append(f"浠锋牸鍙樺寲 {float(event['price_delta']):+.2f}")
         if event.get("pct_delta") is not None:
-            parts.append(f"涨跌幅变化 {float(event['pct_delta']):+.2f}")
+            parts.append(f"娑ㄨ穼骞呭彉鍖?{float(event['pct_delta']):+.2f}")
         if event.get("action"):
-            parts.append(f"模拟动作 {event['action']}")
-        return "；".join(parts)
+            parts.append(f"妯℃嫙鍔ㄤ綔 {event['action']}")
+        return " | ".join(parts)
+
+    def _quality_context_from_snapshot(
+        self,
+        snapshot: MarketSnapshot,
+        previous: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        metadata = snapshot.metadata if snapshot is not None else {}
+        source = str(metadata.get("source") or "unknown")
+        data_quality = str(metadata.get("data_quality") or "unknown")
+        fallback_used = "fallback" in source.lower() or "fallback" in data_quality.lower()
+        fallback_chain = [source] if fallback_used else []
+
+        missing_fields: list[str] = []
+        if snapshot.price is None:
+            missing_fields.append("price")
+        if snapshot.pct_change is None:
+            missing_fields.append("pct_change")
+        if snapshot.high is None:
+            missing_fields.append("high")
+        if snapshot.low is None:
+            missing_fields.append("low")
+        if snapshot.volume is None:
+            missing_fields.append("volume")
+        if not metadata.get("source"):
+            missing_fields.append("snapshot_source")
+
+        quote_time = metadata.get("quote_time")
+        quote_time_dt = self._parse_time_to_datetime(quote_time)
+        quote_age_ms = None
+        if quote_time_dt is not None:
+            quote_age_ms = max(0, int((datetime.now(timezone.utc) - quote_time_dt).total_seconds() * 1000))
+        staleness_ms = quote_age_ms
+
+        prev_quality = previous.get("snapshot", {}).get("quality_context") if previous else None
+        if isinstance(prev_quality, dict) and staleness_ms is None:
+            staleness_ms = prev_quality.get("staleness_ms")
+
+        quality_grade = self._quality_grade(
+            missing_fields=missing_fields,
+            staleness_ms=staleness_ms,
+            fallback_used=fallback_used,
+            quality_source=source,
+        )
+
+        return {
+            "symbol": snapshot.symbol,
+            "quality_grade": quality_grade,
+            "quality_source": "monitoring_service_snapshot",
+            "source": source,
+            "fallback_used": fallback_used,
+            "fallback_chain": fallback_chain,
+            "quote_time": quote_time,
+            "quote_age_ms": quote_age_ms,
+            "staleness_ms": staleness_ms,
+            "gap_status": "missing" if missing_fields else "ok",
+            "missing_fields": missing_fields,
+            "risk_blocked": [],
+            "suppress_actions": quality_grade in {"degrade", "critical"},
+            "data_quality": data_quality,
+            "quality_status": str(metadata.get("quality_status") or "good"),
+            "fallback_reason": metadata.get("fallback_reason"),
+        }
+
+    def _quality_grade(
+        self,
+        *,
+        missing_fields: list[str],
+        staleness_ms: int | None,
+        fallback_used: bool,
+        quality_source: str,
+    ) -> str:
+        if missing_fields:
+            return "critical"
+        if fallback_used:
+            return "degrade"
+        if staleness_ms is not None and staleness_ms >= CRITICAL_STALE_MS:
+            return "critical"
+        if staleness_ms is not None and staleness_ms >= STALE_LATENCY_MS:
+            return "degrade"
+        if "fallback" in quality_source.lower():
+            return "warn"
+        return "good"
+
+    def _quality_gates(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        gates: list[dict[str, Any]] = []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            quality_context = event.get("quality_context")
+            if not isinstance(quality_context, dict):
+                continue
+
+            quality_grade = str(quality_context.get("quality_grade") or "good").lower()
+            risk_blocked = self._risk_blocked_from_event(event)
+            missing_fields = quality_context.get("missing_fields") or []
+            suppress_actions = bool(quality_context.get("suppress_actions", False))
+            if quality_grade == "good" and not risk_blocked and not missing_fields and not suppress_actions:
+                continue
+
+            gate = {
+                "symbol": event.get("symbol"),
+                "quality_grade": quality_grade,
+                "quality_source": quality_context.get("quality_source"),
+                "source": quality_context.get("source"),
+                "fallback_used": bool(quality_context.get("fallback_used", False)),
+                "fallback_chain": quality_context.get("fallback_chain") or [],
+                "quote_time": quality_context.get("quote_time"),
+                "quote_age_ms": quality_context.get("quote_age_ms"),
+                "staleness_ms": quality_context.get("staleness_ms"),
+                "gap_status": quality_context.get("gap_status") or "unknown",
+                "missing_fields": list(missing_fields),
+                "risk_blocked": risk_blocked,
+                "suppress_actions": bool(suppress_actions),
+            }
+            gates.append(gate)
+        return gates
+
+    def _quality_next_action(
+        self,
+        quality_gates: list[dict[str, Any]],
+    ) -> str:
+        quality_events_count = len([item for item in quality_gates if str(item.get("quality_grade") or "").lower() != "good"])
+        grades = {str(gate.get("quality_grade") or "good").lower() for gate in quality_gates}
+        suppressed = [item.get("symbol") for item in quality_gates if item.get("suppress_actions")]
+        if "critical" in grades:
+            return "review_pause"
+        if suppressed:
+            return "degrade_only"
+        if "degrade" in grades or quality_events_count > 0:
+            return "degrade_only"
+        return "continue_with_alerts"
+
+    def _parse_time_to_datetime(self, value: Any) -> datetime | None:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if not isinstance(value, str):
+            return None
+
+        candidates = [
+            "%Y%m%d%H%M%S",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+            "%Y%m%d",
+        ]
+        text = value.strip()
+        if not text:
+            return None
+
+        for pattern in candidates:
+            try:
+                parsed = datetime.strptime(text, pattern)
+                if parsed.tzinfo is None:
+                    return parsed.replace(tzinfo=timezone.utc)
+                return parsed.astimezone(timezone.utc)
+            except ValueError:
+                pass
+
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
 
     def _alerts_for_event(
         self,
@@ -731,8 +997,53 @@ class MonitoringService:
                 "action": event.get("action"),
                 "allowed": event.get("allowed"),
                 "data_source": event.get("data_source"),
+                "risk_blocked": event.get("risk_blocked") if event.get("risk_blocked") else None,
+                "risk_blocked_count": event.get("risk_blocked_count", 0),
+                "risk_blocked_reasons": self._risk_blocked_reasons(self._risk_blocked_from_event(event)),
+                "quality_context": event.get("quality_context"),
             },
         }
+
+        quality_context = event.get("quality_context") or {}
+        quality_grade = str(quality_context.get("quality_grade") or "good").lower()
+        missing_fields = quality_context.get("missing_fields") or []
+        if missing_fields:
+            alerts.append(
+                {
+                    **base,
+                    "severity": "critical",
+                    "alert_type": "market_data_gap",
+                    "message": f"{event['symbol']} quality gap: missing fields {','.join([str(item) for item in missing_fields])}.",
+                }
+            )
+        if quality_context.get("fallback_used"):
+            alerts.append(
+                {
+                    **base,
+                    "severity": "low",
+                    "alert_type": "market_data_fallback",
+                    "message": f"{event['symbol']} used fallback source; execution should be review-only.",
+                }
+            )
+        staleness_ms = quality_context.get("staleness_ms")
+        if isinstance(staleness_ms, (int, float)) and staleness_ms >= STALE_LATENCY_MS:
+            alerts.append(
+                {
+                    **base,
+                    "severity": "medium" if staleness_ms < CRITICAL_STALE_MS else "high",
+                    "alert_type": "market_data_stale",
+                    "message": f"{event['symbol']} data staleness {staleness_ms}ms, defer trading confidence.",
+                }
+            )
+        if quality_grade in {"warn", "degrade", "critical"}:
+            alerts.append(
+                {
+                    **base,
+                    "severity": "low",
+                    "alert_type": "market_data_quality_gate",
+                    "message": f"{event['symbol']} quality gate: {quality_grade}.",
+                }
+            )
 
         if event.get("allowed"):
             alerts.append(
@@ -740,7 +1051,7 @@ class MonitoringService:
                     **base,
                     "severity": "high",
                     "alert_type": "sim_buy_allowed",
-                    "message": f"{event['symbol']} 模拟计划允许买入，需要人工复核。",
+                    "message": f"{event['symbol']} simulation buy plan allowed; manual review required.",
                 }
             )
 
@@ -770,7 +1081,7 @@ class MonitoringService:
                     **base,
                     "severity": "high",
                     "alert_type": "data_error",
-                    "message": f"{event['symbol']} 行情获取失败，监控连续性中断。",
+                    "message": f"{event['symbol']} market data fetch failed; monitoring continuity interrupted.",
                 }
             )
 
@@ -780,7 +1091,7 @@ class MonitoringService:
                     **base,
                     "severity": "medium",
                     "alert_type": "signal_changed",
-                    "message": f"{event['symbol']} 信号从 {previous.get('signal')} 变为 {event.get('signal')}。",
+                    "message": f"{event['symbol']} signal changed from {previous.get('signal')} to {event.get('signal')}.",
                 }
             )
 
@@ -791,7 +1102,7 @@ class MonitoringService:
                     **base,
                     "severity": "medium",
                     "alert_type": "pct_delta",
-                    "message": f"{event['symbol']} 涨跌幅较上一轮变化 {float(pct_delta):+.2f}%。",
+                    "message": f"{event['symbol']} pct delta versus previous event: {float(pct_delta):+.2f}%.",
                 }
             )
 
@@ -805,7 +1116,7 @@ class MonitoringService:
                         **base,
                         "severity": "medium",
                         "alert_type": "price_delta",
-                        "message": f"{event['symbol']} 价格较上一轮变化 {float(price_delta):+.2f}。",
+                        "message": f"{event['symbol']} price delta versus previous event: {float(price_delta):+.2f}.",
                     }
                 )
 
@@ -815,7 +1126,7 @@ class MonitoringService:
                     **base,
                     "severity": "low",
                     "alert_type": "risk_blocked_observe",
-                    "message": f"{event['symbol']} 仍被风控阻断，仅保留观察。",
+                    "message": f"{event['symbol']} remains risk-blocked; observe only.",
                 }
             )
 
@@ -825,7 +1136,7 @@ class MonitoringService:
                     **base,
                     "severity": "low",
                     "alert_type": "fallback_quote",
-                    "message": f"{event['symbol']} 使用只读报价兜底，需在复盘中标注数据源。",
+                    "message": f"{event['symbol']} used read-only fallback quote; mark source during review.",
                 }
             )
 
@@ -840,14 +1151,14 @@ class MonitoringService:
         data_sources: list[str],
     ) -> str:
         if event_count == 0:
-            return "暂无监控事件，不能形成有效复盘。"
+            return "No monitoring events yet; cannot form a valid review."
         if allowed_count > 0:
-            return "出现模拟买入允许信号，但必须人工复核，不能直接转实盘。"
+            return "Simulation buy-allowed events appeared; manual review is required and they must not become live orders."
         if risk_blocked_count == event_count:
-            return "全部监控事件均被风控阻断，当前只适合观察和等待条件改善。"
+            return "All monitoring events are risk-blocked; current state is observe-only."
         if fallback_count == event_count and data_sources == ["tencent_quote_fallback"]:
-            return "全部事件依赖只读报价兜底，行情连续性需要在复盘中单独标注。"
-        return "监控轨迹未出现高优先级买入信号，继续按事件流观察。"
+            return "All events depend on read-only fallback quotes; mark quote continuity separately in review."
+        return "No high-priority buy signal appeared; continue event-stream observation."
 
     def _review_next_actions(
         self,
@@ -856,13 +1167,13 @@ class MonitoringService:
         fallback_count: int,
         event_count: int,
     ) -> list[str]:
-        actions = ["继续记录下一轮监控事件，观察信号是否从 risk_blocked 变化。"]
+        actions = ["Continue recording the next monitoring round and watch whether signals move out of risk_blocked."]
         if allowed_count > 0:
-            actions.append("对模拟允许买入事件做人工复核，检查铁律、仓位和数据源。")
+            actions.append("Manually review simulation buy-allowed events, including discipline, position sizing, and data source.")
         if risk_blocked_count:
-            actions.append("复核高位红线、风险标记和相似失败案例，避免追高。")
+            actions.append("Review high-position red-line, risk labels, and similar failure cases before chasing strength.")
         if fallback_count:
-            actions.append("标注只读报价兜底来源，后续补充更稳定的行情源。")
+            actions.append("Mark read-only fallback quote sources and backfill more stable market data later.")
         if event_count < 3:
-            actions.append("事件数量偏少，先积累更多轮次再判断主力动向。")
+            actions.append("Event count is low; collect more rounds before judging main-force direction.")
         return actions

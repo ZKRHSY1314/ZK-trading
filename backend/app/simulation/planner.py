@@ -2,6 +2,7 @@ from app.config import settings
 from app.decision import DecisionAnalyzer
 from app.learning.phase_matcher import PhaseSimilarityService
 from app.models import CandidateTier, MarketSnapshot, SimulationPlan
+from app.models import RiskBlockCause
 
 
 class SimulationPlanner:
@@ -17,6 +18,19 @@ class SimulationPlanner:
         phase_guardrail = PhaseSimilarityService().latest_guardrail(snapshot.symbol)
 
         if phase_guardrail:
+            risk_blocked = [
+                RiskBlockCause(
+                    rule_id="phase_guardrail",
+                    rule_name="Phase similarity guardrail",
+                    layer="execution",
+                    trigger_level="hard",
+                    reason=str(phase_guardrail["reason"]),
+                    threshold={"match_core_symbol": phase_guardrail.get("best_core_symbol")},
+                    evidence=phase_guardrail,
+                    evidence_snippet=phase_guardrail.get("diagnosis"),
+                    source="simulation_planner",
+                )
+            ]
             return SimulationPlan(
                 symbol=snapshot.symbol,
                 name=snapshot.name,
@@ -35,6 +49,8 @@ class SimulationPlanner:
                     phase_guardrail.get("diagnosis")
                     or "Phase similarity guardrail triggered; simulation stays observe-only.",
                 ],
+                risk_blocked=risk_blocked,
+                blocked_reason=risk_blocked[0].rule_id,
                 live_trading_enabled=settings.enable_live_trading,
             )
 
@@ -51,6 +67,19 @@ class SimulationPlanner:
             completed_distribution_note
             or completed_distribution_profile
         ):
+            risk_blocked = [
+                RiskBlockCause(
+                    rule_id="distribution_training_sample",
+                    rule_name="Completed distribution training sample",
+                    layer="execution",
+                    trigger_level="hard",
+                    reason="Completed distribution training sample; observe only.",
+                    threshold={"sample_scope": "distribution_cycle"},
+                    evidence={"symbol": snapshot.symbol},
+                    evidence_snippet="This sample is used for phase learning and does not generate a buy order.",
+                    source="simulation_planner",
+                )
+            ]
             return SimulationPlan(
                 symbol=snapshot.symbol,
                 name=snapshot.name,
@@ -64,6 +93,8 @@ class SimulationPlanner:
                 stop_loss=self._stop_loss(snapshot),
                 target_price=self._target_price(snapshot),
                 reasons=["Completed distribution training sample; observe only."],
+                risk_blocked=risk_blocked,
+                blocked_reason=risk_blocked[0].rule_id,
                 risk_notes=analysis.risk_notes
                 + [
                     "This sample is used for phase learning and does not generate a buy order.",
@@ -76,6 +107,19 @@ class SimulationPlanner:
         regime_data = MarketRegimeService().get_latest_regime()
         regime = regime_data.get("regime", "neutral")
         if regime == "extreme_risk":
+            risk_blocked = [
+                RiskBlockCause(
+                    rule_id="market_regime_extreme_risk",
+                    rule_name="Market regime guardrail",
+                    layer="execution",
+                    trigger_level="hard",
+                    reason="Market regime blocks new simulated entries.",
+                    threshold={"regime": regime},
+                    evidence=regime_data,
+                    evidence_snippet="Extreme risk regime detected.",
+                    source="simulation_planner",
+                )
+            ]
             return SimulationPlan(
                 symbol=snapshot.symbol,
                 name=snapshot.name,
@@ -89,11 +133,28 @@ class SimulationPlanner:
                 stop_loss=self._stop_loss(snapshot),
                 target_price=self._target_price(snapshot),
                 reasons=regime_data.get("reasons", ["extreme market risk"]),
+                risk_blocked=risk_blocked,
+                blocked_reason=risk_blocked[0].rule_id,
                 risk_notes=analysis.risk_notes + ["Market regime blocks new simulated entries."],
                 live_trading_enabled=settings.enable_live_trading,
             )
 
         if decision.blocked:
+            blocked_causes = list(analysis.risk_blocked) if analysis.risk_blocked else []
+            if not blocked_causes:
+                blocked_causes = [
+                    RiskBlockCause(
+                        rule_id="decision_blocked",
+                        rule_name="Decision hard block",
+                        layer="rules",
+                        trigger_level="hard",
+                        reason="Decision hard block triggered.",
+                        threshold={"symbol": snapshot.symbol},
+                        evidence={"symbol": snapshot.symbol},
+                        evidence_snippet="Decision layer hard block triggered.",
+                        source="simulation_planner",
+                    )
+                ]
             return SimulationPlan(
                 symbol=snapshot.symbol,
                 name=snapshot.name,
@@ -107,6 +168,8 @@ class SimulationPlanner:
                 stop_loss=self._stop_loss(snapshot),
                 target_price=self._target_price(snapshot),
                 reasons=["Hard rule blocked; simulation does not create a buy order."],
+                risk_blocked=blocked_causes,
+                blocked_reason=blocked_causes[0].rule_id,
                 risk_notes=analysis.risk_notes,
                 live_trading_enabled=settings.enable_live_trading,
             )
@@ -122,6 +185,19 @@ class SimulationPlanner:
         allowed = quantity >= settings.min_order_lot
         action = "buy" if allowed else "observe"
         if downgraded_data_quality:
+            risk_blocked = [
+                RiskBlockCause(
+                    rule_id="data_quality_fallback",
+                    rule_name="Data quality fallback guardrail",
+                    layer="execution",
+                    trigger_level="hard",
+                    reason="Low-quality fallback data is observe-only until confirmed by daily bars.",
+                    threshold={"quality": data_quality},
+                    evidence={"symbol": snapshot.symbol, "data_quality": data_quality},
+                    evidence_snippet="Fallback source used for snapshot.",
+                    source="simulation_planner",
+                )
+            ]
             position_ratio = 0
             quantity = 0
             allowed = False
@@ -134,6 +210,8 @@ class SimulationPlanner:
         ]
         if downgraded_data_quality:
             reasons.append("Low-quality fallback data is observe-only until confirmed by daily bars.")
+        else:
+            risk_blocked = []
 
         return SimulationPlan(
             symbol=snapshot.symbol,
@@ -147,6 +225,8 @@ class SimulationPlanner:
             estimated_amount=round(quantity * reference_price, 2),
             stop_loss=self._stop_loss(snapshot),
             target_price=self._target_price(snapshot),
+            risk_blocked=risk_blocked,
+            blocked_reason=risk_blocked[0].rule_id if risk_blocked else None,
             reasons=reasons,
             risk_notes=analysis.risk_notes,
             live_trading_enabled=settings.enable_live_trading,

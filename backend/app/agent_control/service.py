@@ -12,6 +12,7 @@ from app.config import settings
 from app.models import AgentControlEvent, AgentControlTask, AgentTaskInput
 from app.monitoring.service import MonitoringService
 from app.automation.supervisor import AutomationSupervisor
+from app.research.offhour import OffhourResearchLoopService
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -29,7 +30,8 @@ class AgentControlService:
             "auto_discovery_scan",
             "monitoring_run",
             "full_simulation_cycle",
-            "frontend_browser_check"
+            "frontend_browser_check",
+            "offhour_research_loop",
         }
         self.observation_tasks = {
             "local_dashboard_observation"
@@ -318,6 +320,15 @@ class AgentControlService:
                 monitor_limit = task.payload.get("monitor_limit", 5)
                 review_symbol = task.payload.get("review_symbol", "SZ002081")
                 result = AutomationSupervisor().run_cycle(limit=limit, monitor_limit=monitor_limit, review_symbol=review_symbol)
+            elif task.task_type == "offhour_research_loop":
+                result = OffhourResearchLoopService().run(
+                    limit=task.payload.get("limit", 100),
+                    strategy_limit=task.payload.get("strategy_limit", 50),
+                    history_days=task.payload.get("history_days", 240),
+                    write_artifact=task.payload.get("write_artifact", True),
+                    refresh_history=task.payload.get("refresh_history", False),
+                    requested_by=task.requested_by,
+                )
             elif task.task_type == "frontend_browser_check":
                 completed = subprocess.run(
                     ["npm.cmd", "run", "automation:browser"],

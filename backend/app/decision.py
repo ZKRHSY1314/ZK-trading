@@ -1,6 +1,7 @@
 from app.config import settings
 from app.knowledge.repository import KnowledgeRepository
 from app.models import DecisionAnalysis, KnowledgeContext, MarketSnapshot
+from app.models import RiskBlockCause
 from app.rules.engine import RuleEngine
 from app.rules.loader import load_rule_config
 from app.storage.sqlite_store import SQLiteStore
@@ -19,6 +20,7 @@ class DecisionAnalyzer:
         decision = self.engine.evaluate(snapshot)
         keywords = self.repository.keywords_for_stock(snapshot.symbol, snapshot.name)
         rule_ids = [hit.rule_id for hit in decision.hits if hit.passed]
+        risk_blocked = self._risk_blocked(decision)
 
         knowledge = KnowledgeContext(
             principles=self.repository.list_principles(),
@@ -34,10 +36,37 @@ class DecisionAnalyzer:
             decision=decision,
             knowledge=knowledge,
             risk_notes=self._risk_notes(decision, knowledge),
+            risk_blocked=risk_blocked,
             suggested_next_actions=self._suggested_next_actions(decision, knowledge),
         )
         analysis.explanation = self.ai.explain(analysis)
+        analysis.explanation.risk_blocked = analysis.risk_blocked
+        analysis.explanation.risk_blockers = (
+            [item.reason for item in analysis.risk_blocked]
+            if analysis.risk_blocked
+            else analysis.explanation.risk_blockers
+        )
         return analysis
+
+    def _risk_blocked(self, decision) -> list[RiskBlockCause]:
+        blocked: list[RiskBlockCause] = []
+        for hit in decision.hits:
+            if not hit.hard_block or hit.passed:
+                continue
+            blocked.append(
+                RiskBlockCause(
+                    rule_id=hit.rule_id,
+                    rule_name=hit.name,
+                    layer=getattr(hit, "layer", "rules"),
+                    trigger_level=getattr(hit, "trigger_level", "hard"),
+                    reason=hit.reason,
+                    threshold=getattr(hit, "threshold", None),
+                    evidence=getattr(hit, "evidence", None),
+                    evidence_snippet=getattr(hit, "evidence_snippet", None),
+                    source=getattr(hit, "source", "rules-engine"),
+                )
+            )
+        return blocked
 
     def _risk_notes(self, decision, knowledge: KnowledgeContext) -> list[str]:
         notes: list[str] = []

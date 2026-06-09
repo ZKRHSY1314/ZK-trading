@@ -51,6 +51,7 @@ def test_screen_monitoring_capabilities_are_read_only(test_db):
     assert "screen_readiness_digest_history_release_readiness" in capabilities["allowed_modes"]
     assert "screen_readiness_digest_history_approval_review" in capabilities["allowed_modes"]
     assert "screen_readiness_digest_history_release_package" in capabilities["allowed_modes"]
+    assert "tonghuashun_simulation_observation" in capabilities["allowed_modes"]
 
 
 def test_screen_observation_creates_session_and_summary(test_db):
@@ -120,6 +121,59 @@ def test_screen_observation_safety_blocks_dangerous_payload_terms(test_db):
     assert observation["raw_payload"]["blocked_from_execution"] is True
     assert any("click" in item for item in observation["warnings"])
     assert any("submit_order" in item for item in observation["warnings"])
+
+
+def test_tonghuashun_simulation_observation_is_metadata_only(test_db):
+    _reset_screen_monitoring(test_db)
+    service = ScreenMonitoringService()
+
+    observation = service.record_tonghuashun_simulation_observation(
+        window_title="网上股票交易系统5.0 - mncg110(1****9599)",
+        detected_items=[
+            {"type": "cash_balance", "value": "200000.00", "source": "manual_read"},
+            {"type": "position_count", "value": 0, "source": "manual_read"},
+        ],
+        raw_payload={"mode": "mncg", "visible_controls": ["buy", "sell", "cancel"]},
+        observed_by="tester",
+        note="manual simulation window inspection",
+    )
+    latest = service.latest_session()
+
+    assert observation["inserted"] is True
+    assert observation["source"] == "tonghuashun_simulation"
+    assert observation["app_status"] == "simulation_observed"
+    assert observation["raw_payload"]["stage"] == "V4.5-P22"
+    assert observation["raw_payload"]["simulation_mode_detected"] is True
+    assert observation["raw_payload"]["screen_click_executed"] is False
+    assert observation["raw_payload"]["keyboard_type_executed"] is False
+    assert observation["raw_payload"]["broker_action_executed"] is False
+    assert observation["raw_payload"]["order_action_executed"] is False
+    assert observation["raw_payload"]["credential_accessed"] is False
+    assert observation["tonghuashun_simulation"]["training_label_ready"] is True
+    assert observation["tonghuashun_simulation"]["automation_actions_allowed"] is False
+    assert observation["tonghuashun_simulation"]["manual_order_entry_required"] is True
+    assert observation["review_only"] is True
+    assert observation["simulation_only"] is True
+    assert observation["live_trading_enabled"] is False
+    assert latest["summary"]["status_counts"]["simulation_observed"] == 1
+
+
+def test_tonghuashun_simulation_observation_blocks_action_payload_terms(test_db):
+    _reset_screen_monitoring(test_db)
+    service = ScreenMonitoringService()
+
+    observation = service.record_tonghuashun_simulation_observation(
+        window_title="网上股票交易系统5.0 - mncg110(1****9599)",
+        raw_payload={"requested_action": "click submit_order"},
+        observed_by="tester",
+    )
+
+    assert observation["raw_payload"]["blocked_from_execution"] is True
+    assert any("click" in item for item in observation["warnings"])
+    assert any("submit_order" in item for item in observation["warnings"])
+    assert observation["raw_payload"]["screen_click_executed"] is False
+    assert observation["raw_payload"]["order_action_executed"] is False
+    assert observation["live_trading_enabled"] is False
 
 
 def test_screen_fixture_replay_records_observation_without_real_capture(test_db):
@@ -1167,6 +1221,16 @@ def test_screen_monitoring_api_smoke(client, test_db):
         json={"name": "test_screen_watch", "source": "mock", "window_title": "Mock Trading Client"},
     )
     observation_resp = client.post("/api/screen-monitoring/observations/mock")
+    tonghuashun_simulation_resp = client.post(
+        "/api/screen-monitoring/observations/tonghuashun-simulation",
+        json={
+            "window_title": "网上股票交易系统5.0 - mncg110(1****9599)",
+            "detected_items": [{"type": "cash_balance", "value": "200000.00", "source": "manual_read"}],
+            "raw_payload": {"mode": "mncg", "visible_controls": ["buy", "sell", "cancel"]},
+            "observed_by": "api-smoke",
+            "note": "read-only Tonghuashun simulation window observation",
+        },
+    )
     fixture_resp = client.post(
         "/api/screen-monitoring/observations/fixture-replay",
         json={"fixture_name": "trading_client_online"},
@@ -1205,6 +1269,7 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert empty_latest_resp.status_code == 200
     assert session_resp.status_code == 200
     assert observation_resp.status_code == 200
+    assert tonghuashun_simulation_resp.status_code == 200
     assert fixture_resp.status_code == 200
     assert preflight_resp.status_code == 200
     assert capture_stub_resp.status_code == 200
@@ -1422,6 +1487,13 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert observation_resp.json()["review_only"] is True
     assert observation_resp.json()["simulation_only"] is True
     assert observation_resp.json()["live_trading_enabled"] is False
+    assert tonghuashun_simulation_resp.json()["source"] == "tonghuashun_simulation"
+    assert tonghuashun_simulation_resp.json()["app_status"] == "simulation_observed"
+    assert tonghuashun_simulation_resp.json()["raw_payload"]["stage"] == "V4.5-P22"
+    assert tonghuashun_simulation_resp.json()["raw_payload"]["screen_click_executed"] is False
+    assert tonghuashun_simulation_resp.json()["raw_payload"]["order_action_executed"] is False
+    assert tonghuashun_simulation_resp.json()["tonghuashun_simulation"]["automation_actions_allowed"] is False
+    assert tonghuashun_simulation_resp.json()["live_trading_enabled"] is False
     assert fixture_resp.json()["real_screen_capture"] is False
     assert fixture_resp.json()["ocr_executed"] is False
     assert fixture_resp.json()["observation"]["raw_payload"]["fixture_replay"] is True
@@ -1454,5 +1526,5 @@ def test_screen_monitoring_api_smoke(client, test_db):
     assert reject_resp.json()["review_status"] == "rejected"
     assert reject_resp.json()["live_trading_enabled"] is False
     assert observations_resp.json()
-    assert latest_resp.json()["summary"]["observation_count"] == 4
+    assert latest_resp.json()["summary"]["observation_count"] == 5
     assert client.get("/health").json()["live_trading_enabled"] is False
