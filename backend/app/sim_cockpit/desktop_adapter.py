@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -77,6 +78,14 @@ EXECUTION_MODES = {
 
 SCREEN_CLICK_CONFIRMATION = "SIMULATION_SCREEN_CLICK"
 MIN_CLICK_PLAN_CONFIDENCE = 0.8
+DEFAULT_DESKTOP_SCAN_MAX_CANDIDATES = 6
+
+TONGHUASHUN_WINDOW_HINT_TERMS = (
+    "\u7f51\u4e0a\u80a1\u7968\u4ea4\u6613\u7cfb\u7edf",
+    "\u80a1\u7968\u4ea4\u6613\u7cfb\u7edf",
+    "\u4e0b\u5355",
+    "mncg",
+)
 
 
 def _json_dumps(payload: Any) -> str:
@@ -128,6 +137,8 @@ class TonghuashunDesktopAdapter:
             "ocr_supported": False,
             "requires_desktop_verified_window": True,
             "requires_coordinate_anchors_for_click": True,
+            "scan_strategy": "two_phase_candidate_enrichment",
+            "max_enriched_windows": self._max_enriched_windows(),
             "allowed_execution_modes": sorted(EXECUTION_MODES),
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -346,7 +357,7 @@ class TonghuashunDesktopAdapter:
 
     def _enumerate_windows(self) -> list[dict[str, Any]]:
         user32 = ctypes.windll.user32
-        results: list[dict[str, Any]] = []
+        lightweight: list[dict[str, Any]] = []
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         def enum_proc(hwnd: int, _lparam: int) -> bool:
@@ -359,11 +370,7 @@ class TonghuashunDesktopAdapter:
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             process_path = self._process_path(int(pid.value))
-            child_texts = self._child_texts(hwnd, limit=180)
-            uia = self._uia_snapshot(int(hwnd))
-            if uia.get("status") == "available":
-                child_texts = [*child_texts, *uia.get("texts", [])[:80]]
-            results.append(
+            lightweight.append(
                 {
                     "hwnd": int(hwnd),
                     "pid": int(pid.value),
@@ -371,24 +378,69 @@ class TonghuashunDesktopAdapter:
                     "process_path": process_path,
                     "process_name": Path(process_path).name if process_path else None,
                     "rect": rect,
-                    "child_texts": child_texts,
-                    "uia": uia,
-                    "coordinate_anchors": uia.get("coordinate_anchors") or {},
+                    "child_texts": [],
+                    "uia": {"status": "skipped", "reason": "not_enriched_candidate"},
+                    "coordinate_anchors": {},
                 }
             )
             return True
 
         user32.EnumWindows(enum_proc, 0)
+        max_candidates = self._max_enriched_windows()
+        candidates = [item for item in lightweight if self._should_enrich_window(item)]
+        candidates.sort(key=self._cheap_candidate_score, reverse=True)
+        enrich_hwnds = {int(item["hwnd"]) for item in candidates[:max_candidates]}
+        results: list[dict[str, Any]] = []
+        for item in lightweight:
+            if int(item["hwnd"]) not in enrich_hwnds:
+                results.append(item)
+                continue
+            child_texts = self._child_texts(int(item["hwnd"]), limit=80)
+            uia = self._uia_snapshot(int(item["hwnd"]))
+            if uia.get("status") == "available":
+                child_texts = [*child_texts, *uia.get("texts", [])[:80]]
+            results.append(
+                {
+                    **item,
+                    "child_texts": child_texts,
+                    "uia": uia,
+                    "coordinate_anchors": uia.get("coordinate_anchors") or {},
+                }
+            )
         return results
 
-    def _score_window(self, window: dict[str, Any], target_title: str | None) -> dict[str, Any]:
-        identity_text = " ".join(
+    def _max_enriched_windows(self) -> int:
+        try:
+            raw = int(os.getenv("SIM_COCKPIT_MAX_ENRICHED_WINDOWS", str(DEFAULT_DESKTOP_SCAN_MAX_CANDIDATES)))
+        except ValueError:
+            raw = DEFAULT_DESKTOP_SCAN_MAX_CANDIDATES
+        return max(1, min(raw, 20))
+
+    def _identity_text(self, window: dict[str, Any]) -> str:
+        return " ".join(
             [
                 str(window.get("title") or ""),
                 str(window.get("process_path") or ""),
                 str(window.get("process_name") or ""),
             ]
         )
+
+    def _should_enrich_window(self, window: dict[str, Any]) -> bool:
+        identity_text = self._identity_text(window)
+        if _terms_found(identity_text, TONGHUASHUN_PROCESS_TERMS):
+            return True
+        return bool(_terms_found(identity_text, TONGHUASHUN_WINDOW_HINT_TERMS))
+
+    def _cheap_candidate_score(self, window: dict[str, Any]) -> int:
+        identity_text = self._identity_text(window)
+        return (
+            len(_terms_found(identity_text, TONGHUASHUN_PROCESS_TERMS)) * 10
+            + len(_terms_found(identity_text, TONGHUASHUN_WINDOW_HINT_TERMS)) * 4
+            + len(_terms_found(identity_text, SIMULATION_POSITIVE_TERMS)) * 3
+        )
+
+    def _score_window(self, window: dict[str, Any], target_title: str | None) -> dict[str, Any]:
+        identity_text = self._identity_text(window)
         visible_text = " ".join(
             [
                 " ".join(str(item) for item in window.get("child_texts") or []),

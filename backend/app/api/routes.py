@@ -15,7 +15,6 @@ from app.decision import DecisionAnalyzer
 from app.experience.code_evolution import CodeEvolutionService
 from app.experience.memory import ExperienceMemoryService
 from app.knowledge.repository import KnowledgeRepository
-from app.learning.dataset2_readiness import Dataset2TrainingReadinessService
 from app.learning.phase_matcher import PhaseSimilarityService
 from app.learning.phase_replay import MainForcePhaseReplayService, PhaseReplayError
 from app.learning.service import LearningService
@@ -37,15 +36,41 @@ from app.models import (
     ApprovalInput,
     CalibrationReviewInput,
 )
+
+
+class Dataset2TrainingReadinessService:
+    """Lazy proxy for the legacy, very large Dataset2 readiness workflow.
+
+    Most API traffic does not use the old V5.6 approval-chain endpoints. Keeping
+    the 60k+ line module out of app startup makes health checks, TestClient, and
+    weekend research loops much faster while preserving the public endpoints.
+    """
+
+    def __new__(cls, *args, **kwargs):
+        from app.learning.dataset2_readiness import (
+            Dataset2TrainingReadinessService as _Dataset2TrainingReadinessService,
+        )
+
+        return _Dataset2TrainingReadinessService(*args, **kwargs)
+
+
 from app.monitoring.service import MonitoringService
 from app.rules.engine import RuleEngine
 from app.rules.loader import load_rule_config
 from app.simulation.broker import SimulatedBroker
 from app.simulation.planner import SimulationPlanner
 from app.storage.sqlite_store import SQLiteStore
-from app.trade_execution.gateway import TradeExecutionGatewayService
 
 router = APIRouter(prefix="/api")
+
+
+class TradeExecutionGatewayService:
+    """Lazy proxy for legacy V5.5 review-only gateway endpoints."""
+
+    def __new__(cls, *args, **kwargs):
+        from app.trade_execution.gateway import TradeExecutionGatewayService as _TradeExecutionGatewayService
+
+        return _TradeExecutionGatewayService(*args, **kwargs)
 
 CYCLE_LIMIT = 5
 CYCLE_MONITOR_LIMIT = 5
@@ -5532,6 +5557,22 @@ def latest_offhour_model_candidate() -> dict:
     from app.research.offhour import OffhourResearchLoopService
 
     return OffhourResearchLoopService().latest_model_candidate()
+
+
+@router.get("/research/offhour/simulation-review-plan/latest")
+def latest_offhour_simulation_review_plan(limit: int = 12) -> dict:
+    from app.research.offhour import OffhourResearchLoopService
+
+    return OffhourResearchLoopService().latest_simulation_review_plan(limit=limit)
+
+
+@router.get("/research/offhour/strategy-learning-packet/latest")
+def latest_offhour_strategy_learning_packet(limit: int = 8) -> dict:
+    from app.research.offhour import OffhourResearchLoopService
+
+    return OffhourResearchLoopService().latest_strategy_learning_packet(limit=limit)
+
+
 @router.post("/screen-monitoring/observations/fixture-replay")
 def replay_screen_monitoring_fixture(input_data: ScreenFixtureReplayInput | None = None) -> dict:
     from app.screen_monitoring.service import ScreenMonitoringService

@@ -3,13 +3,17 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DATABASE_PATH = PROJECT_ROOT / "trading_local.sqlite3"
+
+
 class Settings(BaseSettings):
     app_name: str = "A股AI交易驾驶舱"
     app_env: str = "local"
-    database_path: Path = Path("./trading_local.sqlite3")
+    database_path: Path = DEFAULT_DATABASE_PATH
     legacy_data_dir: Path = Path("../../数据集1")
     enable_live_trading: bool = False
-    default_cash: float = 100_000
+    default_cash: float = 200_000
     min_order_lot: int = 100
     commission_rate: float = 0.0003
     stamp_tax_rate: float = 0.0005
@@ -30,4 +34,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
+def _resolve_project_relative_path(value: Path) -> Path:
+    if str(value) == ":memory:" or value.is_absolute():
+        return value
+    return (PROJECT_ROOT / value).resolve()
+
+
 settings = Settings()
+settings.database_path = _resolve_project_relative_path(settings.database_path)

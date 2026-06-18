@@ -66,6 +66,18 @@ class AutomationSupervisor:
                 "allowed_actions": ["simulated_buy", "simulated_sell", "simulated_cancel", "simulated_submit_audit"],
                 "default_execution_mode": "dry_run_screen",
                 "screen_click_execution_mode": "screen_click_simulation_requires_explicit_confirmation",
+                "staged_position_policy": {
+                    "simulated_cash_base": settings.default_cash,
+                    "initial_probe": "100 shares, about 3% simulated cash max for first screen click",
+                    "add_on_rule": "add only after verified holding/readback, fresh quote, all gates passing, and continued markup confirmation",
+                    "relaxed_blockers": ["constitution_no_high_position"],
+                    "hard_blocks_remain": [
+                        "phase_distribution_guardrail",
+                        "completed_distribution_training_sample",
+                        "fallback_or_stale_data",
+                        "real_account_or_broker_terms",
+                    ],
+                },
                 "requires": [
                     "tonghuashun_process_marker",
                     "window_or_page_text",
@@ -696,31 +708,35 @@ class AutomationSupervisor:
                 }
                 phase_guardrail = self._phase_guardrail_for(symbol, phase_matches)
                 if phase_guardrail:
-                    item["action"] = "observe"
-                    item["allowed"] = False
-                    item["quantity"] = 0
                     item["phase_guardrail"] = phase_guardrail
-                    if item["status"] != "blocked":
-                        item["status"] = "blocked"
-                        item["reason"] = "phase_guardrail_hit"
-                    if not item.get("risk_blocked"):
-                        item["risk_blocked"] = [
-                            {
-                                "rule_id": "phase_guardrail",
-                                "rule_name": "Phase similarity guardrail",
-                                "layer": "execution",
-                                "trigger_level": "hard",
-                                "reason": "Phase similarity guardrail triggered",
-                                "threshold": {
-                                    "best_core_symbol": phase_guardrail.get("best_core_symbol")
-                                },
-                                "evidence": phase_guardrail,
-                                "evidence_snippet": phase_guardrail.get("diagnosis"),
-                                "source": "automation_supervisor",
-                            }
-                        ]
-                        item["risk_blocked_count"] = len(item["risk_blocked"])
-                        item["blocked_reason"] = item["risk_blocked"][0].get("rule_id")
+                    if self._plan_relaxes_phase_guardrail(plan):
+                        item["phase_guardrail_status"] = "relaxed_for_simulation_probe"
+                        item["phase_guardrail"]["relaxed_for_simulation_probe"] = True
+                    else:
+                        item["action"] = "observe"
+                        item["allowed"] = False
+                        item["quantity"] = 0
+                        if item["status"] != "blocked":
+                            item["status"] = "blocked"
+                            item["reason"] = "phase_guardrail_hit"
+                        if not item.get("risk_blocked"):
+                            item["risk_blocked"] = [
+                                {
+                                    "rule_id": "phase_guardrail",
+                                    "rule_name": "Phase similarity guardrail",
+                                    "layer": "execution",
+                                    "trigger_level": "hard",
+                                    "reason": "Phase similarity guardrail triggered",
+                                    "threshold": {
+                                        "best_core_symbol": phase_guardrail.get("best_core_symbol")
+                                    },
+                                    "evidence": phase_guardrail,
+                                    "evidence_snippet": phase_guardrail.get("diagnosis"),
+                                    "source": "automation_supervisor",
+                                }
+                            ]
+                            item["risk_blocked_count"] = len(item["risk_blocked"])
+                            item["blocked_reason"] = item["risk_blocked"][0].get("rule_id")
                 if not plan.allowed:
                     self._event(
                         run_id,
@@ -906,6 +922,14 @@ class AutomationSupervisor:
             "samples": samples,
         }
 
+    def _plan_relaxes_phase_guardrail(self, plan: Any) -> bool:
+        reasons = getattr(plan, "reasons", []) or []
+        return bool(
+            getattr(plan, "allowed", False)
+            and getattr(plan, "action", None) == "buy"
+            and any("Simulation-only phase guardrail relaxation" in str(reason) for reason in reasons)
+        )
+
     def _run_phase_guardrails(self, scan: dict[str, Any]) -> list[dict[str, Any]]:
         try:
             from app.learning.phase_matcher import PhaseSimilarityService
@@ -1016,6 +1040,7 @@ class AutomationSupervisor:
         automation = self.run_once(limit=limit)
         cycle["automation"] = automation
         automation_status = automation.get("status", "failed")
+        automation_run_id = automation.get("run_id")
         run_steps.append(
             {
                 "step_id": "automation_once",
@@ -1144,20 +1169,21 @@ class AutomationSupervisor:
                 gate_quality_grade = str(gate.get("quality_grade") or "good").lower()
                 if gate_quality_grade == "good":
                     continue
-                self._event(
-                    run_id,
-                    "automation_monitoring_quality_gate",
-                    gate.get("symbol"),
-                    {
-                        "run_id": run_id,
-                        "symbol": gate.get("symbol"),
-                        "quality_context": gate,
-                        "risk_blocked": gate.get("risk_blocked") or [],
-                        "suppress_actions": bool(gate.get("suppress_actions")),
-                        "quality_grade": gate_quality_grade,
-                        "quality_source": gate.get("quality_source"),
-                    },
-                )
+                if automation_run_id is not None:
+                    self._event(
+                        int(automation_run_id),
+                        "automation_monitoring_quality_gate",
+                        gate.get("symbol"),
+                        {
+                            "run_id": automation_run_id,
+                            "symbol": gate.get("symbol"),
+                            "quality_context": gate,
+                            "risk_blocked": gate.get("risk_blocked") or [],
+                            "suppress_actions": bool(gate.get("suppress_actions")),
+                            "quality_grade": gate_quality_grade,
+                            "quality_source": gate.get("quality_source"),
+                        },
+                    )
                 if cycle.get("quality_next_action") == "review_pause":
                     failed_steps.append(
                     {

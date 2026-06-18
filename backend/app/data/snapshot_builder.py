@@ -222,7 +222,7 @@ class MarketSnapshotBuilder:
             open=self._float(quote.get("open")),
             close=price,
             volume=self._float(quote.get("volume")),
-            amount=self._float(quote.get("amount")),
+            amount=self._quote_amount_yuan(quote.get("amount")),
             pb=self._float(profile.get("pb")),
             market_cap_billion=market_cap_b,
             historical_high=historical_high,
@@ -304,6 +304,13 @@ class MarketSnapshotBuilder:
         except TypeError:
             pass
         return float(value)
+
+    def _quote_amount_yuan(self, value: Any) -> float | None:
+        amount = self._float(value)
+        if amount is None:
+            return None
+        # Tencent quote field 37 is turnover amount in ten-thousand yuan.
+        return amount * 10_000
 
     def _profile_pct(self, value: Any) -> float | None:
         result = self._float(value)

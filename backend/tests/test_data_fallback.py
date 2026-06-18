@@ -24,3 +24,9 @@ def test_successful_data_fetch(mock_provider):
     assert snapshot.metadata["rolling_high_250"] == 10.6
     assert snapshot.metadata["high_window_used"] == 250
     assert snapshot.metadata["limit_up_threshold"] == 9.8
+
+
+def test_tencent_quote_amount_is_converted_from_ten_thousand_yuan(mock_provider):
+    builder = MarketSnapshotBuilder(provider=mock_provider)
+
+    assert builder._quote_amount_yuan("345626") == 3_456_260_000

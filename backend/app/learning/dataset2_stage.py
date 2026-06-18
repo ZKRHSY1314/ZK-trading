@@ -131,12 +131,13 @@ class Dataset2StageService:
             "label_counts": profile["label_counts"],
             "source_counts": profile["source_counts"],
             "status_counts": profile["status_counts"],
+            "rule_family_performance_memory": profile["rule_family_performance_memory"],
             "split": profile["split"],
             "training_allowed": profile["training_allowed"],
             "blocked_reasons": profile["blocked_reasons"],
             "latest_run": latest_run,
             "dry_run_available": True,
-            "training_mode": "in_memory_majority_label_baseline",
+            "training_mode": "in_memory_grouped_label_baseline",
             "model_artifact_write_enabled": False,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -168,8 +169,9 @@ class Dataset2StageService:
             "label_counts": profile["label_counts"],
             "source_counts": profile["source_counts"],
             "status_counts": profile["status_counts"],
+            "rule_family_performance_memory": profile["rule_family_performance_memory"],
             "split": profile["split"],
-            "training_mode": "in_memory_majority_label_baseline",
+            "training_mode": "in_memory_grouped_label_baseline",
             "training_executed": False,
             "model_artifact_written": False,
             "writes_learning_samples": False,
@@ -180,25 +182,18 @@ class Dataset2StageService:
         if profile["training_allowed"]:
             train_samples = profile["train_samples"]
             validation_samples = profile["validation_samples"]
-            majority_label = self._majority_label(train_samples)
-            correct = sum(1 for item in validation_samples if item["training_label"] == majority_label)
-            validation_count = len(validation_samples)
-            accuracy = correct / validation_count if validation_count else 0.0
+            model = self._grouped_label_model(train_samples)
+            metrics = self._evaluate_grouped_label_model(model, validation_samples)
+            model_summary = {key: value for key, value in model.items() if key != "rules"}
             result.update(
                 {
                     "status": "completed",
                     "training_executed": True,
-                    "model": {
-                        "kind": "majority_label_classifier",
-                        "majority_label": majority_label,
-                        "feature_policy": "audit_metadata_only",
-                        "artifact_written": False,
-                    },
+                    "model": model_summary,
                     "metrics": {
                         "train_count": len(train_samples),
-                        "validation_count": validation_count,
-                        "validation_accuracy": accuracy,
-                        "correct_validation_count": correct,
+                        "validation_count": len(validation_samples),
+                        **metrics,
                     },
                 }
             )
@@ -353,7 +348,7 @@ class Dataset2StageService:
         staged = self.store.fetch_all(
             """
             SELECT id, pattern_id, action_label, risk_level, split_tag,
-                   stock_code, signal_date, status, quality_flags_json, created_at
+                   stock_code, signal_date, status, normalized_json, quality_flags_json, created_at
             FROM dataset2_staging_records
             ORDER BY id DESC
             LIMIT ?
@@ -361,11 +356,15 @@ class Dataset2StageService:
             (remaining,),
         )
         for row in staged:
+            normalized = _json_loads(row.get("normalized_json"), {})
             samples.append(
                 {
                     "source": "dataset2_staging_records",
                     "source_id": row["id"],
                     "symbol": row.get("stock_code"),
+                    "pattern_id": row.get("pattern_id"),
+                    "pattern_name": normalized.get("pattern_name"),
+                    "category": normalized.get("category"),
                     "action": row.get("action_label"),
                     "status": row.get("status"),
                     "risk_level": row.get("risk_level"),
@@ -389,6 +388,9 @@ class Dataset2StageService:
                         "source": item.get("source"),
                         "action": item.get("action"),
                         "status": item.get("status"),
+                        "pattern_id": item.get("pattern_id"),
+                        "pattern_name": item.get("pattern_name"),
+                        "category": item.get("category"),
                         "risk_level": item.get("risk_level"),
                         "has_symbol": bool(item.get("symbol")),
                         "has_price": item.get("price") is not None,
@@ -417,6 +419,7 @@ class Dataset2StageService:
             label_counts[label] = label_counts.get(label, 0) + 1
             source_counts[source] = source_counts.get(source, 0) + 1
             status_counts[status] = status_counts.get(status, 0) + 1
+        rule_family_memory = self._rule_family_performance_memory(samples)
 
         split_index = int(len(samples) * 0.7)
         if len(samples) >= 2:
@@ -437,6 +440,7 @@ class Dataset2StageService:
             "label_counts": label_counts,
             "source_counts": source_counts,
             "status_counts": status_counts,
+            "rule_family_performance_memory": rule_family_memory,
             "split": {
                 "policy": "time_ordered_70_30",
                 "train_count": len(train_samples),
@@ -463,6 +467,232 @@ class Dataset2StageService:
             return action
         return "unknown"
 
+    def _rule_family_performance_memory(self, samples: list[dict[str, Any]]) -> dict[str, Any]:
+        staging_groups = self._staging_rule_family_groups(samples)
+        backtest_groups = self._offhour_backtest_rule_family_groups(limit=12)
+        execution_groups = self._sim_cockpit_execution_groups(samples)
+        backtest_trade_count = sum(int(group.get("trade_count") or 0) for group in backtest_groups)
+        positive_groups = [
+            group
+            for group in backtest_groups
+            if int(group.get("trade_count") or 0) > 0 and float(group.get("average_return_pct") or 0) > 0
+        ]
+        return {
+            "schema_version": "dataset2_rule_family_performance_memory.v1",
+            "status": "ready" if staging_groups or backtest_groups or execution_groups else "empty",
+            "summary": {
+                "staging_group_count": len(staging_groups),
+                "backtest_group_count": len(backtest_groups),
+                "backtest_trade_count": backtest_trade_count,
+                "positive_backtest_group_count": len(positive_groups),
+                "execution_group_count": len(execution_groups),
+                "source": "dataset2_staging_records + offhour_research_runs + sim_cockpit_actions/readbacks",
+            },
+            "top_staging_groups": staging_groups[:10],
+            "top_backtest_groups": backtest_groups[:10],
+            "top_execution_groups": execution_groups[:10],
+            "interpretation": [
+                "Backtest groups summarize review-only Dataset2 signal trades; they are not production strategy rules.",
+                "Execution groups summarize simulated action/readback quality and cannot grant order permission.",
+                "Use this memory to prioritize further dry-run and research review, not to bypass portfolio or sim-cockpit gates.",
+            ],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _staging_rule_family_groups(self, samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        groups: dict[str, dict[str, Any]] = {}
+        for sample in samples:
+            if sample.get("source") != "dataset2_staging_records":
+                continue
+            key = self._rule_family_key(sample)
+            group = groups.setdefault(
+                key,
+                {
+                    "key": key,
+                    "pattern_id": sample.get("pattern_id"),
+                    "pattern_name": sample.get("pattern_name"),
+                    "category": sample.get("category"),
+                    "action_label": sample.get("action"),
+                    "risk_level": sample.get("risk_level"),
+                    "sample_count": 0,
+                    "label_counts": {},
+                    "status_counts": {},
+                },
+            )
+            group["sample_count"] += 1
+            label = str(sample.get("training_label") or sample.get("action") or "unknown")
+            status = str(sample.get("status") or "unknown")
+            group["label_counts"][label] = group["label_counts"].get(label, 0) + 1
+            group["status_counts"][status] = group["status_counts"].get(status, 0) + 1
+        return sorted(
+            groups.values(),
+            key=lambda item: (-int(item.get("sample_count") or 0), str(item.get("key") or "")),
+        )
+
+    def _offhour_backtest_rule_family_groups(self, limit: int = 12) -> list[dict[str, Any]]:
+        rows = self.store.fetch_all(
+            """
+            SELECT id, backtest_json
+            FROM offhour_research_runs
+            WHERE backtest_json LIKE '%dataset2_signal_backtest%'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit or 12), 50)),),
+        )
+        groups: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            backtest = _json_loads(row.get("backtest_json"), {})
+            signal_backtest = backtest.get("dataset2_signal_backtest") or {}
+            trades = signal_backtest.get("trades") or []
+            if not isinstance(trades, list):
+                continue
+            for trade in trades:
+                if not isinstance(trade, dict):
+                    continue
+                if trade.get("review_only") is False or trade.get("simulation_only") is False:
+                    continue
+                key = self._rule_family_key(
+                    {
+                        "pattern_id": trade.get("pattern_id"),
+                        "pattern_name": trade.get("pattern_name"),
+                        "category": trade.get("category"),
+                        "action": trade.get("action_label"),
+                        "risk_level": trade.get("risk_level"),
+                    }
+                )
+                group = groups.setdefault(
+                    key,
+                    {
+                        "key": key,
+                        "pattern_id": trade.get("pattern_id"),
+                        "pattern_name": trade.get("pattern_name"),
+                        "category": trade.get("category"),
+                        "action_label": trade.get("action_label"),
+                        "risk_level": trade.get("risk_level"),
+                        "trade_count": 0,
+                        "win_count": 0,
+                        "loss_count": 0,
+                        "total_return_pct": 0.0,
+                        "best_return_pct": None,
+                        "worst_return_pct": None,
+                        "symbols": set(),
+                        "source_run_ids": set(),
+                    },
+                )
+                try:
+                    return_pct = float(trade.get("realized_pnl_pct") or 0.0)
+                except (TypeError, ValueError):
+                    return_pct = 0.0
+                group["trade_count"] += 1
+                group["win_count"] += 1 if return_pct > 0 else 0
+                group["loss_count"] += 1 if return_pct < 0 else 0
+                group["total_return_pct"] += return_pct
+                group["best_return_pct"] = return_pct if group["best_return_pct"] is None else max(group["best_return_pct"], return_pct)
+                group["worst_return_pct"] = return_pct if group["worst_return_pct"] is None else min(group["worst_return_pct"], return_pct)
+                if trade.get("symbol"):
+                    group["symbols"].add(str(trade["symbol"]))
+                group["source_run_ids"].add(int(row["id"]))
+        normalized: list[dict[str, Any]] = []
+        for group in groups.values():
+            trade_count = int(group["trade_count"] or 0)
+            average_return = group["total_return_pct"] / trade_count if trade_count else 0.0
+            normalized.append(
+                {
+                    **{key: value for key, value in group.items() if key not in {"symbols", "source_run_ids"}},
+                    "win_rate": round(group["win_count"] / trade_count, 6) if trade_count else 0.0,
+                    "average_return_pct": round(average_return, 6),
+                    "total_return_pct": round(float(group["total_return_pct"] or 0.0), 6),
+                    "best_return_pct": round(float(group["best_return_pct"] or 0.0), 6),
+                    "worst_return_pct": round(float(group["worst_return_pct"] or 0.0), 6),
+                    "symbols": sorted(group["symbols"])[:12],
+                    "source_run_ids": sorted(group["source_run_ids"], reverse=True)[:12],
+                    "review_priority_score": round(average_return * min(trade_count, 20), 6),
+                    "review_only": True,
+                    "simulation_only": True,
+                }
+            )
+        return sorted(
+            normalized,
+            key=lambda item: (
+                -float(item.get("review_priority_score") or 0.0),
+                -int(item.get("trade_count") or 0),
+                str(item.get("key") or ""),
+            ),
+        )
+
+    def _sim_cockpit_execution_groups(self, samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        groups: dict[str, dict[str, Any]] = {}
+        for sample in samples:
+            if sample.get("source") not in {"sim_cockpit_actions", "sim_cockpit_readbacks"}:
+                continue
+            risk_result = sample.get("risk_result") or {}
+            source_key = risk_result.get("source") or sample.get("source")
+            status_key = risk_result.get("status") or sample.get("status") or "unknown"
+            action_key = sample.get("action") or "unknown"
+            key = "|".join(str(part or "unknown") for part in [source_key, action_key, status_key])
+            group = groups.setdefault(
+                key,
+                {
+                    "key": key,
+                    "source": source_key,
+                    "action": action_key,
+                    "status": status_key,
+                    "sample_count": 0,
+                    "dry_run_count": 0,
+                    "executed_count": 0,
+                    "blocked_count": 0,
+                    "failed_count": 0,
+                    "readback_count": 0,
+                    "blocked_reason_counts": {},
+                },
+            )
+            group["sample_count"] += 1
+            status = str(sample.get("status") or "").lower()
+            if sample.get("source") == "sim_cockpit_readbacks":
+                group["readback_count"] += 1
+            if status == "dry_run":
+                group["dry_run_count"] += 1
+            elif status == "executed":
+                group["executed_count"] += 1
+            elif status == "blocked":
+                group["blocked_count"] += 1
+            elif status in {"failed", "error"}:
+                group["failed_count"] += 1
+            for reason in sample.get("blocked_reasons") or []:
+                reason_text = str(reason)
+                group["blocked_reason_counts"][reason_text] = group["blocked_reason_counts"].get(reason_text, 0) + 1
+        normalized = []
+        for group in groups.values():
+            sample_count = int(group.get("sample_count") or 0)
+            feasible_count = int(group.get("dry_run_count") or 0) + int(group.get("executed_count") or 0)
+            normalized.append(
+                {
+                    **group,
+                    "feasible_rate": round(feasible_count / sample_count, 6) if sample_count else 0.0,
+                    "blocked_rate": round(int(group.get("blocked_count") or 0) / sample_count, 6) if sample_count else 0.0,
+                    "review_only": True,
+                    "simulation_only": True,
+                }
+            )
+        return sorted(
+            normalized,
+            key=lambda item: (-int(item.get("sample_count") or 0), str(item.get("key") or "")),
+        )
+
+    def _rule_family_key(self, sample: dict[str, Any]) -> str:
+        return "|".join(
+            str(part or "unknown")
+            for part in [
+                sample.get("pattern_id"),
+                sample.get("category"),
+                sample.get("action"),
+                sample.get("risk_level"),
+            ]
+        )
+
     def _majority_label(self, samples: list[dict[str, Any]]) -> str:
         counts: dict[str, int] = {}
         for item in samples:
@@ -471,6 +701,113 @@ class Dataset2StageService:
         if not counts:
             return "unknown"
         return sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))[0][0]
+
+    def _grouped_label_model(self, train_samples: list[dict[str, Any]]) -> dict[str, Any]:
+        majority_label = self._majority_label(train_samples)
+        group_levels = [
+            "source_action_status_risk",
+            "source_action_status",
+            "source_action",
+            "source",
+        ]
+        rules: dict[str, dict[str, dict[str, Any]]] = {level: {} for level in group_levels}
+        for level in group_levels:
+            grouped_counts: dict[str, dict[str, int]] = {}
+            for sample in train_samples:
+                key = self._feature_group_key(sample, level)
+                label = str(sample.get("training_label") or "unknown")
+                grouped_counts.setdefault(key, {})
+                grouped_counts[key][label] = grouped_counts[key].get(label, 0) + 1
+            for key, counts in grouped_counts.items():
+                label, count = sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))[0]
+                total = sum(counts.values())
+                rules[level][key] = {
+                    "label": label,
+                    "sample_count": total,
+                    "confidence": round(count / total, 6) if total else 0.0,
+                    "label_counts": counts,
+                }
+        return {
+            "kind": "hierarchical_grouped_label_classifier",
+            "fallback_majority_label": majority_label,
+            "group_levels": group_levels,
+            "group_rule_counts": {level: len(rules[level]) for level in group_levels},
+            "top_groups": {
+                level: sorted(
+                    rules[level].items(),
+                    key=lambda item: (-int(item[1].get("sample_count") or 0), item[0]),
+                )[:10]
+                for level in group_levels
+            },
+            "rules": rules,
+            "feature_policy": "audit_metadata_grouped_statistics_only",
+            "artifact_written": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _evaluate_grouped_label_model(
+        self,
+        model: dict[str, Any],
+        validation_samples: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        validation_count = len(validation_samples)
+        majority_label = str(model.get("fallback_majority_label") or "unknown")
+        grouped_correct = 0
+        majority_correct = 0
+        fallback_count = 0
+        prediction_counts: dict[str, int] = {}
+        level_counts: dict[str, int] = {}
+        for sample in validation_samples:
+            predicted_label, level = self._predict_grouped_label(model, sample)
+            actual_label = str(sample.get("training_label") or "unknown")
+            if predicted_label == actual_label:
+                grouped_correct += 1
+            if majority_label == actual_label:
+                majority_correct += 1
+            if level == "fallback_majority":
+                fallback_count += 1
+            prediction_counts[predicted_label] = prediction_counts.get(predicted_label, 0) + 1
+            level_counts[level] = level_counts.get(level, 0) + 1
+        grouped_accuracy = grouped_correct / validation_count if validation_count else 0.0
+        majority_accuracy = majority_correct / validation_count if validation_count else 0.0
+        return {
+            "validation_accuracy": grouped_accuracy,
+            "grouped_validation_accuracy": grouped_accuracy,
+            "majority_validation_accuracy": majority_accuracy,
+            "accuracy_lift_vs_majority": grouped_accuracy - majority_accuracy,
+            "correct_validation_count": grouped_correct,
+            "majority_correct_validation_count": majority_correct,
+            "fallback_prediction_count": fallback_count,
+            "prediction_counts": prediction_counts,
+            "prediction_level_counts": level_counts,
+        }
+
+    def _predict_grouped_label(self, model: dict[str, Any], sample: dict[str, Any]) -> tuple[str, str]:
+        rules = model.get("rules") or {}
+        for level in model.get("group_levels") or []:
+            key = self._feature_group_key(sample, str(level))
+            rule = (rules.get(level) or {}).get(key)
+            if isinstance(rule, dict) and rule.get("label"):
+                return str(rule["label"]), str(level)
+        return str(model.get("fallback_majority_label") or "unknown"), "fallback_majority"
+
+    def _feature_group_key(self, sample: dict[str, Any], level: str) -> str:
+        features = sample.get("model_features") or {}
+        source = str(features.get("source") or sample.get("source") or "unknown")
+        action = str(features.get("action") or sample.get("action") or "unknown")
+        status = str(features.get("status") or sample.get("status") or "unknown")
+        risk = str(features.get("risk_level") or sample.get("risk_level") or "unknown")
+        if level == "source_action_status_risk":
+            return "|".join([source, action, status, risk])
+        if level == "source_action_status":
+            return "|".join([source, action, status])
+        if level == "source_action":
+            return "|".join([source, action])
+        if level == "source":
+            return source
+        return "global"
 
     def _hydrate_event(self, row: dict[str, Any] | None) -> dict[str, Any] | None:
         if not row:

@@ -93,6 +93,9 @@ class SimulatedBroker:
             (self.account_name,),
         )
         if account:
+            synced = self._sync_empty_account_cash(account)
+            if synced:
+                return synced
             return account
         with self.store.connect() as conn:
             cursor = conn.execute(
@@ -109,6 +112,35 @@ class SimulatedBroker:
             "cash": settings.default_cash,
             "initial_cash": settings.default_cash,
         }
+
+    def _sync_empty_account_cash(self, account: dict) -> dict | None:
+        current_initial = float(account["initial_cash"])
+        current_cash = float(account["cash"])
+        if current_initial == float(settings.default_cash) or current_cash != current_initial:
+            return None
+        position_count = self.store.fetch_one(
+            "SELECT COUNT(*) AS cnt FROM simulation_positions WHERE account_id = ?",
+            (account["id"],),
+        )
+        fill_count = self.store.fetch_one(
+            "SELECT COUNT(*) AS cnt FROM simulation_fills WHERE account_id = ?",
+            (account["id"],),
+        )
+        if int((position_count or {}).get("cnt") or 0) or int((fill_count or {}).get("cnt") or 0):
+            return None
+        with self.store.connect() as conn:
+            conn.execute(
+                """
+                UPDATE simulation_accounts
+                SET cash = ?, initial_cash = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (settings.default_cash, settings.default_cash, account["id"]),
+            )
+        updated = dict(account)
+        updated["cash"] = settings.default_cash
+        updated["initial_cash"] = settings.default_cash
+        return updated
 
     def _apply_fill(self, fill: SimulationFill) -> None:
         account = self._ensure_account()

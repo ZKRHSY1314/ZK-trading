@@ -19,6 +19,10 @@ from app.rules.loader import load_rule_config
 from app.storage.sqlite_store import SQLiteStore
 
 
+PRICE_COLUMNS = ["open", "high", "low", "close"]
+NUMERIC_BAR_COLUMNS = PRICE_COLUMNS + ["volume", "amount"]
+
+
 class BacktestEngine:
     def __init__(self, config: dict | None = None):
         self.config = config or load_rule_config()
@@ -248,6 +252,12 @@ class BacktestEngine:
         frames = {}
         for sym, records in grouped.items():
             df = pd.DataFrame(records)
+            for column in NUMERIC_BAR_COLUMNS:
+                df[column] = pd.to_numeric(df[column], errors="coerce")
+            df.dropna(subset=PRICE_COLUMNS, inplace=True)
+            df[["volume", "amount"]] = df[["volume", "amount"]].fillna(0.0)
+            if df.empty:
+                continue
             df["trade_date"] = pd.to_datetime(df["trade_date"])
             df.set_index("trade_date", inplace=True)
             frames[sym] = df
@@ -375,7 +385,9 @@ class BacktestEngine:
         )
         if len(rows) < 2:
             return {"symbol": benchmark_symbol, "status": "insufficient_benchmark_data"}
-        closes = [float(row["close"]) for row in rows]
+        closes = [float(row["close"]) for row in rows if row["close"] is not None and not pd.isna(row["close"])]
+        if len(closes) < 2:
+            return {"symbol": benchmark_symbol, "status": "insufficient_benchmark_data"}
         benchmark_return = closes[-1] / closes[0] - 1
         peak = closes[0]
         max_drawdown = 0.0

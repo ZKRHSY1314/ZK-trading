@@ -845,10 +845,199 @@
             <span>{{ Object.entries(offhourResearchLatest.sandbox?.outcome_counts ?? {}).map(([k, v]) => `${k}:${v}`).join(" / ") || "暂无评估" }}</span>
             <small>evaluated {{ offhourResearchLatest.sandbox?.evaluated_count ?? 0 }} / pending {{ offhourResearchLatest.sandbox?.pending_count ?? 0 }}</small>
           </div>
+          <div v-if="offhourResearchLatest.reclaim_transition_study" class="score-item">
+            <strong>Reclaim Transition / {{ offhourResearchLatest.reclaim_transition_study.status ?? "skipped" }}</strong>
+            <span>
+              evaluated {{ offhourResearchLatest.reclaim_transition_study.evaluated_count ?? 0 }} /
+              pending {{ offhourResearchLatest.reclaim_transition_study.pending_count ?? 0 }} /
+              horizon {{ offhourResearchLatest.reclaim_transition_study.primary_horizon_days ?? 5 }}D
+            </span>
+            <small>{{ offhourResearchLatest.reclaim_transition_study.supervision?.recommendations?.[0] ?? "review-only transition evidence; no trading permission changed" }}</small>
+          </div>
+          <div
+            v-for="row in offhourReclaimTransitionRows"
+            :key="`reclaim-transition-${row.status}`"
+            class="score-item"
+          >
+            <strong>{{ row.status }}</strong>
+            <span>样本 {{ row.sample_count ?? row.count ?? 0 }} / 胜率 {{ formatPercent(row.win_rate) }} / 平均收益 {{ formatPctValue(row.average_return_pct) }}</span>
+            <small>{{ row.suggested_review_treatment ?? row.allowed_effect ?? "collect_more_samples_before_weight_change" }}</small>
+          </div>
+          <div
+            v-for="row in offhourReclaimRiskRows"
+            :key="`reclaim-risk-${row.key}`"
+            class="score-item"
+          >
+            <strong>Risk Attribution / {{ row.key }}</strong>
+            <span>样本 {{ row.sample_count ?? 0 }} / 胜率 {{ formatPercent(row.win_rate) }} / 平均收益 {{ formatPctValue(row.average_return_pct) }}</span>
+            <small>{{ row.suggested_treatment ?? "collect_more_samples_before_risk_tag_weight_change" }}</small>
+          </div>
           <div v-if="offhourResearchLatest.model_candidate?.artifact_written" class="score-item">
             <strong>Model Candidate</strong>
             <span>{{ offhourResearchLatest.model_candidate.artifact_kind }} / {{ offhourResearchLatest.model_candidate.artifact_hash?.slice(0, 16) }}</span>
             <small>candidate-only / auto-loaded false / rules.yaml unchanged</small>
+          </div>
+          <div v-if="offhourStrategySynthesis" class="score-item">
+            <strong>Strategy Synthesis</strong>
+            <span>{{ offhourStrategySynthesis.active_simulation_hypothesis?.summary ?? "Dataset2 形态信号 + Dataset1 纪律过滤 + 样本外验证" }}</span>
+            <small>review-only / simulation-only / no broker action</small>
+          </div>
+          <div v-if="offhourCandidatePriority" class="score-item">
+            <strong>Candidate Priority / {{ offhourCandidatePriority.review_priority_tier ?? "review_only" }}</strong>
+            <span>
+              score {{ offhourCandidatePriority.review_priority_score ?? 0 }} /
+              effect {{ offhourCandidatePriority.allowed_effect ?? "review_priority_only" }}
+            </span>
+            <small>{{ offhourCandidatePriority.next_action ?? "wait for stronger confirmation before any simulated action" }}</small>
+          </div>
+          <div v-if="offhourSimulationReviewPlanView" class="score-item">
+            <strong>Simulation Review Plan / {{ offhourSimulationReviewPlanView.status ?? "unknown" }}</strong>
+            <span>
+              ready {{ offhourSimulationReviewPlanView.ready_dry_run_candidate_count ?? 0 }} /
+              total {{ offhourSimulationReviewPlanView.candidate_count ?? 0 }} /
+              tiers {{ offhourSimulationReviewTierSummary || "unscored" }}
+            </span>
+            <small>
+              latest {{ offhourSimulationReviewPlanView.data_freshness?.latest_signal_date ?? "N/A" }} /
+              submit {{ offhourSimulationReviewPlanView.permission_policy?.may_submit_order ? "yes" : "no" }} /
+              screen {{ offhourSimulationReviewPlanView.permission_policy?.may_enable_screen_click ? "yes" : "no" }} /
+              review-only
+            </small>
+          </div>
+          <div
+            v-for="candidate in offhourSimulationReviewCandidates"
+            :key="`offhour-sim-review-${candidate.symbol}-${candidate.signal_date}-${candidate.pattern_id}`"
+            class="score-item"
+          >
+            <strong>{{ candidate.symbol }} / {{ candidate.evidence_quality?.confidence_tier ?? "unscored" }}</strong>
+            <span>
+              confidence {{ Number(candidate.evidence_quality?.confidence_score ?? 0).toFixed(1) }} /
+              adjusted {{ Number(candidate.confidence_adjusted_priority_score ?? 0).toFixed(1) }} /
+              raw {{ Number(candidate.priority_score ?? 0).toFixed(1) }} /
+              {{ candidate.recommended_mode ?? "observe_only" }}
+            </span>
+            <small>
+              max {{ Number(candidate.position_plan?.max_initial_cash ?? 0).toFixed(0) }} /
+              win {{ formatPercent(candidate.best_strategy?.win_rate) }} /
+              avg {{ formatPctValue(candidate.best_strategy?.average_return_pct) }} /
+              {{
+                (candidate.blockers?.length ? candidate.blockers : candidate.caution_flags)?.slice(0, 2).join(" / ") ||
+                candidate.evidence_quality?.next_action ||
+                "fresh gates and Sim-Cockpit verification still required"
+              }}
+            </small>
+          </div>
+          <div
+            v-for="factor in offhourCandidatePriorityFactors"
+            :key="`offhour-candidate-priority-${factor.name}`"
+            class="score-item"
+          >
+            <strong>{{ factor.name }}</strong>
+            <span>{{ factor.score_points ?? 0 }} / {{ factor.max_points ?? "N/A" }} points</span>
+            <small>{{ (factor.reasons ?? []).slice(0, 2).join(" / ") || factor.status || "review-only evidence factor" }}</small>
+          </div>
+          <div v-if="offhourStableParameterRows.length" class="score-item">
+            <strong>Selected Stable Candidate</strong>
+            <span>{{ offhourStableParameterRows.map((item) => `${item.key}:${item.value}`).join(" / ") }}</span>
+            <small>
+              win {{ formatPercent(offhourStableCandidate?.weighted_win_rate) }} /
+              avg {{ formatPctValue(offhourStableCandidate?.weighted_average_return_pct) }} /
+              gate {{ offhourStableCandidate?.status ?? "review_only" }}
+            </small>
+          </div>
+          <div v-if="offhourLearningFilterRows.length" class="score-item">
+            <strong>Learning Filters / {{ offhourLearningFilterBudget?.accepted_candidate_count ?? offhourLearningFilterRows.length }}</strong>
+            <span>{{ offhourLearningFilterSummary }}</span>
+            <small>
+              sample {{ offhourOptimizationSample?.optimized_signal_count ?? "N/A" }} /
+              deduped {{ offhourOptimizationSample?.deduped_actionable_count ?? "N/A" }} /
+              review-only attribution filters; no rules.yaml write, no order action
+            </small>
+          </div>
+          <div v-if="offhourSignalLossAttribution" class="score-item">
+            <strong>Signal Loss Attribution / {{ offhourSignalLossAttribution.status ?? "unknown" }}</strong>
+            <span>
+              trades {{ offhourSignalLossAttribution.trade_count ?? offhourSignalLossAttribution.metrics?.trade_count ?? 0 }} /
+              losses {{ offhourSignalLossAttribution.loss_trade_count ?? 0 }}
+            </span>
+            <small>{{ offhourSignalLossAttribution.recommendation?.items?.[0]?.suggested_experiment ?? offhourSignalLossAttribution.reason ?? "collect more stable candidate samples" }}</small>
+          </div>
+          <div v-if="offhourDataset1PlaybookRows.length" class="score-item">
+            <strong>Dataset1 Playbook</strong>
+            <span>{{ offhourDataset1PlaybookRows.join(" / ") }}</span>
+            <small>等启稳、小试单、分批加仓、逢强减仓，只能作为模拟复核纪律</small>
+          </div>
+          <div v-if="offhourFocusPhaseDiagnostics" class="score-item">
+            <strong>Focus Phase Samples / {{ offhourFocusPhaseDiagnostics.status ?? "unknown" }}</strong>
+            <span>{{ offhourFocusPhaseDiagnostics.supervision?.summary ?? "三维通信、金螳螂、乐凯胶片阶段样本只用于训练和模拟复核" }}</span>
+            <small>{{ offhourFocusPhaseDiagnostics.supervision?.next_actions?.[0] ?? "review-only / simulation-only" }}</small>
+          </div>
+          <div
+            v-for="item in offhourFocusPhaseRows"
+            :key="`offhour-focus-phase-${item.symbol}`"
+            class="score-item"
+          >
+            <strong>{{ item.symbol }} {{ item.name }} / {{ item.latest_phase_name ?? item.latest_phase ?? item.status }}</strong>
+            <span>{{ item.role }} / {{ item.current_training_use ?? item.supervision_policy }}</span>
+            <small>{{ item.dataset1_anchor ?? item.diagnosis ?? "training sample only" }}</small>
+          </div>
+          <div v-if="offhourPhaseSimilarityPerformance" class="score-item">
+            <strong>Phase Similarity / {{ offhourPhaseSimilarityPerformance.status ?? "unknown" }}</strong>
+            <span>
+              matched {{ offhourPhaseSimilarityPerformance.matched_count ?? 0 }} /
+              evaluated {{ offhourPhaseSimilarityPerformance.evaluated_count ?? 0 }} /
+              missing {{ offhourPhaseSimilarityPerformance.missing_match_count ?? 0 }}
+            </span>
+            <small>{{ offhourPhaseSimilarityPerformance.supervision?.recommendations?.[0] ?? "review-only stage similarity; no rule, position, or live-trading permission changed" }}</small>
+          </div>
+          <div
+            v-for="group in offhourPhaseSimilarityGroups"
+            :key="`offhour-phase-similarity-${group.key}`"
+            class="score-item"
+          >
+            <strong>{{ group.key }} / {{ group.confidence_tier ?? group.suggested_treatment ?? "collect_more_samples" }}</strong>
+            <span>
+              samples {{ group.sample_count ?? 0 }} /
+              win {{ formatPercent(group.win_rate) }} /
+              avg {{ formatPctValue(group.average_close_return_pct) }} /
+              avg min {{ formatPctValue(group.average_min_return_pct) }} /
+              score {{ group.confidence_score ?? "N/A" }}
+            </span>
+            <small>{{ group.downside_risk_note ?? group.suggested_treatment ?? group.sample_role ?? group.target_latest_phase_name ?? "phase similarity review only" }}</small>
+          </div>
+          <div v-if="offhourPhaseConfidenceWalkForward" class="score-item">
+            <strong>Phase Confidence Walk-forward / {{ offhourPhaseConfidenceWalkForward.status ?? "unknown" }}</strong>
+            <span>
+              passed {{ offhourPhaseConfidenceWalkForward.passed_group_count ?? 0 }} /
+              evaluated {{ offhourPhaseConfidenceWalkForward.evaluated_group_count ?? 0 }} /
+              target return {{ formatPctValue(offhourPhaseConfidenceWalkForward.gate?.min_cumulative_return_pct) }}
+            </span>
+            <small>{{ offhourPhaseConfidenceWalkForward.supervision?.next_action ?? "review-only confidence validation; no rules or order permissions changed" }}</small>
+          </div>
+          <div
+            v-for="group in offhourPhaseConfidenceWalkForwardGroups"
+            :key="`offhour-phase-confidence-wf-${group.group_key}`"
+            class="score-item"
+          >
+            <strong>{{ group.group_key }} / {{ group.status }}</strong>
+            <span>
+              {{ group.confidence_tier }} /
+              robust {{ group.robustness?.status ?? "unknown" }} /
+              folds {{ group.fold_count ?? 0 }} /
+              samples {{ group.sample_count ?? 0 }} /
+              win {{ formatPercent(group.weighted_win_rate) }} /
+              total {{ formatPctValue(group.total_equal_weight_cumulative_return_pct) }}
+            </span>
+            <small>{{ (group.gate_reasons ?? []).join(", ") || (group.robustness?.warnings ?? []).join(", ") || "passed review-only walk-forward gate" }}</small>
+          </div>
+          <div
+            v-for="lesson in offhourExternalLessonRows"
+            :key="`offhour-lesson-${lesson.source}`"
+            class="score-item"
+          >
+            <strong>Learned / {{ lesson.source }}</strong>
+            <span>{{ lesson.lesson }}</span>
+            <small>{{ lesson.mapped_to }}</small>
           </div>
           <div
             v-for="signal in (offhourResearchLatest.strategy_replay?.signals ?? []).slice(0, 5)"
@@ -1497,8 +1686,8 @@
           <strong>Dataset2 Readiness / {{ dataset2Readiness.status }}</strong>
           <span>
             records {{ dataset2Readiness.record_count }} /
-            bad risk {{ dataset2Readiness.quality.invalid_risk_level_count }} /
-            stringified lists {{ dataset2Readiness.quality.stringified_list_item_count }}
+            bad risk {{ dataset2Readiness.quality?.invalid_risk_level_count ?? 0 }} /
+            stringified lists {{ dataset2Readiness.quality?.stringified_list_item_count ?? 0 }}
           </span>
           <span>
             training now {{ dataset2Readiness.decision.can_start_training_now ? "allowed" : "blocked" }} /
@@ -15800,6 +15989,155 @@ type OffhourResearchSignal = {
   matched_tags?: string[];
 };
 
+type OffhourReclaimTransitionStatusSummary = {
+  count?: number;
+  sample_count?: number;
+  win_rate?: number;
+  average_return_pct?: number;
+  suggested_review_treatment?: string;
+  allowed_effect?: string;
+};
+
+type OffhourReclaimRiskTagSummary = {
+  key: string;
+  sample_count?: number;
+  win_rate?: number;
+  average_return_pct?: number;
+  suggested_treatment?: string;
+};
+
+type OffhourReclaimTransitionStudy = {
+  status?: string;
+  evaluated_count?: number;
+  pending_count?: number;
+  primary_horizon_days?: number;
+  by_status?: Record<string, OffhourReclaimTransitionStatusSummary>;
+  risk_tag_attribution?: {
+    by_tag?: OffhourReclaimRiskTagSummary[];
+    by_status_tag?: OffhourReclaimRiskTagSummary[];
+  };
+  supervision?: {
+    recommendations?: string[];
+    suggested_positioning?: Record<string, unknown>;
+  };
+};
+
+type OffhourFocusPhaseTarget = {
+  symbol: string;
+  name?: string;
+  role?: string;
+  status?: string;
+  latest_phase?: string;
+  latest_phase_name?: string;
+  current_training_use?: string;
+  supervision_policy?: string;
+  dataset1_anchor?: string;
+  diagnosis?: string;
+};
+
+type OffhourFocusPhaseDiagnostics = {
+  status?: string;
+  counts?: Record<string, number>;
+  targets?: OffhourFocusPhaseTarget[];
+  supervision?: {
+    summary?: string;
+    next_actions?: string[];
+  };
+};
+
+type OffhourPhaseSimilarityGroup = {
+  key: string;
+  core_symbol?: string;
+  sample_role?: string;
+  target_latest_phase?: string;
+  target_latest_phase_name?: string;
+  sample_count?: number;
+  win_rate?: number;
+  average_close_return_pct?: number;
+  average_max_return_pct?: number;
+  average_min_return_pct?: number;
+  suggested_treatment?: string;
+  confidence_tier?: string;
+  confidence_score?: number;
+  confidence_reasons?: string[];
+  downside_risk_note?: string;
+};
+
+type OffhourPhaseSimilarityPerformance = {
+  status?: string;
+  evaluated_count?: number;
+  matched_count?: number;
+  missing_match_count?: number;
+  by_group?: OffhourPhaseSimilarityGroup[];
+  supervision?: {
+    summary?: string;
+    recommendations?: string[];
+  };
+};
+
+type OffhourPhaseConfidenceWalkForwardGroup = {
+  group_key?: string;
+  confidence_tier?: string;
+  confidence_score?: number;
+  suggested_treatment?: string;
+  status?: string;
+  sample_count?: number;
+  fold_count?: number;
+  min_fold_sample_count?: number;
+  weighted_win_rate?: number;
+  weighted_average_return_pct?: number;
+  total_equal_weight_cumulative_return_pct?: number;
+  min_fold_win_rate?: number;
+  min_fold_cumulative_return_pct?: number;
+  gate_reasons?: string[];
+  robustness?: {
+    status?: string;
+    by_board?: Array<Record<string, any>>;
+    by_market_regime?: Array<Record<string, any>>;
+    warnings?: string[];
+  };
+};
+
+type OffhourPhaseConfidenceWalkForward = {
+  status?: string;
+  evaluated_group_count?: number;
+  passed_group_count?: number;
+  blocked_group_count?: number;
+  groups?: OffhourPhaseConfidenceWalkForwardGroup[];
+  gate?: {
+    min_cumulative_return_pct?: number;
+    min_weighted_win_rate?: number;
+    max_fold_loss_pct?: number;
+  };
+  supervision?: {
+    summary?: string;
+    next_action?: string;
+  };
+};
+
+type OffhourCandidatePriorityFactor = {
+  name?: string;
+  status?: string;
+  score_points?: number;
+  max_points?: number;
+  reasons?: string[];
+  evidence?: Record<string, any>;
+};
+
+type OffhourCandidatePriorityFramework = {
+  framework_id?: string;
+  review_priority_score?: number;
+  review_priority_tier?: string;
+  factors?: OffhourCandidatePriorityFactor[];
+  ranked_review_factors?: OffhourCandidatePriorityFactor[];
+  next_action?: string;
+  allowed_effect?: string;
+  does_not_change?: string[];
+  review_only?: boolean;
+  simulation_only?: boolean;
+  live_trading_enabled?: boolean;
+};
+
 type OffhourResearchRun = {
   id?: number;
   run_id?: number;
@@ -15828,6 +16166,12 @@ type OffhourResearchRun = {
     pending_count?: number;
     outcome_counts?: Record<string, number>;
   };
+  reclaim_transition_study?: OffhourReclaimTransitionStudy;
+  focus_phase_diagnostics?: OffhourFocusPhaseDiagnostics;
+  phase_similarity_performance?: OffhourPhaseSimilarityPerformance;
+  phase_confidence_walk_forward?: OffhourPhaseConfidenceWalkForward;
+  candidate_review_priority_framework?: OffhourCandidatePriorityFramework;
+  signal_optimization?: Record<string, any>;
   model_candidate?: {
     status?: string;
     artifact_written?: boolean;
@@ -15861,9 +16205,76 @@ type OffhourModelCandidate = {
     artifact_kind?: string;
     artifact_written?: boolean;
   };
+  artifact_detail?: Record<string, any>;
   review_only?: boolean;
   simulation_only?: boolean;
   live_trading_enabled?: boolean;
+};
+
+type OffhourSimulationEvidenceQuality = {
+  schema_version?: string;
+  confidence_score?: number;
+  confidence_tier?: string;
+  reasons?: string[];
+  warnings?: string[];
+  next_action?: string;
+  allowed_effect?: string;
+  review_only?: boolean;
+  simulation_only?: boolean;
+  live_trading_enabled?: boolean;
+};
+
+type OffhourSimulationPlanCandidate = {
+  symbol?: string;
+  signal_date?: string;
+  pattern_id?: string;
+  action_label?: string;
+  risk_level?: string;
+  recommended_mode?: string;
+  priority_score?: number;
+  confidence_adjusted_priority_score?: number;
+  evidence_quality?: OffhourSimulationEvidenceQuality;
+  blockers?: string[];
+  caution_flags?: string[];
+  position_plan?: {
+    max_initial_cash?: number;
+    max_confirmed_cash?: number;
+  };
+  best_strategy?: {
+    experiment_id?: string;
+    tier?: string;
+    win_rate?: number;
+    average_return_pct?: number;
+  };
+};
+
+type OffhourSimulationReviewPlan = {
+  schema_version?: string;
+  status?: string;
+  candidate_count?: number;
+  ready_dry_run_candidate_count?: number;
+  candidates?: OffhourSimulationPlanCandidate[];
+  data_freshness?: {
+    status?: string;
+    latest_signal_date?: string;
+    calendar_lag_days?: number;
+  };
+  permission_policy?: {
+    may_submit_order?: boolean;
+    may_enable_screen_click?: boolean;
+    requires_sim_cockpit_verification?: boolean;
+  };
+  portfolio_limits?: Record<string, any>;
+  review_only?: boolean;
+  simulation_only?: boolean;
+  live_trading_enabled?: boolean;
+};
+
+type OffhourLearningFilterRow = {
+  filter: string;
+  winRate?: number;
+  returnPct?: number;
+  averageReturnPct?: number;
 };
 
 const summary = ref<KnowledgeSummary | null>(null);
@@ -16203,6 +16614,7 @@ const potentialSearch = ref<PotentialSearchRun | null>(null);
 const offhourResearchCapabilities = ref<OffhourResearchCapabilities | null>(null);
 const offhourResearchLatest = ref<OffhourResearchRun | null>(null);
 const offhourModelCandidate = ref<OffhourModelCandidate | null>(null);
+const offhourSimulationReviewPlan = ref<OffhourSimulationReviewPlan | null>(null);
 const agentCapabilities = ref<AgentCapabilities | null>(null);
 const agentTasks = ref<AgentTask[]>([]);
 const agentAudit = ref<any[]>([]);
@@ -16407,6 +16819,11 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "N/A";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatPctValue(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "N/A";
+  return `${value.toFixed(2)}%`;
 }
 
 async function loadSummary() {
@@ -22258,10 +22675,20 @@ async function loadOffhourResearch() {
     offhourResearchCapabilities.value = capabilities;
     offhourResearchLatest.value = latest.status === "empty" ? null : latest;
     offhourModelCandidate.value = candidate.status === "empty" ? null : candidate;
+    try {
+      const reviewPlan = await fetchJson<OffhourSimulationReviewPlan>(
+        "/api/research/offhour/simulation-review-plan/latest?limit=8"
+      );
+      offhourSimulationReviewPlan.value = reviewPlan.status === "missing" ? null : reviewPlan;
+    } catch {
+      offhourSimulationReviewPlan.value =
+        (candidate.artifact_detail?.simulation_review_plan as OffhourSimulationReviewPlan | undefined) ?? null;
+    }
   } catch {
     offhourResearchCapabilities.value = null;
     offhourResearchLatest.value = null;
     offhourModelCandidate.value = null;
+    offhourSimulationReviewPlan.value = null;
   }
 }
 
@@ -22755,6 +23182,198 @@ const potentialTopItems = computed(() => {
   if (!potentialSearch.value) return [];
   const items = potentialSearch.value.top_scored_items ?? potentialSearch.value.items ?? [];
   return items.slice(0, 5);
+});
+
+const offhourReclaimTransitionRows = computed(() => {
+  const byStatus = offhourResearchLatest.value?.reclaim_transition_study?.by_status ?? {};
+  return Object.entries(byStatus)
+    .map(([status, summary]) => ({ status, ...summary }))
+    .sort((a, b) => Number(b.sample_count ?? b.count ?? 0) - Number(a.sample_count ?? a.count ?? 0))
+    .slice(0, 5);
+});
+
+const offhourReclaimRiskRows = computed(() => {
+  const rows = offhourResearchLatest.value?.reclaim_transition_study?.risk_tag_attribution?.by_status_tag ?? [];
+  return [...rows]
+    .sort((a, b) => {
+      const aPriority = a.suggested_treatment === "observe_only_hard_risk" || a.suggested_treatment === "downgrade_to_smallest_dry_run_or_observe" ? 1 : 0;
+      const bPriority = b.suggested_treatment === "observe_only_hard_risk" || b.suggested_treatment === "downgrade_to_smallest_dry_run_or_observe" ? 1 : 0;
+      if (aPriority !== bPriority) return bPriority - aPriority;
+      return Number(b.sample_count ?? 0) - Number(a.sample_count ?? 0);
+    })
+    .slice(0, 3);
+});
+
+const offhourStrategySynthesis = computed(() => {
+  return offhourModelCandidate.value?.artifact_detail?.strategy_synthesis ?? null;
+});
+
+const offhourCandidatePriority = computed<OffhourCandidatePriorityFramework | null>(() => {
+  return (
+    offhourModelCandidate.value?.artifact_detail?.candidate_review_priority_framework ??
+    offhourStrategySynthesis.value?.active_simulation_hypothesis?.candidate_review_priority_framework ??
+    offhourResearchLatest.value?.candidate_review_priority_framework ??
+    null
+  );
+});
+
+const offhourCandidatePriorityFactors = computed<OffhourCandidatePriorityFactor[]>(() => {
+  const framework = offhourCandidatePriority.value;
+  const factors = framework?.ranked_review_factors ?? framework?.factors ?? [];
+  return factors.slice(0, 4);
+});
+
+const offhourSimulationReviewPlanView = computed<OffhourSimulationReviewPlan | null>(() => {
+  return (
+    offhourSimulationReviewPlan.value ??
+    (offhourModelCandidate.value?.artifact_detail?.simulation_review_plan as OffhourSimulationReviewPlan | undefined) ??
+    (offhourStrategySynthesis.value?.active_simulation_hypothesis?.simulation_review_plan as
+      | OffhourSimulationReviewPlan
+      | undefined) ??
+    ((offhourResearchLatest.value as any)?.simulation_review_plan as OffhourSimulationReviewPlan | undefined) ??
+    null
+  );
+});
+
+const offhourSimulationReviewCandidates = computed<OffhourSimulationPlanCandidate[]>(() => {
+  return [...(offhourSimulationReviewPlanView.value?.candidates ?? [])].slice(0, 8);
+});
+
+const offhourSimulationReviewTierSummary = computed(() => {
+  const counts: Record<string, number> = {};
+  for (const candidate of offhourSimulationReviewCandidates.value) {
+    const tier = candidate.evidence_quality?.confidence_tier ?? "unscored";
+    counts[tier] = (counts[tier] ?? 0) + 1;
+  }
+  return Object.entries(counts)
+    .map(([tier, count]) => `${tier}:${count}`)
+    .join(" / ");
+});
+
+const offhourStableCandidate = computed(() => {
+  return offhourModelCandidate.value?.artifact_detail?.signal_optimization?.selected_stable_candidate ?? null;
+});
+
+const offhourStableParameterRows = computed(() => {
+  const params =
+    offhourStableCandidate.value?.parameters ??
+    offhourStrategySynthesis.value?.active_simulation_hypothesis?.selected_stable_parameters ??
+    {};
+  return Object.entries(params).map(([key, value]) => ({ key, value }));
+});
+
+const offhourLearningFilterBudget = computed(() => {
+  return (
+    offhourModelCandidate.value?.artifact_detail?.signal_optimization?.optimization_budget?.learning_filter_budget ??
+    offhourResearchLatest.value?.signal_optimization?.optimization_budget?.learning_filter_budget ??
+    null
+  );
+});
+
+const offhourOptimizationSample = computed(() => {
+  return (
+    offhourModelCandidate.value?.artifact_detail?.signal_optimization?.optimization_budget?.sample ??
+    offhourResearchLatest.value?.signal_optimization?.optimization_budget?.sample ??
+    null
+  );
+});
+
+const offhourLearningFilterRows = computed<OffhourLearningFilterRow[]>(() => {
+  const rows =
+    offhourModelCandidate.value?.artifact_detail?.signal_optimization?.learning_filter_candidates ??
+    offhourStrategySynthesis.value?.active_simulation_hypothesis?.learning_filter_candidates ??
+    offhourResearchLatest.value?.signal_optimization?.learning_filter_candidates ??
+    [];
+  return rows.slice(0, 4).map((item: any) => ({
+    filter: item?.parameters?.attribution_filter ?? "none",
+    winRate: item?.validation_metrics?.win_rate,
+    returnPct: item?.validation_metrics?.equal_weight_cumulative_return_pct,
+    averageReturnPct: item?.validation_metrics?.average_return_pct,
+  }));
+});
+
+const offhourLearningFilterSummary = computed(() => {
+  return offhourLearningFilterRows.value
+    .map((item) => `${item.filter}:${formatPctValue(item.returnPct)}`)
+    .join(" / ");
+});
+
+const offhourSignalLossAttribution = computed(() => {
+  return (
+    offhourModelCandidate.value?.artifact_detail?.signal_optimization?.signal_loss_attribution ??
+    offhourStrategySynthesis.value?.active_simulation_hypothesis?.signal_loss_attribution ??
+    offhourResearchLatest.value?.signal_optimization?.signal_loss_attribution ??
+    null
+  );
+});
+
+const offhourExternalLessonRows = computed(() => {
+  return (offhourStrategySynthesis.value?.external_framework_lessons ?? []).slice(0, 6);
+});
+
+const offhourDataset1PlaybookRows = computed(() => {
+  return (offhourStrategySynthesis.value?.dataset1_playbook ?? []).slice(0, 5);
+});
+
+const offhourFocusPhaseDiagnostics = computed<OffhourFocusPhaseDiagnostics | null>(() => {
+  return (
+    offhourResearchLatest.value?.focus_phase_diagnostics ??
+    offhourModelCandidate.value?.artifact_detail?.focus_phase_diagnostics ??
+    offhourStrategySynthesis.value?.active_simulation_hypothesis?.focus_phase_diagnostics ??
+    null
+  );
+});
+
+const offhourFocusPhaseRows = computed(() => {
+  return (offhourFocusPhaseDiagnostics.value?.targets ?? []).slice(0, 3);
+});
+
+const offhourPhaseSimilarityPerformance = computed<OffhourPhaseSimilarityPerformance | null>(() => {
+  return (
+    offhourResearchLatest.value?.phase_similarity_performance ??
+    offhourModelCandidate.value?.artifact_detail?.phase_similarity_performance ??
+    offhourStrategySynthesis.value?.active_simulation_hypothesis?.phase_similarity_performance ??
+    null
+  );
+});
+
+const offhourPhaseSimilarityGroups = computed(() => {
+  return [...(offhourPhaseSimilarityPerformance.value?.by_group ?? [])]
+    .sort((a, b) => {
+      const risky = new Set([
+        "observe_only_distribution_risk",
+        "downgrade_to_smallest_dry_run_or_observe",
+      ]);
+      const aPriority = risky.has(a.suggested_treatment ?? "") ? 1 : 0;
+      const bPriority = risky.has(b.suggested_treatment ?? "") ? 1 : 0;
+      if (aPriority !== bPriority) return bPriority - aPriority;
+      const confidenceDelta = Number(b.confidence_score ?? 0) - Number(a.confidence_score ?? 0);
+      if (confidenceDelta !== 0) return confidenceDelta;
+      return Number(b.sample_count ?? 0) - Number(a.sample_count ?? 0);
+    })
+    .slice(0, 6);
+});
+
+const offhourPhaseConfidenceWalkForward = computed<OffhourPhaseConfidenceWalkForward | null>(() => {
+  return (
+    offhourResearchLatest.value?.phase_confidence_walk_forward ??
+    offhourModelCandidate.value?.artifact_detail?.phase_confidence_walk_forward ??
+    offhourStrategySynthesis.value?.active_simulation_hypothesis?.phase_confidence_walk_forward ??
+    null
+  );
+});
+
+const offhourPhaseConfidenceWalkForwardGroups = computed(() => {
+  return [...(offhourPhaseConfidenceWalkForward.value?.groups ?? [])]
+    .sort((a, b) => {
+      const aPassed = a.status === "passed_for_review" ? 1 : 0;
+      const bPassed = b.status === "passed_for_review" ? 1 : 0;
+      if (aPassed !== bPassed) return bPassed - aPassed;
+      const returnDelta = Number(b.total_equal_weight_cumulative_return_pct ?? 0) - Number(a.total_equal_weight_cumulative_return_pct ?? 0);
+      if (returnDelta !== 0) return returnDelta;
+      return Number(b.weighted_win_rate ?? 0) - Number(a.weighted_win_rate ?? 0);
+    })
+    .slice(0, 5);
 });
 
 async function loadAgentLearningSamples() {
@@ -24246,16 +24865,22 @@ async function runExperienceReview() {
 }
 
 onMounted(async () => {
-  const results = await Promise.allSettled([
+  await Promise.allSettled([
     loadSummary(),
+    loadScores(),
+    loadOffhourResearch(),
+    loadRealtimeData(),
+    loadSimCockpit(),
+    loadDataset2Readiness(),
+  ]);
+
+  const results = await Promise.allSettled([
     loadLatestDiscovery(),
     loadLifecycleSummary(),
-    loadScores(),
     loadLatestScan(),
     loadAccount(),
     loadAutomation(),
     loadLearningReport(),
-    loadDataset2Readiness(),
     loadDataset2ImportQueueReviews(),
     loadDataset2Staging(),
     loadDataset2StagingQualityReviews(),
@@ -24404,9 +25029,7 @@ onMounted(async () => {
     loadPaperSimEvalPolicies(),
     loadPriceReadinessReports(),
     loadPriceReadinessSummary(),
-    loadRealtimeData(),
     loadScreenMonitoring(),
-    loadSimCockpit(),
     loadBacktestRuns(),
     loadMarketRegime(),
     loadPortfolioRisk(),

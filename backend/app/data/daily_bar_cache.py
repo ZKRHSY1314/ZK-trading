@@ -107,6 +107,97 @@ class DailyBarCacheService:
             "results": results
         }
 
+    def refresh_benchmark_bars(
+        self,
+        symbols: list[str] | tuple[str, ...] | None = None,
+        days: int = 500,
+    ) -> dict[str, Any]:
+        """
+        Refresh benchmark index bars used by backtest and off-hour regime checks.
+        This is deliberately separate from candidate stock history refresh.
+        """
+        days = max(1, min(int(days), 1000))
+        requested = symbols or ("SH000300", "SH000001")
+        normalized_symbols = [self._normalize_benchmark_symbol(symbol) for symbol in requested]
+
+        results: list[dict[str, Any]] = []
+        for symbol in normalized_symbols:
+            attempts: list[dict[str, Any]] = []
+            try:
+                raw_bars = self._load_akshare_index_daily_bars(symbol)
+                bars = self._normalize_index_bars(raw_bars, days, "akshare.stock_zh_index_daily")
+                attempts.append({"source": "akshare.stock_zh_index_daily", "status": "success"})
+            except Exception as e1:
+                attempts.append({"source": "akshare.stock_zh_index_daily", "status": "failed", "error": str(e1)})
+                try:
+                    raw_bars = self._load_sina_index_daily_bars(symbol)
+                    bars = self._normalize_index_bars(raw_bars, days, "sina.cn.index_kline_daily_fallback")
+                    attempts.append({"source": "sina.cn.index_kline_daily_fallback", "status": "success"})
+                except Exception as e2:
+                    attempts.append(
+                        {
+                            "source": "sina.cn.index_kline_daily_fallback",
+                            "status": "failed",
+                            "error": str(e2),
+                        }
+                    )
+                    existing_bars = self.get_bars(symbol, limit=days)
+                    if existing_bars:
+                        attempts.append({"source": "local_cache", "status": "success"})
+                        results.append(
+                            {
+                                "symbol": symbol,
+                                "status": "success",
+                                "bars_saved": 0,
+                                "source": f"{existing_bars[0]['source']}_cached",
+                                "attempts": attempts,
+                            }
+                        )
+                        with self.store.connect() as conn:
+                            conn.execute(
+                                "DELETE FROM daily_bar_cache WHERE symbol = ? AND trade_date = 'ERROR'",
+                                (symbol,),
+                            )
+                        continue
+
+                    error_msg = f"AKShare index failed: {str(e1)}; Sina index failed: {str(e2)}"
+                    self._save_error_bar(symbol, error_msg)
+                    results.append({"symbol": symbol, "status": "error", "error": error_msg, "attempts": attempts})
+                    continue
+
+            valid_bars = [bar for bar in bars if bar.trade_date and bar.close is not None]
+            if not valid_bars:
+                error_msg = "No benchmark history returned or valid bars found"
+                attempts.append({"source": "validation", "status": "failed", "error": error_msg})
+                self._save_error_bar(symbol, error_msg)
+                results.append({"symbol": symbol, "status": "error", "error": error_msg, "attempts": attempts})
+                continue
+
+            saved_count = 0
+            for bar in valid_bars:
+                bar.symbol = symbol
+                self._upsert_bar(bar)
+                saved_count += 1
+
+            results.append(
+                {
+                    "symbol": symbol,
+                    "status": "success",
+                    "bars_saved": saved_count,
+                    "source": valid_bars[0].source,
+                    "attempts": attempts,
+                }
+            )
+
+        success_count = len([item for item in results if item.get("status") == "success"])
+        return {
+            "status": "completed" if success_count else "error",
+            "processed": len(results),
+            "ready_count": success_count,
+            "summary": self.get_summary(),
+            "results": results,
+        }
+
     def _upsert_bar(self, bar: DailyBarCache) -> None:
         now_str = datetime.now().isoformat(timespec="seconds")
         sql = """
@@ -243,6 +334,100 @@ class DailyBarCacheService:
             }
         )
         return result
+
+    def _load_akshare_index_daily_bars(self, symbol: str) -> pd.DataFrame:
+        import akshare as ak
+
+        return ak.stock_zh_index_daily(symbol=self._benchmark_symbol_to_api_symbol(symbol))
+
+    def _load_sina_index_daily_bars(self, symbol: str) -> pd.DataFrame:
+        api_symbol = self._benchmark_symbol_to_api_symbol(symbol)
+        url = (
+            "https://quotes.sina.cn/cn/api/jsonp.php/var%20_benchmarkReplay=/"
+            "CN_MarketDataService.getKLineData?"
+            f"symbol={api_symbol}&scale=240&ma=no&datalen=1200"
+        )
+        request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(request, timeout=20) as response:
+            body = response.read().decode("utf-8", errors="ignore")
+        match = re.search(r"var\s+_benchmarkReplay=\((.*)\);?", body, re.S)
+        if not match:
+            raise RuntimeError("Sina index JSONP response could not be parsed")
+        rows = json.loads(match.group(1))
+        frame = pd.DataFrame(rows)
+        if frame.empty:
+            return frame
+        return pd.DataFrame(
+            {
+                "date": frame["day"],
+                "open": pd.to_numeric(frame["open"], errors="coerce"),
+                "high": pd.to_numeric(frame["high"], errors="coerce"),
+                "low": pd.to_numeric(frame["low"], errors="coerce"),
+                "close": pd.to_numeric(frame["close"], errors="coerce"),
+                "volume": pd.to_numeric(frame["volume"], errors="coerce"),
+            }
+        )
+
+    def _normalize_index_bars(self, raw_bars: Any, days: int, source: str) -> list[DailyBarCache]:
+        if raw_bars is None or not isinstance(raw_bars, pd.DataFrame) or raw_bars.empty:
+            return []
+        date_col = self._first_existing_column(raw_bars, ("date", "trade_date"))
+        open_col = self._first_existing_column(raw_bars, ("open",))
+        high_col = self._first_existing_column(raw_bars, ("high",))
+        low_col = self._first_existing_column(raw_bars, ("low",))
+        close_col = self._first_existing_column(raw_bars, ("close",))
+        volume_col = self._first_existing_column(raw_bars, ("volume",))
+        amount_col = self._first_existing_column(raw_bars, ("amount", "turnover"), required=False)
+        required = [date_col, open_col, high_col, low_col, close_col, volume_col]
+        if any(column is None for column in required):
+            raise RuntimeError(f"Unsupported benchmark bar columns: {list(raw_bars.columns)}")
+
+        frame = raw_bars.copy()
+        frame["_trade_date"] = pd.to_datetime(frame[date_col], errors="coerce")
+        frame = frame.dropna(subset=["_trade_date"]).sort_values("_trade_date").tail(days)
+        normalized: list[DailyBarCache] = []
+        for _, row in frame.iterrows():
+            normalized.append(
+                DailyBarCache(
+                    symbol="",
+                    trade_date=row["_trade_date"].date().isoformat(),
+                    open=self._float(row.get(open_col)),
+                    high=self._float(row.get(high_col)),
+                    low=self._float(row.get(low_col)),
+                    close=self._float(row.get(close_col)),
+                    volume=self._float(row.get(volume_col)),
+                    amount=self._float(row.get(amount_col)) if amount_col else None,
+                    source=source,
+                    quality_status="ready",
+                )
+            )
+        return normalized
+
+    def _first_existing_column(
+        self,
+        frame: pd.DataFrame,
+        candidates: tuple[str, ...],
+        required: bool = True,
+    ) -> str | None:
+        for candidate in candidates:
+            if candidate in frame.columns:
+                return candidate
+        if required:
+            return None
+        return None
+
+    def _normalize_benchmark_symbol(self, symbol: str) -> str:
+        raw = str(symbol or "").strip().upper()
+        digits = re.sub(r"\D", "", raw)[-6:]
+        if len(digits) != 6:
+            raise ValueError(f"Unsupported benchmark symbol: {symbol}")
+        if raw.startswith("SZ") or digits.startswith("399"):
+            return f"SZ{digits}"
+        return f"SH{digits}"
+
+    def _benchmark_symbol_to_api_symbol(self, symbol: str) -> str:
+        normalized = self._normalize_benchmark_symbol(symbol)
+        return normalized.lower()
 
     def _normalize_bars(self, raw_bars: Any, days: int, source: str) -> list[DailyBarCache]:
         if raw_bars is None:

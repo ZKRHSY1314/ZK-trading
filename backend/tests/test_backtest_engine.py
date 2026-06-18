@@ -184,3 +184,43 @@ def test_backtest_reports_benchmark_warning_when_missing(store):
 
     assert result["benchmark"]["status"] == "insufficient_benchmark_data"
     assert "insufficient_benchmark_data" in result["execution_warnings"]
+
+
+def test_backtest_tolerates_null_liquidity_fields_from_daily_cache(store):
+    seed_benchmark(store)
+    insert_bar(store, "SH600005", "2020-01-01", 10, 10.1, 9.9, 10, volume=1000, amount=1000000)
+    insert_bar(store, "SH600005", "2020-01-02", 10.1, 10.4, 10.0, 10.3, volume=None, amount=None)
+    insert_bar(store, "SH600005", "2020-01-03", 10.3, 10.6, 10.2, 10.5, volume=2000, amount=1000000)
+
+    result = BacktestEngine(config=strategy_config()).run(
+        "2020-01-01",
+        "2020-01-03",
+        ["SH600005"],
+        100000,
+        1,
+        0.2,
+    )
+
+    assert result["status"] == "completed"
+    assert result["simulation_only"] is True
+
+
+def test_backtest_filters_null_price_rows_and_benchmark_closes(store):
+    insert_bar(store, "SH000300", "2020-01-01", 100, 101, 99, 100)
+    insert_bar(store, "SH000300", "2020-01-02", 100, 101, 99, None)
+    insert_bar(store, "SH000300", "2020-01-03", 101, 102, 100, 101)
+    insert_bar(store, "SH600006", "2020-01-01", 10, 10.1, 9.9, 10, amount=1000000)
+    insert_bar(store, "SH600006", "2020-01-02", 10.1, None, 10.0, 10.1, amount=1000000)
+    insert_bar(store, "SH600006", "2020-01-03", 10.2, 10.5, 10.1, 10.4, amount=1000000)
+
+    result = BacktestEngine(config=strategy_config()).run(
+        "2020-01-01",
+        "2020-01-03",
+        ["SH600006"],
+        100000,
+        1,
+        0.2,
+    )
+
+    assert result["status"] == "completed"
+    assert result["benchmark"]["status"] == "ready"

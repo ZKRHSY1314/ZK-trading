@@ -62,13 +62,14 @@ DANGEROUS_REAL_TRADING_TERMS = (
 )
 
 ACTION_WHITELIST = {"buy", "sell", "cancel"}
-SIMULATED_CASH_BASE = 100000.0
 MAX_DAILY_BUYS = 5
 MAX_SYMBOL_DAILY_BUYS = 1
 MAX_SINGLE_ACTION_RATIO = 0.10
-MAX_SCREEN_CLICK_ACTION_RATIO = 0.02
+MAX_SCREEN_CLICK_ACTION_RATIO = 0.03
 MAX_SCREEN_CLICK_QUANTITY = 100
 MAX_VERIFICATION_AGE_SECONDS = 15 * 60
+MAX_RECLAIM_REVIEW_DRY_RUN_RATIO = 0.02
+MAX_OFFHOUR_REVIEW_DRY_RUN_RATIO = 0.02
 
 
 def _json_dumps(payload: Any) -> str:
@@ -423,7 +424,7 @@ class SimCockpitService:
             "execution_mode": execution_mode,
             "screen_confirmation_provided": bool(screen_confirmation),
             "screen_coordinates": screen_coordinates,
-            "review_only": False,
+            "review_only": bool(risk_result.get("review_only")) or bool(dry_run),
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
         }
@@ -589,7 +590,8 @@ class SimCockpitService:
                 "live_trading_enabled": settings.enable_live_trading,
             }
 
-        plans = self._recent_simulation_plans(limit=max(1, min(int(limit or 5), 20)))
+        action_limit = max(1, min(int(limit or 5), 20))
+        plans = self._recent_simulation_plans(limit=action_limit)
         actions: list[dict[str, Any]] = []
         for plan in plans:
             if not plan.get("allowed") or str(plan.get("action") or "").lower() not in {"buy", "observe"}:
@@ -618,16 +620,117 @@ class SimCockpitService:
                     execution_mode="dry_run_screen",
                 )
             )
-            if len(actions) >= limit:
+            if len(actions) >= action_limit:
                 break
+
+        reclaim_context = self._recent_reclaim_review_candidates(limit=action_limit)
+        if len(actions) < action_limit:
+            for candidate in reclaim_context["dry_run_candidates"]:
+                if len(actions) >= action_limit:
+                    break
+                actions.append(
+                    self.buy(
+                        symbol=str(candidate["symbol"]),
+                        price=float(candidate["price"]),
+                        quantity=int(candidate["quantity"]),
+                        signal_source="dataset2_reclaim_review",
+                        risk_result={
+                            "simulation_allowed": False,
+                            "all_gates_passed": False,
+                            "source": "dataset2_reclaim_watchlist",
+                            "source_run_id": reclaim_context.get("source_run_id"),
+                            "status": candidate.get("status"),
+                            "allowed_effect": candidate.get("allowed_effect"),
+                            "review_only": True,
+                            "simulation_only": True,
+                            "live_disabled": not settings.enable_live_trading,
+                            "requires_next_confirmation": candidate.get("requires_next_confirmation", []),
+                        },
+                        window_verification_id=int(verification["id"]),
+                        requested_by=requested_by,
+                        note=(
+                            "Dataset2 reclaim_review dry-run only; no order permission. "
+                            "Requires portfolio gates, fresh quote, verified simulation window, "
+                            "and SIMULATION_SCREEN_CLICK before any real screen click."
+                        ),
+                        dry_run=True,
+                        execution_mode="dry_run_screen",
+                    )
+                )
+
+        offhour_context = self._latest_offhour_simulation_review_candidates(limit=action_limit)
+        if len(actions) < action_limit:
+            for candidate in offhour_context["dry_run_candidates"]:
+                if len(actions) >= action_limit:
+                    break
+                actions.append(
+                    self.buy(
+                        symbol=str(candidate["symbol"]),
+                        price=float(candidate["price"]),
+                        quantity=int(candidate["quantity"]),
+                        signal_source="offhour_simulation_review_plan",
+                        risk_result={
+                            "simulation_allowed": False,
+                            "all_gates_passed": False,
+                            "source": "offhour_simulation_review_plan",
+                            "source_run_id": offhour_context.get("source_run_id"),
+                            "status": candidate.get("status"),
+                            "recommended_mode": candidate.get("recommended_mode"),
+                            "confidence_tier": candidate.get("confidence_tier"),
+                            "confidence_score": candidate.get("confidence_score"),
+                    "confidence_adjusted_priority_score": candidate.get(
+                        "confidence_adjusted_priority_score"
+                    ),
+                    "priority_score": candidate.get("priority_score"),
+                    "dry_run_cash": candidate.get("dry_run_cash"),
+                    "lot_rounding_minimum_probe": candidate.get("lot_rounding_minimum_probe"),
+                    "max_initial_cash": candidate.get("max_initial_cash"),
+                    "strategy_id": candidate.get("strategy_id"),
+                    "best_strategy": candidate.get("best_strategy"),
+                            "caution_flags": candidate.get("caution_flags") or [],
+                            "review_only": True,
+                            "simulation_only": True,
+                            "live_disabled": not settings.enable_live_trading,
+                            "requires_next_confirmation": [
+                                "fresh_trading_time_risk_gates_passed",
+                                "fresh_quote_confirms_setup",
+                                "sim_cockpit_window_verified",
+                                "dry_run_screen_before_any_simulated_click",
+                                "manual_review_before_screen_click",
+                            ],
+                            "permission_policy": offhour_context.get("permission_policy") or {},
+                        },
+                        window_verification_id=int(verification["id"]),
+                        requested_by=requested_by,
+                        note=(
+                            "Offhour simulation review plan dry-run only; no order permission. "
+                            "Confidence ranking raises review priority but cannot change risk gates, "
+                            "position size, screen-click permission, or production rules."
+                        ),
+                        dry_run=True,
+                        execution_mode="dry_run_screen",
+                    )
+                )
 
         return {
             "status": "completed",
             "verification_id": verification["id"],
             "candidate_plan_count": len(plans),
+            "reclaim_review_candidate_count": reclaim_context["candidate_count"],
+            "near_reclaim_watch_count": reclaim_context["near_reclaim_watch_count"],
+            "reclaim_skipped_count": reclaim_context["skipped_count"],
+            "reclaim_source_run_id": reclaim_context.get("source_run_id"),
+            "offhour_review_candidate_count": offhour_context["candidate_count"],
+            "offhour_ready_dry_run_candidate_count": offhour_context["ready_dry_run_candidate_count"],
+            "offhour_skipped_count": offhour_context["skipped_count"],
+            "offhour_source_run_id": offhour_context.get("source_run_id"),
+            "offhour_review_plan_status": offhour_context.get("status"),
             "attempted_count": len(actions),
             "executed_count": len([item for item in actions if item.get("status") == "executed"]),
+            "dry_run_count": len([item for item in actions if item.get("status") == "dry_run"]),
             "blocked_count": len([item for item in actions if item.get("status") == "blocked"]),
+            "skipped_reclaim_candidates": reclaim_context["skipped_candidates"],
+            "skipped_offhour_candidates": offhour_context["skipped_candidates"],
             "actions": actions,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -686,13 +789,13 @@ class SimCockpitService:
                 reasons.append("risk_gate_failed")
             if action == "buy" and price is not None and quantity is not None:
                 amount = float(price) * int(quantity)
-                if amount > SIMULATED_CASH_BASE * MAX_SINGLE_ACTION_RATIO:
+                if amount > settings.default_cash * MAX_SINGLE_ACTION_RATIO:
                     reasons.append("single_action_exceeds_10pct_simulated_cash")
                 if execution_mode == "screen_click_simulation":
                     if int(quantity) > MAX_SCREEN_CLICK_QUANTITY:
                         reasons.append("screen_click_quantity_exceeds_first_test_limit")
-                    if amount > SIMULATED_CASH_BASE * MAX_SCREEN_CLICK_ACTION_RATIO:
-                        reasons.append("screen_click_amount_exceeds_2pct_simulated_cash")
+                    if amount > settings.default_cash * MAX_SCREEN_CLICK_ACTION_RATIO:
+                        reasons.append("screen_click_amount_exceeds_3pct_simulated_cash")
                 reasons.extend(self._daily_buy_limit_reasons(str(symbol).upper()))
         elif action == "cancel":
             if not order_id:
@@ -864,6 +967,352 @@ class SimCockpitService:
                 }
             )
         return plans
+
+    def _recent_reclaim_review_candidates(self, limit: int) -> dict[str, Any]:
+        row = self.store.fetch_one(
+            """
+            SELECT id, backtest_json, created_at
+            FROM offhour_research_runs
+            WHERE backtest_json LIKE '%dataset2_reclaim_watchlist%'
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+        if not row:
+            return {
+                "source_run_id": None,
+                "candidate_count": 0,
+                "near_reclaim_watch_count": 0,
+                "skipped_count": 0,
+                "dry_run_candidates": [],
+                "skipped_candidates": [],
+            }
+
+        backtest = _json_loads(row.get("backtest_json"), {})
+        watchlist = backtest.get("dataset2_reclaim_watchlist") or {}
+        items = watchlist.get("items") or []
+        dry_run_candidates: list[dict[str, Any]] = []
+        skipped_candidates: list[dict[str, Any]] = []
+        seen_symbols: set[str] = set()
+        near_reclaim_watch_count = 0
+        safe_limit = max(1, min(int(limit or 5), 20))
+
+        for item in items:
+            symbol = str(item.get("symbol") or "").upper()
+            if not symbol or symbol in seen_symbols:
+                continue
+            seen_symbols.add(symbol)
+            status = str(item.get("status") or "unknown")
+            if status == "near_reclaim_watch":
+                near_reclaim_watch_count += 1
+            if status != "reclaim_review":
+                if len(skipped_candidates) < 20:
+                    skipped_candidates.append(
+                        {
+                            "symbol": symbol,
+                            "status": status,
+                            "reason": "not_reclaimed_for_dry_run",
+                            "allowed_effect": item.get("allowed_effect"),
+                        }
+                    )
+                continue
+            price = self._reclaim_candidate_price(item)
+            if price is None:
+                skipped_candidates.append(
+                    {
+                        "symbol": symbol,
+                        "status": status,
+                        "reason": "missing_valid_reclaim_price",
+                    }
+                )
+                continue
+            quantity = self._reclaim_review_dry_run_quantity(price)
+            if quantity <= 0:
+                skipped_candidates.append(
+                    {
+                        "symbol": symbol,
+                        "status": status,
+                        "reason": "reclaim_dry_run_amount_exceeds_2pct_cash_cap",
+                        "price": price,
+                    }
+                )
+                continue
+            if self._recent_reclaim_dry_run_exists(symbol):
+                skipped_candidates.append(
+                    {
+                        "symbol": symbol,
+                        "status": status,
+                        "reason": "recent_reclaim_dry_run_already_recorded",
+                    }
+                )
+                continue
+            dry_run_candidates.append(
+                {
+                    "symbol": symbol,
+                    "status": status,
+                    "price": price,
+                    "quantity": quantity,
+                    "signal_date": item.get("signal_date"),
+                    "latest_trade_date": item.get("latest_trade_date"),
+                    "signal_close": item.get("signal_close"),
+                    "latest_close": item.get("latest_close"),
+                    "close_vs_signal_pct": item.get("close_vs_signal_pct"),
+                    "allowed_effect": item.get("allowed_effect"),
+                    "requires_next_confirmation": item.get("requires_next_confirmation") or [],
+                }
+            )
+            if len(dry_run_candidates) >= safe_limit:
+                break
+
+        return {
+            "source_run_id": row.get("id"),
+            "source_created_at": row.get("created_at"),
+            "candidate_count": len(dry_run_candidates),
+            "near_reclaim_watch_count": near_reclaim_watch_count,
+            "skipped_count": len(skipped_candidates),
+            "dry_run_candidates": dry_run_candidates,
+            "skipped_candidates": skipped_candidates,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _reclaim_candidate_price(self, item: dict[str, Any]) -> float | None:
+        for key in ("latest_close", "signal_close"):
+            try:
+                price = float(item.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                return price
+        return None
+
+    def _reclaim_review_dry_run_quantity(self, price: float) -> int:
+        if price <= 0:
+            return 0
+        cash_cap = float(settings.default_cash) * MAX_RECLAIM_REVIEW_DRY_RUN_RATIO
+        max_lots = int(cash_cap // price) // 100
+        if max_lots <= 0:
+            return 0
+        return min(MAX_SCREEN_CLICK_QUANTITY, max_lots * 100)
+
+    def _recent_reclaim_dry_run_exists(self, symbol: str) -> bool:
+        row = self.store.fetch_one(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM sim_cockpit_actions
+            WHERE upper(symbol) = ?
+              AND signal_source = 'dataset2_reclaim_review'
+              AND datetime(created_at) >= datetime('now', '-12 hours')
+            """,
+            (symbol.upper(),),
+        )
+        return int((row or {}).get("cnt") or 0) > 0
+
+    def _latest_offhour_simulation_review_candidates(self, limit: int) -> dict[str, Any]:
+        try:
+            from app.research.offhour import OffhourResearchLoopService
+
+            plan = OffhourResearchLoopService().latest_simulation_review_plan(limit=max(limit, 12))
+        except Exception as exc:  # pragma: no cover - defensive around optional artifact files
+            return {
+                "source_run_id": None,
+                "status": "error",
+                "error": str(exc),
+                "candidate_count": 0,
+                "ready_dry_run_candidate_count": 0,
+                "skipped_count": 0,
+                "dry_run_candidates": [],
+                "skipped_candidates": [
+                    {"reason": "latest_offhour_simulation_review_plan_unavailable", "error": str(exc)}
+                ],
+                "permission_policy": {},
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        permission_policy = plan.get("permission_policy") or {}
+        skipped_candidates: list[dict[str, Any]] = []
+        dry_run_candidates: list[dict[str, Any]] = []
+        if (
+            plan.get("review_only") is not True
+            or plan.get("simulation_only") is not True
+            or bool(plan.get("live_trading_enabled"))
+            or bool(permission_policy.get("may_submit_order"))
+            or bool(permission_policy.get("may_enable_screen_click"))
+        ):
+            return {
+                "source_run_id": plan.get("run_id"),
+                "status": "blocked",
+                "reason": "offhour_plan_permission_policy_not_safe",
+                "candidate_count": 0,
+                "ready_dry_run_candidate_count": 0,
+                "skipped_count": len(plan.get("candidates") or []),
+                "dry_run_candidates": [],
+                "skipped_candidates": [
+                    {
+                        "symbol": item.get("symbol"),
+                        "reason": "offhour_plan_permission_policy_not_safe",
+                    }
+                    for item in (plan.get("candidates") or [])[:20]
+                ],
+                "permission_policy": permission_policy,
+                "review_only": True,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+
+        safe_limit = max(1, min(int(limit or 5), 20))
+        seen_symbols: set[str] = set()
+        for item in plan.get("candidates") or []:
+            symbol = str(item.get("symbol") or "").upper()
+            if not symbol or symbol in seen_symbols:
+                continue
+            seen_symbols.add(symbol)
+            blockers = item.get("blockers") or []
+            recommended_mode = str(item.get("recommended_mode") or "")
+            if recommended_mode != "dry_run_screen_candidate" or blockers:
+                skipped_candidates.append(
+                    {
+                        "symbol": symbol,
+                        "recommended_mode": recommended_mode,
+                        "reason": "not_ready_for_offhour_dry_run",
+                        "blockers": blockers,
+                    }
+                )
+                continue
+            price = self._offhour_candidate_price(item)
+            if price is None:
+                skipped_candidates.append(
+                    {
+                        "symbol": symbol,
+                        "recommended_mode": recommended_mode,
+                        "reason": "missing_valid_offhour_candidate_price",
+                    }
+                )
+                continue
+            quantity = self._offhour_review_dry_run_quantity(price, item)
+            if quantity <= 0:
+                skipped_candidates.append(
+                    {
+                        "symbol": symbol,
+                        "recommended_mode": recommended_mode,
+                        "reason": "offhour_dry_run_amount_below_one_lot_or_cash_cap",
+                        "price": price,
+                    }
+                )
+                continue
+            if self._recent_offhour_dry_run_exists(symbol):
+                skipped_candidates.append(
+                    {
+                        "symbol": symbol,
+                        "recommended_mode": recommended_mode,
+                        "reason": "recent_offhour_dry_run_already_recorded",
+                    }
+                )
+                continue
+
+            evidence = item.get("evidence_quality") or {}
+            position_plan = item.get("position_plan") or {}
+            best_strategy = item.get("best_strategy") or {}
+            dry_run_cash = round(price * quantity, 2)
+            max_initial_cash = position_plan.get("max_initial_cash")
+            dry_run_candidates.append(
+                {
+                    "symbol": symbol,
+                    "status": plan.get("status"),
+                    "recommended_mode": recommended_mode,
+                    "price": price,
+                    "quantity": quantity,
+                    "signal_date": item.get("signal_date"),
+                    "pattern_id": item.get("pattern_id"),
+                    "action_label": item.get("action_label"),
+                    "risk_level": item.get("risk_level"),
+                    "confidence_tier": evidence.get("confidence_tier"),
+                    "confidence_score": evidence.get("confidence_score"),
+                    "confidence_adjusted_priority_score": item.get(
+                        "confidence_adjusted_priority_score"
+                    ),
+                    "priority_score": item.get("priority_score"),
+                    "dry_run_cash": dry_run_cash,
+                    "max_initial_cash": max_initial_cash,
+                    "lot_rounding_minimum_probe": (
+                        max_initial_cash is not None and dry_run_cash > float(max_initial_cash)
+                    ),
+                    "strategy_id": (item.get("matched_strategy_ids") or [None])[0],
+                    "best_strategy": best_strategy,
+                    "caution_flags": item.get("caution_flags") or [],
+                    "review_only": True,
+                    "simulation_only": True,
+                    "live_trading_enabled": settings.enable_live_trading,
+                }
+            )
+            if len(dry_run_candidates) >= safe_limit:
+                break
+
+        return {
+            "source_run_id": plan.get("run_id"),
+            "status": plan.get("status"),
+            "candidate_count": len(dry_run_candidates),
+            "ready_dry_run_candidate_count": plan.get("ready_dry_run_candidate_count", 0),
+            "skipped_count": len(skipped_candidates),
+            "dry_run_candidates": dry_run_candidates,
+            "skipped_candidates": skipped_candidates,
+            "permission_policy": permission_policy,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
+    def _offhour_candidate_price(self, item: dict[str, Any]) -> float | None:
+        for key in ("close", "latest_close", "signal_close"):
+            try:
+                price = float(item.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                return price
+        return None
+
+    def _offhour_review_dry_run_quantity(self, price: float, item: dict[str, Any]) -> int:
+        if price <= 0:
+            return 0
+        position_plan = item.get("position_plan") or {}
+        try:
+            max_initial_cash = float(position_plan.get("max_initial_cash") or 0)
+        except (TypeError, ValueError):
+            max_initial_cash = 0.0
+        cash_cap = float(settings.default_cash) * MAX_OFFHOUR_REVIEW_DRY_RUN_RATIO
+        if max_initial_cash > 0:
+            cash_cap = min(cash_cap, max_initial_cash)
+        max_lots = int(cash_cap // price) // 100
+        if max_lots <= 0:
+            evidence = item.get("evidence_quality") or {}
+            confidence_tier = str(evidence.get("confidence_tier") or "")
+            one_lot_amount = price * 100
+            caution_flags = set(item.get("caution_flags") or [])
+            if (
+                confidence_tier.startswith("high_confidence")
+                and "high_volatility_board_requires_smaller_probe" not in caution_flags
+                and one_lot_amount <= float(settings.default_cash) * MAX_SCREEN_CLICK_ACTION_RATIO
+            ):
+                return MAX_SCREEN_CLICK_QUANTITY
+            return 0
+        return min(MAX_SCREEN_CLICK_QUANTITY, max_lots * 100)
+
+    def _recent_offhour_dry_run_exists(self, symbol: str) -> bool:
+        row = self.store.fetch_one(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM sim_cockpit_actions
+            WHERE upper(symbol) = ?
+              AND signal_source = 'offhour_simulation_review_plan'
+              AND datetime(created_at) >= datetime('now', '-12 hours')
+            """,
+            (symbol.upper(),),
+        )
+        return int((row or {}).get("cnt") or 0) > 0
 
     def _build_execution_result(
         self,

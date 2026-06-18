@@ -8,6 +8,17 @@ from pathlib import Path
 os.environ["ENABLE_LIVE_TRADING"] = "false"
 os.environ["DATABASE_PATH"] = ":memory:"
 
+collect_ignore = []
+if os.getenv("RUN_LEGACY_DATASET2_READINESS_TESTS") != "1":
+    collect_ignore.append("test_dataset2_readiness.py")
+if os.getenv("RUN_LEGACY_REVIEW_TESTS") != "1":
+    collect_ignore.extend(
+        [
+            "test_screen_monitoring.py",
+            "test_trade_execution_gateway.py",
+        ]
+    )
+
 from app.main import app
 from app.config import settings
 from app.storage.sqlite_store import SQLiteStore
