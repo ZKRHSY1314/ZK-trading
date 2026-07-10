@@ -45,6 +45,7 @@ class AutomationSupervisor:
                 "offhour_research_loop",
                 "single_symbol_review",
                 "offhour_potential_search",
+                "public_opinion_capture",
                 "event_logging",
             ],
             "reserved_adapters": [
@@ -129,6 +130,25 @@ class AutomationSupervisor:
                 "artifact_policy": "candidate_only_not_auto_loaded",
                 "cli_modes": ["offhour-research-status", "offhour-research-loop"],
                 "requires_health_live_trading_disabled": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "public_opinion_capture": {
+                "status": "enabled_for_scheduled_codex_capture",
+                "mode": "review_only_policy_market_sector_news",
+                "allowed_outputs": [
+                    "public_opinion_items",
+                    "public_opinion_sector_signals",
+                    "selection_v2_tailwind_context",
+                ],
+                "recommended_cadence": ["09:00", "11:30", "13:00", "15:10", "20:30"],
+                "requires_health_live_trading_disabled": True,
+                "forbidden": [
+                    "broker_order",
+                    "credential_access",
+                    "screen_click_trading",
+                    "live_auto_trading",
+                    "auto_promote_to_strategy",
+                ],
                 "live_trading_enabled": settings.enable_live_trading,
             },
             "guardrails": [

@@ -12,6 +12,7 @@ from app.config import settings
 from app.models import AgentControlEvent, AgentControlTask, AgentTaskInput
 from app.monitoring.service import MonitoringService
 from app.automation.supervisor import AutomationSupervisor
+from app.public_opinion.service import CodexPublicOpinionService
 from app.research.offhour import OffhourResearchLoopService
 from app.storage.sqlite_store import SQLiteStore
 
@@ -32,6 +33,7 @@ class AgentControlService:
             "full_simulation_cycle",
             "frontend_browser_check",
             "offhour_research_loop",
+            "public_opinion_capture",
         }
         self.observation_tasks = {
             "local_dashboard_observation"
@@ -328,6 +330,13 @@ class AgentControlService:
                     write_artifact=task.payload.get("write_artifact", True),
                     refresh_history=task.payload.get("refresh_history", False),
                     requested_by=task.requested_by,
+                )
+            elif task.task_type == "public_opinion_capture":
+                result = CodexPublicOpinionService().run(
+                    limit=task.payload.get("limit", 60),
+                    persist=task.payload.get("persist", True),
+                    requested_by=task.requested_by,
+                    source_urls=task.payload.get("source_urls", []),
                 )
             elif task.task_type == "frontend_browser_check":
                 completed = subprocess.run(

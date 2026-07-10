@@ -631,6 +631,72 @@ cd C:\Users\lenovo\Desktop\A股记录\ai_trading_system\backend
 .\.venv\Scripts\python.exe scripts\automation_loop.py --mode daily-bar-cache --max-cycles 1 --limit 50
 ```
 
+## Codex Public Opinion News Capture
+
+`public_opinion_capture` is a review-only Codex news module for scheduled policy,
+market, and sector-wind capture. It writes only to:
+
+- `public_opinion_runs`
+- `public_opinion_items`
+- `public_opinion_sector_signals`
+
+The module always reports `review_only=true`, `simulation_only=true`, and
+`live_trading_enabled=false`. It does not place orders, cancel orders, log in to
+brokers, click trading screens, or auto-promote strategy artifacts.
+
+Common API checks:
+
+```powershell
+GET  /api/public-opinion/capabilities
+POST /api/public-opinion/run
+GET  /api/public-opinion/context/latest?limit=8
+GET  /api/public-opinion/runs/latest
+```
+
+Run once:
+
+```powershell
+cd D:\codex-A股交易\backend
+.\.venv\Scripts\python.exe -X utf8 scripts\automation_loop.py --mode public-opinion-capture --max-cycles 1 --limit 60
+```
+
+Run continuously every 15 minutes:
+
+```powershell
+cd D:\codex-A股交易\backend
+.\scripts\start_public_opinion_loop.ps1 -IntervalSeconds 900 -Limit 60
+```
+
+`candidates/selection-v2` reads the latest public-opinion sector context as a
+small explainable `market_sector` tailwind. The bonus is applied only when the
+candidate name or evidence matches sector keywords. Risk-shaped news can add a
+`SECTOR_RETREAT` risk flag. Hard filters remain dominant.
+
+## Operation Readiness Report
+
+Before calling the project "in operation", check the unified readiness endpoint:
+
+```powershell
+GET /api/system/operation-readiness?selection_limit=80
+```
+
+CLI:
+
+```powershell
+cd D:\codex-A股交易\backend
+.\.venv\Scripts\python.exe -X utf8 scripts\automation_loop.py --mode operation-readiness --max-cycles 1 --limit 80
+```
+
+The report maps the four current blockers into separate requirements:
+
+- `runtime_operation`: backend, SQLite, data cache, and `live_trading_enabled=false`.
+- `automation_training`: automation capabilities and available simulation/training evidence.
+- `judgment_efficiency_accuracy`: selection-v2 diagnostics plus latest backtest outcome.
+- `codex_public_opinion`: latest news capture and sector-signal evidence.
+
+`ready_for_controlled_review_run` means only review-only/simulation-only operation is ready.
+Any `needs_attention` item must be handled before claiming the full project problem is solved.
+
 ## Schedule Cadence (调度建议)
 
 建议在交易日中按以下时间点执行完整的 `cycle` 循环：

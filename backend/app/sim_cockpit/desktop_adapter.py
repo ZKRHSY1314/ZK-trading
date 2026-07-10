@@ -79,6 +79,11 @@ EXECUTION_MODES = {
 SCREEN_CLICK_CONFIRMATION = "SIMULATION_SCREEN_CLICK"
 MIN_CLICK_PLAN_CONFIDENCE = 0.8
 DEFAULT_DESKTOP_SCAN_MAX_CANDIDATES = 6
+SCREEN_READBACK_TABS = {
+    "positions": "\u8d44\u91d1\u80a1\u7968",
+    "today_trades": "\u5f53\u65e5\u6210\u4ea4",
+    "today_orders": "\u5f53\u65e5\u59d4\u6258",
+}
 
 TONGHUASHUN_WINDOW_HINT_TERMS = (
     "\u7f51\u4e0a\u80a1\u7968\u4ea4\u6613\u7cfb\u7edf",
@@ -355,6 +360,140 @@ class TonghuashunDesktopAdapter:
             "input_snapshot": input_snapshot,
         }
 
+    def confirm_pending_order(
+        self,
+        window: dict[str, Any] | None,
+        action_type: str,
+        symbol: str | None,
+        price: float | None,
+        quantity: int | None,
+    ) -> dict[str, Any]:
+        if not sys.platform.startswith("win"):
+            return {"status": "blocked", "reason": "windows_desktop_required", "real_screen_click_executed": False}
+        hwnd = int((window or {}).get("hwnd") or 0)
+        if not hwnd:
+            return {"status": "blocked", "reason": "missing_window_handle", "real_screen_click_executed": False}
+        self._ensure_dpi_awareness()
+        try:
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            time.sleep(0.2)
+        except Exception:
+            pass
+
+        before = self.capture_window_screenshot(window, phase="confirm_before", action_type=action_type)
+        snapshot = self._uia_snapshot(hwnd)
+        confirmation = self._find_order_confirmation(snapshot, action_type, symbol, price, quantity)
+        if not confirmation.get("ready_for_confirmation"):
+            return {
+                "status": "blocked",
+                "reason": confirmation.get("reason") or "confirmation_dialog_not_ready",
+                "real_screen_click_executed": False,
+                "pre_confirm_screenshot": before,
+                "confirmation": confirmation,
+            }
+
+        button = confirmation["button"]
+        try:
+            self._click(int(button["x"]), int(button["y"]))
+            time.sleep(0.5)
+        except Exception as exc:
+            return {
+                "status": "blocked",
+                "reason": str(exc),
+                "real_screen_click_executed": True,
+                "pre_confirm_screenshot": before,
+                "confirmation": confirmation,
+            }
+        after = self.capture_window_screenshot(window, phase="confirm_after", action_type=action_type)
+        post_snapshot = self._uia_snapshot(hwnd)
+        return {
+            "status": "executed",
+            "reason": None,
+            "real_screen_click_executed": True,
+            "pre_confirm_screenshot": before,
+            "post_confirm_screenshot": after,
+            "confirmation": confirmation,
+            "submission_notice": self._extract_submission_notice(post_snapshot),
+        }
+
+    def read_screen_readback(
+        self,
+        window: dict[str, Any] | None,
+        readback_type: str,
+        symbol: str | None = None,
+        price: float | None = None,
+        quantity: int | None = None,
+        order_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not sys.platform.startswith("win"):
+            return {"status": "blocked", "reason": "windows_desktop_required", "real_screen_click_executed": False}
+        hwnd = int((window or {}).get("hwnd") or 0)
+        if not hwnd:
+            return {"status": "blocked", "reason": "missing_window_handle", "real_screen_click_executed": False}
+        tab_label = SCREEN_READBACK_TABS.get(readback_type)
+        if not tab_label:
+            return {"status": "blocked", "reason": "unsupported_screen_readback_type", "real_screen_click_executed": False}
+        self._ensure_dpi_awareness()
+        try:
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            time.sleep(0.2)
+        except Exception:
+            pass
+
+        before_snapshot = self._uia_snapshot(hwnd)
+        if not self._snapshot_has_simulation_marker(before_snapshot):
+            return {
+                "status": "blocked",
+                "reason": "missing_simulation_marker",
+                "real_screen_click_executed": False,
+                "snapshot_status": before_snapshot.get("status"),
+            }
+        tab = self._find_named_control(before_snapshot.get("controls") or [], tab_label)
+        if tab is None:
+            return {
+                "status": "blocked",
+                "reason": "readback_tab_not_found",
+                "real_screen_click_executed": False,
+                "tab_label": tab_label,
+                "snapshot_status": before_snapshot.get("status"),
+            }
+        before = self.capture_window_screenshot(window, phase=f"{readback_type}_before", action_type="readback")
+        try:
+            self._click(int(tab["x"]), int(tab["y"]))
+            time.sleep(0.6)
+        except Exception as exc:
+            return {
+                "status": "blocked",
+                "reason": str(exc),
+                "real_screen_click_executed": True,
+                "tab": tab,
+                "pre_readback_screenshot": before,
+            }
+        after = self.capture_window_screenshot(window, phase=f"{readback_type}_after", action_type="readback")
+        after_snapshot = self._uia_snapshot(hwnd)
+        ocr = self._ocr_screenshot(after.get("artifact_ref"))
+        interpretation = self._interpret_screen_readback(
+            after_snapshot,
+            readback_type=readback_type,
+            symbol=symbol,
+            price=price,
+            quantity=quantity,
+            order_id=order_id,
+            ocr=ocr,
+        )
+        return {
+            "status": interpretation["status"],
+            "reason": None,
+            "real_screen_click_executed": True,
+            "tab": tab,
+            "pre_readback_screenshot": before,
+            "post_readback_screenshot": after,
+            "ocr": ocr,
+            "interpretation": interpretation,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+
     def _enumerate_windows(self) -> list[dict[str, Any]]:
         user32 = ctypes.windll.user32
         lightweight: list[dict[str, Any]] = []
@@ -501,13 +640,16 @@ def rect_payload(control):
         "height": max(0, bottom - top),
     }
 
-def walk(control, controls, depth=0, max_depth=8, max_items=220):
+SIMULATION_MARKERS = ("mncg", "simulation", "simulated", "paper", "模拟", "模拟炒股", "模拟盘")
+
+
+def walk(control, controls, depth=0, max_depth=9, max_items=500):
     if depth > max_depth or len(controls) >= max_items:
         return
     try:
         item = {
             "depth": depth,
-            "name": str(getattr(control, "Name", "") or "")[:120],
+            "name": str(getattr(control, "Name", "") or "")[:320],
             "control_type": str(getattr(control, "ControlTypeName", "") or ""),
             "automation_id": str(getattr(control, "AutomationId", "") or ""),
             "rect": rect_payload(control),
@@ -523,23 +665,106 @@ def walk(control, controls, depth=0, max_depth=8, max_items=220):
     for child in children:
         walk(child, controls, depth + 1, max_depth, max_items)
 
+
+def has_simulation_marker(root, controls):
+    text = " ".join(
+        [str(getattr(root, "Name", "") or "")]
+        + [str(item.get("name") or "") for item in controls]
+        + [str(item.get("automation_id") or "") for item in controls]
+    ).lower()
+    return any(marker.lower() in text for marker in SIMULATION_MARKERS)
+
+
+def has_buy_form(controls):
+    ids = {str(item.get("automation_id") or "") for item in controls}
+    has_edits = {"1032", "1033", "1034"}.issubset(ids)
+    has_submit = any(
+        str(item.get("automation_id") or "") == "1006"
+        and "买入" in str(item.get("name") or "")
+        for item in controls
+    )
+    return has_edits and has_submit
+
+
+def find_buy_tab(control, depth=0, max_depth=9):
+    if depth > max_depth:
+        return None
+    try:
+        name = str(getattr(control, "Name", "") or "")
+        control_type = str(getattr(control, "ControlTypeName", "") or "")
+        if "买入" in name and ("F1" in name or control_type == "TreeItemControl"):
+            return control
+        children = control.GetChildren()
+    except Exception:
+        return None
+    for child in children:
+        found = find_buy_tab(child, depth + 1, max_depth)
+        if found is not None:
+            return found
+    return None
+
+
+def activate_buy_tab_if_safe(root, controls):
+    if has_buy_form(controls):
+        return {"attempted": False, "reason": "buy_form_already_visible"}
+    if not has_simulation_marker(root, controls):
+        return {"attempted": False, "reason": "missing_simulation_marker"}
+    buy_tab = find_buy_tab(root)
+    if buy_tab is None:
+        return {"attempted": False, "reason": "buy_tab_not_found"}
+    result = {"attempted": True, "reason": None, "methods": []}
+    try:
+        buy_tab.SetFocus()
+        result["methods"].append("set_focus")
+    except Exception:
+        pass
+    try:
+        pattern = buy_tab.GetSelectionItemPattern()
+        pattern.Select()
+        result["methods"].append("selection_item_select")
+        return result
+    except Exception as exc:
+        result["reason"] = f"selection_failed:{exc}"
+    try:
+        pattern = buy_tab.GetInvokePattern()
+        pattern.Invoke()
+        result["methods"].append("invoke_pattern")
+        return result
+    except Exception as exc:
+        result["reason"] = f"invoke_failed:{exc}"
+    try:
+        buy_tab.Click(simulateMove=False)
+        result["methods"].append("click")
+        return result
+    except Exception as exc:
+        result["reason"] = f"click_failed:{exc}"
+        return result
+
 try:
     import uiautomation as auto
     try:
-        auto.SetGlobalSearchTimeout(0.25)
+        auto.SetGlobalSearchTimeout(0.5)
     except Exception:
         pass
     hwnd = int(sys.argv[1])
     root = auto.ControlFromHandle(hwnd)
     controls = []
     walk(root, controls)
+    activation = activate_buy_tab_if_safe(root, controls)
+    if activation.get("attempted"):
+        import time
+        time.sleep(0.35)
+        root = auto.ControlFromHandle(hwnd)
+        controls = []
+        walk(root, controls)
     print(json.dumps({
         "status": "available",
         "root_name": getattr(root, "Name", None),
         "root_type": getattr(root, "ControlTypeName", None),
         "root_rect": rect_payload(root),
         "texts": [item["name"] for item in controls if item.get("name")][:120],
-        "controls": controls[:160],
+        "controls": controls[:320],
+        "activation": activation,
     }, ensure_ascii=False, default=str))
 except Exception as exc:
     print(json.dumps({"status": "failed", "reason": str(exc)}, ensure_ascii=False, default=str))
@@ -567,7 +792,8 @@ except Exception as exc:
                 "root_type": payload.get("root_type"),
                 "root_rect": payload.get("root_rect") or {},
                 "texts": (payload.get("texts") or [])[:120],
-                "controls": controls[:160],
+                "controls": controls[:320],
+                "activation": payload.get("activation") or {},
                 "coordinate_anchors": self._coordinate_anchors_from_uia_controls(controls),
             }
         except subprocess.TimeoutExpired:
@@ -977,6 +1203,328 @@ except Exception as exc:
         if isinstance(value, float) and value.is_integer():
             return str(int(value))
         return str(value or "")
+
+    def _find_order_confirmation(
+        self,
+        snapshot: dict[str, Any],
+        action_type: str,
+        symbol: str | None,
+        price: float | None,
+        quantity: int | None,
+    ) -> dict[str, Any]:
+        controls = snapshot.get("controls") or []
+        text = self._snapshot_text(snapshot)
+        missing: list[str] = []
+        if "\u59d4\u6258\u786e\u8ba4" not in text:
+            missing.append("missing_order_confirmation_title")
+        if not any(term.lower() in text for term in SIMULATION_POSITIVE_TERMS):
+            missing.append("missing_simulation_marker")
+        action_word = "\u4e70\u5165" if action_type == "buy" else "\u5356\u51fa"
+        if action_word not in text:
+            missing.append("missing_expected_action_word")
+        symbol_text = self._ui_symbol(symbol)
+        if symbol_text and symbol_text not in text:
+            missing.append("missing_expected_symbol")
+        if price is not None and not self._numeric_value_in_text(price, text):
+            missing.append("missing_expected_price")
+        if quantity is not None and str(int(quantity)) not in text:
+            missing.append("missing_expected_quantity")
+
+        button = self._confirmation_yes_button(controls)
+        if button is None:
+            missing.append("missing_yes_button")
+        if missing:
+            return {
+                "ready_for_confirmation": False,
+                "reason": "confirmation_dialog_validation_failed",
+                "missing": missing,
+                "snapshot_status": snapshot.get("status"),
+            }
+        return {
+            "ready_for_confirmation": True,
+            "reason": None,
+            "button": button,
+            "expected": {
+                "action_type": action_type,
+                "symbol": symbol,
+                "ui_symbol": symbol_text,
+                "price": price,
+                "quantity": quantity,
+            },
+            "snapshot_status": snapshot.get("status"),
+        }
+
+    def _snapshot_text(self, snapshot: dict[str, Any]) -> str:
+        controls = snapshot.get("controls") or []
+        parts = [
+            str(snapshot.get("root_name") or ""),
+            " ".join(str(item) for item in snapshot.get("texts") or []),
+            " ".join(str(item.get("name") or "") for item in controls if isinstance(item, dict)),
+        ]
+        return " ".join(parts).lower()
+
+    def _snapshot_has_simulation_marker(self, snapshot: dict[str, Any]) -> bool:
+        text = self._snapshot_text(snapshot)
+        return any(term.lower() in text for term in SIMULATION_POSITIVE_TERMS)
+
+    def _find_named_control(self, controls: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+        for control in controls:
+            if not isinstance(control, dict):
+                continue
+            if str(control.get("name") or "").strip() != name:
+                continue
+            rect = control.get("rect") or {}
+            left = int(rect.get("left") or 0)
+            top = int(rect.get("top") or 0)
+            right = int(rect.get("right") or 0)
+            bottom = int(rect.get("bottom") or 0)
+            if right <= left or bottom <= top:
+                continue
+            return {
+                "name": control.get("name"),
+                "automation_id": control.get("automation_id"),
+                "control_type": control.get("control_type"),
+                "rect": rect,
+                "x": left + (right - left) // 2,
+                "y": top + (bottom - top) // 2,
+            }
+        return None
+
+    def _interpret_screen_readback(
+        self,
+        snapshot: dict[str, Any],
+        readback_type: str,
+        symbol: str | None,
+        price: float | None,
+        quantity: int | None,
+        order_id: str | None,
+        ocr: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        text = self._snapshot_text(snapshot)
+        ocr_text = str((ocr or {}).get("text") or "")
+        combined_text = " ".join([text, ocr_text.lower()])
+        fuzzy_text = self._fuzzy_identifier_text(combined_text)
+        ui_symbol = self._ui_symbol(symbol)
+        has_symbol = bool(
+            ui_symbol
+            and (
+                ui_symbol in combined_text
+                or str(symbol or "").lower() in combined_text
+                or self._fuzzy_identifier_text(ui_symbol) in fuzzy_text
+            )
+        )
+        has_order_id = bool(order_id and self._fuzzy_identifier_text(str(order_id)) in fuzzy_text)
+        has_price = price is not None and self._numeric_value_in_text(price, combined_text)
+        has_quantity = bool(quantity is not None and str(int(quantity)) in fuzzy_text)
+        owner_drawn_grid = any(
+            str(item.get("name") or "") in {"HexinScrollWnd", "HexinScrollWnd2", "Custom2"}
+            for item in snapshot.get("controls") or []
+            if isinstance(item, dict)
+        )
+        limitation = "owner_drawn_table_not_exposed_to_uia" if owner_drawn_grid else None
+        if readback_type == "today_orders":
+            if has_order_id or has_symbol:
+                status = "pending_order_detected"
+            else:
+                status = "screen_table_unparsed" if owner_drawn_grid else "no_pending_order_detected"
+        elif readback_type == "today_trades":
+            if has_order_id or (has_symbol and has_quantity):
+                status = "fill_detected"
+            else:
+                status = "screen_table_unparsed" if owner_drawn_grid else "no_fill_detected"
+        elif readback_type == "positions":
+            if has_symbol and has_quantity:
+                status = "position_detected"
+            else:
+                status = "screen_table_unparsed" if owner_drawn_grid else "no_position_detected"
+        else:
+            status = "unsupported_screen_readback_type"
+        return {
+            "status": status,
+            "readback_type": readback_type,
+            "requires_visual_or_ocr_review": status == "screen_table_unparsed",
+            "limitation": limitation,
+            "matched": {
+                "symbol": has_symbol,
+                "order_id": has_order_id,
+                "price": has_price,
+                "quantity": has_quantity,
+            },
+            "expected": {
+                "symbol": symbol,
+                "ui_symbol": ui_symbol,
+                "price": price,
+                "quantity": quantity,
+                "order_id": order_id,
+            },
+            "snapshot_status": snapshot.get("status"),
+            "ocr_status": (ocr or {}).get("status"),
+            "ocr_language": (ocr or {}).get("language"),
+            "evidence_sources": [
+                source
+                for source in [
+                    "uia_snapshot" if text else None,
+                    "windows_ocr" if (ocr or {}).get("status") == "ok" else None,
+                ]
+                if source
+            ],
+            "text_hash": hashlib.sha256(combined_text.encode("utf-8")).hexdigest(),
+        }
+
+    def _numeric_value_in_text(self, value: float | int, text: str) -> bool:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return False
+        variants = {
+            str(value),
+            f"{number:.1f}",
+            f"{number:.2f}",
+            f"{number:.3f}",
+        }
+        if number.is_integer():
+            variants.add(str(int(number)))
+        return any(variant in text for variant in variants)
+
+    def _confirmation_yes_button(self, controls: list[dict[str, Any]]) -> dict[str, Any] | None:
+        yes_names = {"\u662f", "\u662f(y)", "\u786e\u8ba4", "\u786e\u5b9a"}
+        for control in controls:
+            if not isinstance(control, dict):
+                continue
+            name = str(control.get("name") or "").strip().lower()
+            if name not in yes_names:
+                continue
+            if str(control.get("control_type") or "") != "ButtonControl":
+                continue
+            rect = control.get("rect") or {}
+            left = int(rect.get("left") or 0)
+            top = int(rect.get("top") or 0)
+            right = int(rect.get("right") or 0)
+            bottom = int(rect.get("bottom") or 0)
+            if right <= left or bottom <= top:
+                continue
+            return {
+                "name": control.get("name"),
+                "automation_id": control.get("automation_id"),
+                "control_type": control.get("control_type"),
+                "rect": rect,
+                "x": left + (right - left) // 2,
+                "y": top + (bottom - top) // 2,
+            }
+        return None
+
+    def _extract_submission_notice(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        text = self._snapshot_text(snapshot)
+        if "\u59d4\u6258\u5df2\u6210\u529f\u63d0\u4ea4" not in text:
+            return {"status": "not_found", "order_id": None}
+        match = re.search(r"\u5408\u540c\u7f16\u53f7[:\uff1a]\s*([0-9a-zA-Z_-]+)", text)
+        return {
+            "status": "order_submitted",
+            "order_id": match.group(1) if match else None,
+            "message_detected": True,
+        }
+
+    def _fuzzy_identifier_text(self, text: str) -> str:
+        replacements = str.maketrans(
+            {
+                " ": "",
+                "\t": "",
+                "\n": "",
+                "\r": "",
+                "\uff1a": ":",
+                "\uff0c": ",",
+                "o": "0",
+                "O": "0",
+                "q": "9",
+                "Q": "9",
+                "g": "9",
+                "G": "9",
+                "l": "1",
+                "I": "1",
+            }
+        )
+        return str(text or "").translate(replacements).lower()
+
+    def _ocr_screenshot(self, path: str | None) -> dict[str, Any]:
+        if not path:
+            return {"status": "skipped", "reason": "missing_screenshot_path"}
+        image_path = Path(path)
+        if not image_path.exists():
+            return {"status": "skipped", "reason": "screenshot_not_found", "path": str(image_path)}
+        script = r"""
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+$null = [Windows.Storage.Streams.IRandomAccessStreamWithContentType, Windows.Storage.Streams, ContentType = WindowsRuntime]
+$null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime]
+$null = [Windows.Graphics.Imaging.SoftwareBitmap, Windows.Graphics.Imaging, ContentType = WindowsRuntime]
+$null = [Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType = WindowsRuntime]
+$null = [Windows.Globalization.Language, Windows.Globalization, ContentType = WindowsRuntime]
+
+function AwaitOperation($Operation, [type]$ResultType) {
+  $method = [System.WindowsRuntimeSystemExtensions].GetMethods() |
+    Where-Object {
+      $_.Name -eq 'AsTask' -and
+      $_.IsGenericMethodDefinition -and
+      $_.GetParameters().Count -eq 1 -and
+      $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
+    } |
+    Select-Object -First 1
+  $task = $method.MakeGenericMethod($ResultType).Invoke($null, @($Operation))
+  return $task.GetAwaiter().GetResult()
+}
+
+try {
+  $path = $env:SIM_COCKPIT_OCR_PATH
+  $file = AwaitOperation ([Windows.Storage.StorageFile]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])
+  $stream = AwaitOperation ($file.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
+  $decoder = AwaitOperation ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+  $bitmap = AwaitOperation ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+  $langs = @([Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages)
+  $lang = $langs | Where-Object { $_.LanguageTag -like 'zh*' } | Select-Object -First 1
+  if ($null -eq $lang) { $lang = $langs | Where-Object { $_.LanguageTag -like 'en*' } | Select-Object -First 1 }
+  if ($null -eq $lang) {
+    Write-Output (@{status='no_language'; languages=@($langs | ForEach-Object LanguageTag)} | ConvertTo-Json -Compress)
+    exit 0
+  }
+  $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($lang)
+  $result = AwaitOperation ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+  Write-Output (@{status='ok'; language=$lang.LanguageTag; text=$result.Text; languages=@($langs | ForEach-Object LanguageTag)} | ConvertTo-Json -Compress)
+} catch {
+  Write-Output (@{status='error'; error=$_.Exception.Message; type=$_.Exception.GetType().FullName} | ConvertTo-Json -Compress)
+}
+"""
+        env = dict(os.environ)
+        env["SIM_COCKPIT_OCR_PATH"] = str(image_path)
+        try:
+            completed = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=env,
+            )
+        except Exception as exc:
+            return {"status": "error", "reason": str(exc), "path": str(image_path)}
+        raw = (completed.stdout or completed.stderr or "").strip()
+        if not raw:
+            return {
+                "status": "error",
+                "reason": "ocr_returned_no_output",
+                "returncode": completed.returncode,
+                "path": str(image_path),
+            }
+        try:
+            payload = json.loads(raw.splitlines()[-1])
+        except json.JSONDecodeError:
+            return {
+                "status": "error",
+                "reason": "ocr_output_not_json",
+                "returncode": completed.returncode,
+                "raw": raw[-500:],
+                "path": str(image_path),
+            }
+        return {**payload, "returncode": completed.returncode, "path": str(image_path)}
 
     def _set_uia_value(self, hwnd: int, automation_id: str, value: str) -> bool:
         auto = _load_uiautomation()

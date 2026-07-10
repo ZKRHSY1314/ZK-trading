@@ -41,70 +41,98 @@ class DailyBarCacheService:
         
         results = []
         for row in candidates:
-            symbol = row["symbol"]
-            code = normalize_a_share_code(symbol)
-            attempts = []
-            
-            try:
-                raw_bars = self.builder.provider.get_daily_bars(code)
-                bars = self._normalize_bars(raw_bars, days, "akshare.stock_zh_a_hist")
-                attempts.append({"source": "akshare.stock_zh_a_hist", "status": "success"})
-            except Exception as e1:
-                attempts.append({"source": "akshare.stock_zh_a_hist", "status": "failed", "error": str(e1)})
-                try:
-                    raw_bars = self._load_sina_daily_bars(code)
-                    bars = self._normalize_bars(raw_bars, days, "sina.cn.kline_daily_fallback")
-                    attempts.append({"source": "sina.cn.kline_daily_fallback", "status": "success"})
-                except Exception as e2:
-                    attempts.append({"source": "sina.cn.kline_daily_fallback", "status": "failed", "error": str(e2)})
-                    
-                    # Fallback to local cache if possible
-                    existing_bars = self.get_bars(symbol, limit=days)
-                    if existing_bars:
-                        attempts.append({"source": "local_cache", "status": "success"})
-                        results.append({
-                            "symbol": symbol,
-                            "status": "success",
-                            "bars_saved": 0,
-                            "source": existing_bars[0]["source"] + "_cached",
-                            "attempts": attempts
-                        })
-                        # Remove error row if any exists
-                        with self.store.connect() as conn:
-                            conn.execute(
-                                "DELETE FROM daily_bar_cache WHERE symbol = ? AND trade_date = 'ERROR'",
-                                (symbol,)
-                            )
-                        continue
-                    
-                    error_msg = f"AKShare failed: {str(e1)}; Sina failed: {str(e2)}"
-                    self._save_error_bar(symbol, error_msg)
-                    results.append({"symbol": symbol, "status": "error", "error": error_msg, "attempts": attempts})
-                    continue
-
-            # Drop invalid bars
-            valid_bars = [b for b in bars if b.trade_date and b.close is not None]
-            
-            if not valid_bars:
-                error_msg = "No history returned or valid bars found"
-                attempts.append({"source": "validation", "status": "failed", "error": error_msg})
-                self._save_error_bar(symbol, error_msg)
-                results.append({"symbol": symbol, "status": "error", "error": "No history returned", "attempts": attempts})
-                continue
-            
-            saved_count = 0
-            for bar in valid_bars:
-                bar.symbol = symbol
-                self._upsert_bar(bar)
-                saved_count += 1
-                
-            results.append({"symbol": symbol, "status": "success", "bars_saved": saved_count, "source": valid_bars[0].source, "attempts": attempts})
+            results.append(self._refresh_stock_symbol(str(row["symbol"]), days=days))
                 
         summary = self.get_summary()
         return {
             "processed": len(results),
             "summary": summary,
             "results": results
+        }
+
+    def refresh_symbols(self, symbols: list[str] | tuple[str, ...], days: int = 120) -> dict[str, Any]:
+        """
+        Refresh daily bars for an explicit symbol list.
+        Useful when diagnostics find stale symbols outside the top candidate-score slice.
+        """
+        days = max(1, min(int(days), 500))
+        cleaned_symbols: list[str] = []
+        seen: set[str] = set()
+        for item in symbols:
+            symbol = str(item or "").strip().upper()
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            cleaned_symbols.append(symbol)
+            if len(cleaned_symbols) >= 200:
+                break
+
+        results = [
+            self._refresh_stock_symbol(symbol, days=days)
+            for symbol in cleaned_symbols
+        ]
+        return {
+            "processed": len(results),
+            "summary": self.get_summary(),
+            "results": results,
+        }
+
+    def _refresh_stock_symbol(self, symbol: str, *, days: int) -> dict[str, Any]:
+        code = normalize_a_share_code(symbol)
+        attempts: list[dict[str, Any]] = []
+
+        try:
+            raw_bars = self.builder.provider.get_daily_bars(code)
+            bars = self._normalize_bars(raw_bars, days, "akshare.stock_zh_a_hist")
+            attempts.append({"source": "akshare.stock_zh_a_hist", "status": "success"})
+        except Exception as e1:
+            attempts.append({"source": "akshare.stock_zh_a_hist", "status": "failed", "error": str(e1)})
+            try:
+                raw_bars = self._load_sina_daily_bars(code)
+                bars = self._normalize_bars(raw_bars, days, "sina.cn.kline_daily_fallback")
+                attempts.append({"source": "sina.cn.kline_daily_fallback", "status": "success"})
+            except Exception as e2:
+                attempts.append({"source": "sina.cn.kline_daily_fallback", "status": "failed", "error": str(e2)})
+
+                existing_bars = self.get_bars(symbol, limit=days)
+                if existing_bars:
+                    attempts.append({"source": "local_cache", "status": "success"})
+                    with self.store.connect() as conn:
+                        conn.execute(
+                            "DELETE FROM daily_bar_cache WHERE symbol = ? AND trade_date = 'ERROR'",
+                            (symbol,)
+                        )
+                    return {
+                        "symbol": symbol,
+                        "status": "success",
+                        "bars_saved": 0,
+                        "source": existing_bars[0]["source"] + "_cached",
+                        "attempts": attempts
+                    }
+
+                error_msg = f"AKShare failed: {str(e1)}; Sina failed: {str(e2)}"
+                self._save_error_bar(symbol, error_msg)
+                return {"symbol": symbol, "status": "error", "error": error_msg, "attempts": attempts}
+
+        valid_bars = [bar for bar in bars if bar.trade_date and bar.close is not None]
+        if not valid_bars:
+            error_msg = "No history returned or valid bars found"
+            attempts.append({"source": "validation", "status": "failed", "error": error_msg})
+            self._save_error_bar(symbol, error_msg)
+            return {"symbol": symbol, "status": "error", "error": "No history returned", "attempts": attempts}
+
+        saved_count = 0
+        for bar in valid_bars:
+            bar.symbol = symbol
+            self._upsert_bar(bar)
+            saved_count += 1
+
+        return {
+            "symbol": symbol,
+            "status": "success",
+            "bars_saved": saved_count,
+            "source": valid_bars[0].source,
+            "attempts": attempts,
         }
 
     def refresh_benchmark_bars(

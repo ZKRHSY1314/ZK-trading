@@ -392,6 +392,36 @@ class FakeDesktopAdapter:
     def execute_coordinate_plan(self, *args, **kwargs):
         return {"status": "executed", "real_screen_click_executed": True}
 
+    def confirm_pending_order(self, *args, **kwargs):
+        return {
+            "status": "executed",
+            "reason": None,
+            "real_screen_click_executed": True,
+            "pre_confirm_screenshot": {"artifact_ref": "artifact://pytest/confirm-before"},
+            "post_confirm_screenshot": {"artifact_ref": "artifact://pytest/confirm-after"},
+            "confirmation": {
+                "ready_for_confirmation": True,
+                "button": {"name": "\u662f(Y)", "x": 10, "y": 20},
+            },
+        }
+
+    def read_screen_readback(self, *args, **kwargs):
+        readback_type = kwargs.get("readback_type") or (args[1] if len(args) > 1 else "today_orders")
+        status = "pending_order_detected" if readback_type == "today_orders" else "no_fill_detected"
+        return {
+            "status": status,
+            "reason": None,
+            "real_screen_click_executed": True,
+            "tab": {"name": "\u5f53\u65e5\u59d4\u6258", "x": 10, "y": 20},
+            "interpretation": {
+                "status": status,
+                "readback_type": readback_type,
+                "matched": {"symbol": True, "order_id": True, "price": True, "quantity": True},
+            },
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
 
 def test_simulation_cockpit_run_dry_runs_only_reclaim_review_candidates(test_db):
     _reset_sim_cockpit(test_db)
@@ -903,6 +933,139 @@ def test_screen_click_executes_only_with_desktop_verification_and_readback(test_
     readbacks = service.latest_readbacks(limit=5)
     assert readbacks[0]["action_id"] == executed["id"]
     assert readbacks[0]["status"] == "executed"
+
+
+def test_confirm_buy_uses_guarded_simulation_dialog_and_readback(test_db):
+    _reset_sim_cockpit(test_db)
+    service = SimCockpitService()
+    verification = service.verify_window(
+        window_title="Tonghuashun hexin mncg simulation window",
+        visible_text="mncg simulation \u6a21\u62df\u7092\u80a1 \u6a21\u62df\u4e70\u5165",
+        raw_payload={
+            "source": "desktop_adapter",
+            "process_name": "hexin.exe",
+            "window": {"hwnd": 1, "rect": {"left": 0, "top": 0, "width": 800, "height": 600}},
+        },
+        detected_items=[{"type": "mode", "value": "mncg"}],
+        verified_by="pytest_desktop",
+        confidence=0.98,
+    )
+    service.desktop_adapter = FakeDesktopAdapter()
+
+    confirmed = service.confirm_buy(
+        symbol="SZ300166",
+        price=18.7,
+        quantity=100,
+        signal_source="pytest_confirm",
+        risk_result={"simulation_allowed": True, "all_gates_passed": True},
+        window_verification_id=verification["id"],
+        requested_by="pytest",
+        execution_mode="screen_click_simulation",
+        screen_confirmation="SIMULATION_SCREEN_CLICK",
+    )
+
+    assert confirmed["status"] == "executed"
+    assert confirmed["action_type"] == "confirm_buy"
+    assert confirmed["execution"]["real_screen_click_executed"] is True
+    assert confirmed["execution"]["confirmation_result"]["confirmation"]["ready_for_confirmation"] is True
+    readbacks = service.latest_readbacks(limit=5)
+    assert readbacks[0]["action_id"] == confirmed["id"]
+    assert readbacks[0]["status"] == "executed"
+
+
+def test_desktop_adapter_extracts_simulated_submission_order_id():
+    adapter = TonghuashunDesktopAdapter()
+
+    notice = adapter._extract_submission_notice(
+        {
+            "root_name": "\u7f51\u4e0a\u80a1\u7968\u4ea4\u6613\u7cfb\u7edf5.0",
+            "texts": ["\u60a8\u7684\u4e70\u5165\u59d4\u6258\u5df2\u6210\u529f\u63d0\u4ea4\uff0c\u5408\u540c\u7f16\u53f7\uff1a6110995574\u3002"],
+            "controls": [],
+        }
+    )
+
+    assert notice["status"] == "order_submitted"
+    assert notice["order_id"] == "6110995574"
+
+
+def test_desktop_adapter_marks_owner_drawn_table_as_unparsed_without_false_negative():
+    adapter = TonghuashunDesktopAdapter()
+
+    result = adapter._interpret_screen_readback(
+        {
+            "status": "available",
+            "root_name": "\u7f51\u4e0a\u80a1\u7968\u4ea4\u6613\u7cfb\u7edf5.0",
+            "texts": ["mncg109", "\u5f53\u65e5\u59d4\u6258"],
+            "controls": [{"name": "HexinScrollWnd", "control_type": "PaneControl"}],
+        },
+        readback_type="today_orders",
+        symbol="SZ300166",
+        price=18.7,
+        quantity=100,
+        order_id="6110995574",
+    )
+
+    assert result["status"] == "screen_table_unparsed"
+    assert result["requires_visual_or_ocr_review"] is True
+    assert result["limitation"] == "owner_drawn_table_not_exposed_to_uia"
+
+
+def test_desktop_adapter_uses_ocr_text_for_owner_drawn_pending_order():
+    adapter = TonghuashunDesktopAdapter()
+
+    result = adapter._interpret_screen_readback(
+        {
+            "status": "available",
+            "root_name": "\u7f51\u4e0a\u80a1\u7968\u4ea4\u6613\u7cfb\u7edf5.0",
+            "texts": ["mncg109", "\u5f53\u65e5\u59d4\u6258"],
+            "controls": [{"name": "HexinScrollWnd", "control_type": "PaneControl"}],
+        },
+        readback_type="today_orders",
+        symbol="SZ300166",
+        price=18.7,
+        quantity=100,
+        order_id="6110995574",
+        ocr={"status": "ok", "language": "zh-Hans-CN", "text": "台 编 号 0 611 ogg5574 交 易 市 场 深 训 A 股"},
+    )
+
+    assert result["status"] == "pending_order_detected"
+    assert result["matched"]["order_id"] is True
+    assert "windows_ocr" in result["evidence_sources"]
+
+
+def test_screen_readback_records_pending_order_evidence(test_db):
+    _reset_sim_cockpit(test_db)
+    service = SimCockpitService()
+    verification = service.verify_window(
+        window_title="Tonghuashun hexin mncg simulation window",
+        visible_text="mncg simulation \u6a21\u62df\u7092\u80a1 \u6a21\u62df\u4e70\u5165",
+        raw_payload={
+            "source": "desktop_adapter",
+            "process_name": "hexin.exe",
+            "window": {"hwnd": 1, "rect": {"left": 0, "top": 0, "width": 800, "height": 600}},
+        },
+        detected_items=[{"type": "mode", "value": "mncg"}],
+        verified_by="pytest_desktop",
+        confidence=0.98,
+    )
+    service.desktop_adapter = FakeDesktopAdapter()
+
+    readback = service.record_screen_readback(
+        action_id=22,
+        readback_type="today_orders",
+        symbol="SZ300166",
+        price=18.7,
+        quantity=100,
+        order_id="6110995574",
+        window_verification_id=verification["id"],
+        screen_confirmation="SIMULATION_SCREEN_CLICK",
+        recorded_by="pytest",
+    )
+
+    assert readback["status"] == "pending_order_detected"
+    assert readback["readback_type"] == "screen_today_orders"
+    assert readback["payload"]["screen_readback"]["real_screen_click_executed"] is True
+    assert readback["payload"]["screen_readback"]["interpretation"]["matched"]["order_id"] is True
 
 
 def test_window_detection_api_is_safe_when_no_window_found(client, test_db):

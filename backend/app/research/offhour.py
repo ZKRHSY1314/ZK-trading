@@ -8817,6 +8817,10 @@ class OffhourResearchLoopService:
             signal_optimization=signal_optimization,
             candidate_review_priority=candidate_review_priority,
         )
+        dataset1_strategy_synthesis = dict(dataset1_experience.get("strategy_synthesis") or {})
+        dataset1_strategy_synthesis.setdefault("review_only", True)
+        dataset1_strategy_synthesis.setdefault("simulation_only", True)
+        dataset1_strategy_synthesis.setdefault("live_trading_enabled", settings.enable_live_trading)
         payload = {
             "schema_version": "offhour_model_candidate.v1",
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -8828,7 +8832,7 @@ class OffhourResearchLoopService:
                 "counts": dataset1_experience.get("counts", {}),
                 "anchors": dataset1_experience.get("anchors", {}),
                 "constraints": dataset1_experience.get("constraints", []),
-                "strategy_synthesis": dataset1_experience.get("strategy_synthesis", {}),
+                "strategy_synthesis": dataset1_strategy_synthesis,
             },
             "signal_count": replay.get("signal_count", 0),
             "evaluated_count": sandbox.get("evaluated_count", 0),

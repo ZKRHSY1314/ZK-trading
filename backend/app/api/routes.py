@@ -9,9 +9,11 @@ from app.candidates.lifecycle import CandidateLifecycleService
 from app.candidates.local_scanner import LocalCandidateScanner
 from app.candidates.offhour_search import OffhourPotentialSearchService
 from app.candidates.scoring import CandidateScoringService
+from app.candidates.selection_v2 import StrategySelectionV2Service
 from app.config import settings
 from app.data.snapshot_builder import MarketDataError, MarketSnapshotBuilder
 from app.decision import DecisionAnalyzer
+from app.diagnostics.stability import V1StabilityDiagnosticsService
 from app.experience.code_evolution import CodeEvolutionService
 from app.experience.memory import ExperienceMemoryService
 from app.knowledge.repository import KnowledgeRepository
@@ -55,6 +57,8 @@ class Dataset2TrainingReadinessService:
 
 
 from app.monitoring.service import MonitoringService
+from app.operations.readiness import OperationReadinessService
+from app.public_opinion.service import CodexPublicOpinionService
 from app.rules.engine import RuleEngine
 from app.rules.loader import load_rule_config
 from app.simulation.broker import SimulatedBroker
@@ -156,6 +160,19 @@ class SimCockpitReadbackInput(BaseModel):
     recorded_by: str = "operator"
 
 
+class SimCockpitScreenReadbackInput(BaseModel):
+    action_id: int | None = None
+    readback_type: str = "today_orders"
+    symbol: str | None = None
+    price: float | None = None
+    quantity: int | None = None
+    order_id: str | None = None
+    window_verification_id: int | None = None
+    screen_confirmation: str | None = None
+    recorded_by: str = "operator"
+    note: str | None = None
+
+
 class Dataset2SimpleTrainingDryRunInput(BaseModel):
     limit: int = 200
     requested_by: str = "operator"
@@ -173,6 +190,13 @@ class OffhourResearchRunInput(BaseModel):
     write_artifact: bool = True
     refresh_history: bool = False
     requested_by: str = "codex"
+
+
+class PublicOpinionRunInput(BaseModel):
+    limit: int = 60
+    persist: bool = True
+    requested_by: str = "codex"
+    source_urls: list[str] = Field(default_factory=list)
 
 
 class ScreenFixtureReplayInput(BaseModel):
@@ -1261,6 +1285,16 @@ def capabilities() -> dict[str, object]:
         "ai_models": ["openai_placeholder", "qwen_placeholder", "local_placeholder"],
         "trade_execution_gateway": "review_only_disabled",
     }
+
+
+@router.get("/system/v1-stability")
+def v1_stability_diagnostics() -> dict:
+    return V1StabilityDiagnosticsService().report()
+
+
+@router.get("/system/operation-readiness")
+def operation_readiness(selection_limit: int = 80) -> dict:
+    return OperationReadinessService().report(selection_limit=selection_limit)
 
 
 @router.get("/trade-execution-gateway/capabilities")
@@ -5375,6 +5409,27 @@ def sim_cockpit_buy(input_data: SimCockpitActionInput | None = None) -> dict:
     )
 
 
+@router.post("/sim-cockpit/actions/confirm-buy")
+def sim_cockpit_confirm_buy(input_data: SimCockpitActionInput | None = None) -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    payload = input_data or SimCockpitActionInput()
+    return SimCockpitService().confirm_buy(
+        symbol=payload.symbol,
+        price=payload.price,
+        quantity=payload.quantity,
+        signal_source=payload.signal_source,
+        risk_result=payload.risk_result,
+        window_verification_id=payload.window_verification_id,
+        requested_by=payload.requested_by,
+        note=payload.note,
+        dry_run=payload.dry_run,
+        execution_mode=payload.execution_mode,
+        screen_confirmation=payload.screen_confirmation,
+        screen_coordinates=payload.screen_coordinates,
+    )
+
+
 @router.post("/sim-cockpit/actions/sell")
 def sim_cockpit_sell(input_data: SimCockpitActionInput | None = None) -> dict:
     from app.sim_cockpit.service import SimCockpitService
@@ -5449,6 +5504,25 @@ def sim_cockpit_record_readback(input_data: SimCockpitReadbackInput | None = Non
         order_id=payload.order_id,
         payload=payload.payload,
         recorded_by=payload.recorded_by,
+    )
+
+
+@router.post("/sim-cockpit/screen-readback")
+def sim_cockpit_screen_readback(input_data: SimCockpitScreenReadbackInput | None = None) -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    payload = input_data or SimCockpitScreenReadbackInput()
+    return SimCockpitService().record_screen_readback(
+        action_id=payload.action_id,
+        readback_type=payload.readback_type,
+        symbol=payload.symbol,
+        price=payload.price,
+        quantity=payload.quantity,
+        order_id=payload.order_id,
+        window_verification_id=payload.window_verification_id,
+        screen_confirmation=payload.screen_confirmation,
+        recorded_by=payload.recorded_by,
+        note=payload.note,
     )
 
 
@@ -5573,6 +5647,47 @@ def latest_offhour_strategy_learning_packet(limit: int = 8) -> dict:
     return OffhourResearchLoopService().latest_strategy_learning_packet(limit=limit)
 
 
+@router.get("/public-opinion/capabilities")
+def public_opinion_capabilities() -> dict:
+    return CodexPublicOpinionService().capabilities()
+
+
+@router.post("/public-opinion/run")
+def run_public_opinion_capture(input_data: PublicOpinionRunInput | None = None) -> dict:
+    payload = input_data or PublicOpinionRunInput()
+    return CodexPublicOpinionService().run(
+        limit=payload.limit,
+        persist=payload.persist,
+        requested_by=payload.requested_by,
+        source_urls=payload.source_urls,
+    )
+
+
+@router.get("/public-opinion/runs/latest")
+def latest_public_opinion_run() -> dict:
+    latest = CodexPublicOpinionService().latest_run()
+    if latest is None:
+        return {
+            "status": "empty",
+            "items": [],
+            "sector_signals": [],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+    return latest
+
+
+@router.get("/public-opinion/context/latest")
+def latest_public_opinion_context(limit: int = 8) -> dict:
+    return CodexPublicOpinionService().latest_context(limit=limit)
+
+
+@router.get("/public-opinion/runs")
+def list_public_opinion_runs(limit: int = 20) -> list[dict]:
+    return CodexPublicOpinionService().list_runs(limit=limit)
+
+
 @router.post("/screen-monitoring/observations/fixture-replay")
 def replay_screen_monitoring_fixture(input_data: ScreenFixtureReplayInput | None = None) -> dict:
     from app.screen_monitoring.service import ScreenMonitoringService
@@ -5667,6 +5782,24 @@ def candidate_scores(limit: int = 50, state: str | None = None) -> list[dict]:
 @router.get("/candidates/scores/summary")
 def candidate_score_summary(limit: int = 10) -> dict:
     return CandidateScoringService().summary(limit=limit)
+
+
+@router.get("/candidates/selection-v2/summary")
+def candidate_selection_v2_summary(mode: str = "balanced", limit: int = 200) -> dict:
+    return StrategySelectionV2Service().run(mode=mode, limit=limit, write_artifacts=False)
+
+
+@router.post("/candidates/selection-v2/run")
+def run_candidate_selection_v2(
+    mode: str = "balanced",
+    limit: int = 200,
+    write_artifacts: bool = True,
+) -> dict:
+    return StrategySelectionV2Service().run(
+        mode=mode,
+        limit=limit,
+        write_artifacts=write_artifacts,
+    )
 
 
 @router.post("/candidates/potential-search/run")

@@ -1,0 +1,59 @@
+{
+  "version": "0.2.0",
+  "event_feature_recommendation": {
+    "daily_kline": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume",
+      "amount",
+      "pct_chg",
+      "turnover_rate",
+      "volume_ratio",
+      "limit_status",
+      "ma5",
+      "ma10",
+      "ma20",
+      "ma55"
+    ],
+    "intraday": [
+      "time",
+      "last_price",
+      "vwap_or_avg_price",
+      "volume_bar",
+      "active_buy_volume",
+      "active_sell_volume",
+      "macd_dif",
+      "macd_dea",
+      "macd_hist",
+      "gap_pct",
+      "above_vwap"
+    ],
+    "auction": [
+      "time_bucket",
+      "matched_volume",
+      "unmatched_buy_volume",
+      "unmatched_sell_volume",
+      "can_cancel",
+      "open_gap_pct"
+    ],
+    "orderbook": [
+      "bid_levels",
+      "ask_levels",
+      "large_order_count",
+      "order_density",
+      "trade_density",
+      "large_order_sweep"
+    ]
+  },
+  "target_labels": [
+    "SIM_BUY_CANDIDATE",
+    "HOLD_OR_TRAIL",
+    "REDUCE_OR_EXIT",
+    "AVOID_OR_WAIT",
+    "WAIT_CONFIRMATION",
+    "RISK_ALERT",
+    "NO_TRADE"
+  ]
+}

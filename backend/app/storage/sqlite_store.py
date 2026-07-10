@@ -548,6 +548,61 @@ CREATE INDEX IF NOT EXISTS idx_potential_items_run ON potential_search_items(run
 CREATE INDEX IF NOT EXISTS idx_potential_items_symbol ON potential_search_items(symbol);
 CREATE INDEX IF NOT EXISTS idx_potential_items_score ON potential_search_items(potential_score);
 
+CREATE TABLE IF NOT EXISTS public_opinion_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL,
+    source_count INTEGER NOT NULL DEFAULT 0,
+    item_count INTEGER NOT NULL DEFAULT 0,
+    sector_count INTEGER NOT NULL DEFAULT 0,
+    errors_json TEXT NOT NULL DEFAULT '[]',
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    review_only INTEGER NOT NULL DEFAULT 1,
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS public_opinion_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES public_opinion_runs(id) ON DELETE CASCADE,
+    source_id TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    url TEXT,
+    published_at TEXT,
+    summary TEXT,
+    matched_sectors_json TEXT NOT NULL DEFAULT '[]',
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    score REAL NOT NULL DEFAULT 0,
+    raw_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS public_opinion_sector_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES public_opinion_runs(id) ON DELETE CASCADE,
+    sector TEXT NOT NULL,
+    heat_score REAL NOT NULL DEFAULT 0,
+    item_count INTEGER NOT NULL DEFAULT 0,
+    positive_count INTEGER NOT NULL DEFAULT 0,
+    policy_count INTEGER NOT NULL DEFAULT 0,
+    market_count INTEGER NOT NULL DEFAULT 0,
+    risk_count INTEGER NOT NULL DEFAULT 0,
+    keywords_json TEXT NOT NULL DEFAULT '[]',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    suggested_action TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_public_opinion_runs_created ON public_opinion_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_public_opinion_items_run ON public_opinion_items(run_id);
+CREATE INDEX IF NOT EXISTS idx_public_opinion_items_source ON public_opinion_items(source_id);
+CREATE INDEX IF NOT EXISTS idx_public_opinion_items_score ON public_opinion_items(score);
+CREATE INDEX IF NOT EXISTS idx_public_opinion_sector_run ON public_opinion_sector_signals(run_id);
+CREATE INDEX IF NOT EXISTS idx_public_opinion_sector_heat ON public_opinion_sector_signals(heat_score);
+
 CREATE TABLE IF NOT EXISTS agent_control_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_type TEXT NOT NULL,
@@ -1234,6 +1289,9 @@ KNOWLEDGE_TABLES = [
     "monitoring_reviews",
     "potential_search_runs",
     "potential_search_items",
+    "public_opinion_runs",
+    "public_opinion_items",
+    "public_opinion_sector_signals",
     "offhour_research_runs",
     "agent_control_tasks",
     "agent_control_events",

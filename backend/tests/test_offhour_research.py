@@ -1,5 +1,7 @@
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -7,6 +9,14 @@ import pytest
 from app.data.daily_bar_cache import DailyBarCacheService
 from app.research import offhour
 from app.research.offhour import OffhourResearchLoopService
+
+
+def recent_date(days_ago: int = 1) -> str:
+    return (datetime.now().date() - timedelta(days=days_ago)).isoformat()
+
+
+def recent_timestamp(days_ago: int = 1) -> str:
+    return (datetime.now() - timedelta(days=days_ago)).isoformat(sep=" ", timespec="seconds")
 
 
 class FakePotentialSearch:
@@ -112,12 +122,17 @@ def insert_bar(store, symbol, trade_date, open_, high, low, close, volume=1000, 
 
 
 def seed_signal_history(store):
+    day5 = recent_date(5)
+    day4 = recent_date(4)
+    day3 = recent_date(3)
+    day2 = recent_date(2)
+    day1 = recent_date(1)
     bars = [
-        ("2026-05-01", 10.0, 10.1, 9.9, 10.0, 1000, 10_000_000),
-        ("2026-05-02", 10.0, 10.2, 9.9, 10.1, 1000, 10_100_000),
-        ("2026-05-03", 10.0, 11.2, 9.9, 11.0, 4000, 220_000_000),
-        ("2026-05-04", 11.0, 11.8, 10.8, 11.6, 2500, 180_000_000),
-        ("2026-05-05", 11.5, 12.0, 11.3, 11.8, 2300, 170_000_000),
+        (day5, 10.0, 10.1, 9.9, 10.0, 1000, 10_000_000),
+        (day4, 10.0, 10.2, 9.9, 10.1, 1000, 10_100_000),
+        (day3, 10.0, 11.2, 9.9, 11.0, 4000, 220_000_000),
+        (day2, 11.0, 11.8, 10.8, 11.6, 2500, 180_000_000),
+        (day1, 11.5, 12.0, 11.3, 11.8, 2300, 170_000_000),
     ]
     for date, open_, high, low, close, volume, amount in bars:
         insert_bar(store, "SH600000", date, open_, high, low, close, volume=volume, amount=amount)
@@ -129,7 +144,7 @@ def insert_phase_replay(store, symbol, name, latest_phase="post_distribution_wat
         "symbol": symbol,
         "name": name,
         "start_date": "2025-01-01",
-        "end_date": "2026-06-01",
+        "end_date": recent_date(1),
         "bars_count": 240,
         "latest_phase": latest_phase,
         "latest_phase_name": "出货后观察" if latest_phase == "post_distribution_watch" else "拉升",
@@ -144,7 +159,7 @@ def insert_phase_replay(store, symbol, name, latest_phase="post_distribution_wat
         {"phase": "accumulation", "phase_name": "吸筹/整理", "start_date": "2025-01-01", "end_date": "2025-03-01", "bars": 40},
         {"phase": "test_pull", "phase_name": "试盘", "start_date": "2025-03-02", "end_date": "2025-04-01", "bars": 20},
         {"phase": "markup", "phase_name": "拉升", "start_date": "2025-04-02", "end_date": "2025-05-01", "bars": 20},
-        {"phase": latest_phase, "phase_name": summary["latest_phase_name"], "start_date": "2025-05-02", "end_date": "2026-06-01", "bars": 160},
+        {"phase": latest_phase, "phase_name": summary["latest_phase_name"], "start_date": "2025-05-02", "end_date": recent_date(1), "bars": 160},
     ]
     with store.connect() as conn:
         conn.execute(
@@ -165,7 +180,7 @@ def insert_phase_replay(store, symbol, name, latest_phase="post_distribution_wat
                 json.dumps(summary, ensure_ascii=False),
                 json.dumps(segments, ensure_ascii=False),
                 "{}",
-                "2026-06-13 09:00:00",
+                recent_timestamp(),
             ),
         )
 
@@ -213,7 +228,7 @@ def insert_phase_match(
                 None,
                 json.dumps(summary, ensure_ascii=False),
                 json.dumps(matches, ensure_ascii=False),
-                "2026-06-13 09:30:00",
+                recent_timestamp(),
             ),
         )
 
@@ -572,7 +587,7 @@ def test_simulation_review_plan_adds_evidence_quality_to_candidates(clean_store,
             "recent_signals": [
                 {
                     "symbol": "SH603330",
-                    "signal_date": "2026-06-14",
+                    "signal_date": recent_date(),
                     "pattern_id": "LEGACY_VP_SINGLE_001",
                     "pattern_name": "放量大阳线",
                     "action_label": "SIM_BUY_CANDIDATE",
@@ -674,6 +689,33 @@ def test_daily_bar_cache_refresh_benchmark_bars_saves_index_history(clean_store,
     assert len(bars) == 2
     assert bars[0]["trade_date"] == "2026-01-03"
     assert bars[0]["source"] == "akshare.stock_zh_index_daily"
+
+
+def test_daily_bar_cache_refresh_symbols_saves_explicit_stock_history(clean_store, monkeypatch):
+    service = DailyBarCacheService(store=clean_store)
+    raw_bars = [
+        SimpleNamespace(
+            trade_date=f"2026-01-0{index}",
+            open=10.0 + index,
+            high=10.5 + index,
+            low=9.5 + index,
+            close=10.2 + index,
+            volume=1000 + index,
+            amount=100000 + index,
+        )
+        for index in range(1, 4)
+    ]
+    monkeypatch.setattr(service.builder.provider, "get_daily_bars", lambda code: raw_bars)
+
+    result = service.refresh_symbols(["SH603186"], days=2)
+
+    assert result["processed"] == 1
+    assert result["results"][0]["symbol"] == "SH603186"
+    assert result["results"][0]["bars_saved"] == 2
+    bars = service.get_bars("SH603186", limit=5)
+    assert len(bars) == 2
+    assert bars[0]["trade_date"] == "2026-01-03"
+    assert bars[0]["source"] == "akshare.stock_zh_a_hist"
 
 
 def test_offhour_ensure_benchmark_history_refreshes_when_phase_confidence_needs_it(

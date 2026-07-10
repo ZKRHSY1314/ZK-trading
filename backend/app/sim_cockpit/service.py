@@ -61,7 +61,7 @@ DANGEROUS_REAL_TRADING_TERMS = (
     "\u878d\u8d44\u878d\u5238",
 )
 
-ACTION_WHITELIST = {"buy", "sell", "cancel"}
+ACTION_WHITELIST = {"buy", "sell", "cancel", "confirm_buy"}
 MAX_DAILY_BUYS = 5
 MAX_SYMBOL_DAILY_BUYS = 1
 MAX_SINGLE_ACTION_RATIO = 0.10
@@ -70,6 +70,7 @@ MAX_SCREEN_CLICK_QUANTITY = 100
 MAX_VERIFICATION_AGE_SECONDS = 15 * 60
 MAX_RECLAIM_REVIEW_DRY_RUN_RATIO = 0.02
 MAX_OFFHOUR_REVIEW_DRY_RUN_RATIO = 0.02
+SCREEN_READBACK_TYPES = {"positions", "today_trades", "today_orders"}
 
 
 def _json_dumps(payload: Any) -> str:
@@ -329,6 +330,15 @@ class SimCockpitService:
     ) -> dict[str, Any]:
         return self.record_action("buy", symbol=symbol, price=price, quantity=quantity, **kwargs)
 
+    def confirm_buy(
+        self,
+        symbol: str,
+        price: float | None,
+        quantity: int | None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.record_action("confirm_buy", symbol=symbol, price=price, quantity=quantity, **kwargs)
+
     def sell(
         self,
         symbol: str,
@@ -577,6 +587,82 @@ class SimCockpitService:
         row = self.store.fetch_one("SELECT * FROM sim_cockpit_readbacks WHERE id = ?", (readback_id,))
         return self._hydrate_readback(row)
 
+    def record_screen_readback(
+        self,
+        action_id: int | None,
+        readback_type: str,
+        symbol: str | None = None,
+        price: float | None = None,
+        quantity: int | None = None,
+        order_id: str | None = None,
+        window_verification_id: int | None = None,
+        screen_confirmation: str | None = None,
+        recorded_by: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_type = (readback_type or "").strip().lower()
+        reasons: list[str] = []
+        if normalized_type not in SCREEN_READBACK_TYPES:
+            reasons.append("unsupported_screen_readback_type")
+        if screen_confirmation != SCREEN_CLICK_CONFIRMATION:
+            reasons.append("missing_screen_click_confirmation")
+        payload_text = _compact_text(normalized_type, symbol, price, quantity, order_id, note)
+        if _terms_found(payload_text, DANGEROUS_REAL_TRADING_TERMS):
+            reasons.append("dangerous_real_trading_terms_detected")
+        verification = self._verification_for_action(window_verification_id)
+        if not verification or verification.get("status") != "verified":
+            reasons.append("blocked_needs_verified_simulation_window")
+        elif verification.get("live_trading_enabled"):
+            reasons.append("blocked_verified_window_live_trading_enabled")
+        else:
+            reasons.extend(self._screen_click_verification_reasons(verification))
+        if settings.enable_live_trading:
+            reasons.append("blocked_live_trading_enabled")
+
+        reasons = sorted(set(reasons))
+        if reasons:
+            result = {
+                "status": "blocked",
+                "blocked_reasons": reasons,
+                "simulation_only": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            }
+        else:
+            raw_payload = verification.get("raw_payload") if verification else {}
+            result = self.desktop_adapter.read_screen_readback(
+                (raw_payload or {}).get("window") or {},
+                readback_type=normalized_type,
+                symbol=symbol,
+                price=price,
+                quantity=quantity,
+                order_id=order_id,
+            )
+            if result.get("status") == "blocked" and result.get("reason"):
+                reasons = [str(result["reason"])]
+
+        with self.store.connect() as conn:
+            readback_id = self._insert_readback(
+                conn,
+                action_id=action_id,
+                readback_type="screen_" + normalized_type,
+                status=str(result.get("status") or "observed"),
+                symbol=symbol,
+                price=price,
+                quantity=quantity,
+                order_id=order_id,
+                payload={
+                    "screen_readback": result,
+                    "window_verification_id": window_verification_id,
+                    "recorded_by": recorded_by,
+                    "note": note,
+                    "blocked_reasons": reasons,
+                    "simulation_only": True,
+                    "live_trading_enabled": settings.enable_live_trading,
+                },
+            )
+        row = self.store.fetch_one("SELECT * FROM sim_cockpit_readbacks WHERE id = ?", (readback_id,))
+        return self._hydrate_readback(row)
+
     def simulation_cockpit_run(self, limit: int = 5, requested_by: str = "automation_loop") -> dict[str, Any]:
         verification = self._latest_verification()
         if not verification or verification.get("status") != "verified":
@@ -774,7 +860,7 @@ class SimCockpitService:
         if _terms_found(payload_text, DANGEROUS_REAL_TRADING_TERMS):
             reasons.append("dangerous_real_trading_terms_detected")
 
-        if action in {"buy", "sell"}:
+        if action in {"buy", "sell", "confirm_buy"}:
             if not symbol or not re.match(r"^(SH|SZ|BJ)\d{6}$", str(symbol).upper()):
                 reasons.append("invalid_a_share_symbol")
             if price is None or float(price) <= 0:
@@ -787,7 +873,7 @@ class SimCockpitService:
                 reasons.append("risk_gate_simulation_allowed_not_true")
             if not dry_run and risk_result.get("all_gates_passed") is False:
                 reasons.append("risk_gate_failed")
-            if action == "buy" and price is not None and quantity is not None:
+            if action in {"buy", "confirm_buy"} and price is not None and quantity is not None:
                 amount = float(price) * int(quantity)
                 if amount > settings.default_cash * MAX_SINGLE_ACTION_RATIO:
                     reasons.append("single_action_exceeds_10pct_simulated_cash")
@@ -796,7 +882,10 @@ class SimCockpitService:
                         reasons.append("screen_click_quantity_exceeds_first_test_limit")
                     if amount > settings.default_cash * MAX_SCREEN_CLICK_ACTION_RATIO:
                         reasons.append("screen_click_amount_exceeds_3pct_simulated_cash")
-                reasons.extend(self._daily_buy_limit_reasons(str(symbol).upper()))
+                if action == "buy":
+                    reasons.extend(self._daily_buy_limit_reasons(str(symbol).upper()))
+            if action == "confirm_buy" and execution_mode != "screen_click_simulation":
+                reasons.append("confirm_buy_requires_screen_click_simulation")
         elif action == "cancel":
             if not order_id:
                 reasons.append("missing_order_id_for_cancel")
@@ -1361,6 +1450,34 @@ class SimCockpitService:
                 "status": "dry_run",
                 "detection": detection,
                 "simulated_account_action": False,
+            }
+        if action == "confirm_buy":
+            confirmation = self.desktop_adapter.confirm_pending_order(
+                window,
+                action_type="buy",
+                symbol=symbol,
+                price=price,
+                quantity=quantity,
+            )
+            final_status = str(confirmation.get("status") or "blocked")
+            blocked_reason = confirmation.get("reason") if final_status != "executed" else None
+            return {
+                **base,
+                "status": final_status,
+                "confirmation_result": confirmation,
+                "pre_action_screenshot_ref": (
+                    (confirmation.get("pre_confirm_screenshot") or {}).get("artifact_ref")
+                    or (confirmation.get("pre_confirm_screenshot") or {}).get("reason")
+                    or base["pre_action_screenshot_ref"]
+                ),
+                "post_action_screenshot_ref": (
+                    (confirmation.get("post_confirm_screenshot") or {}).get("artifact_ref")
+                    or (confirmation.get("post_confirm_screenshot") or {}).get("reason")
+                    or base["post_action_screenshot_ref"]
+                ),
+                "simulated_account_action": final_status == "executed",
+                "real_screen_click_executed": bool(confirmation.get("real_screen_click_executed")),
+                **({"blocked_reason": blocked_reason} if blocked_reason else {}),
             }
 
         coordinate_anchors = screen_coordinates or raw_payload.get("coordinate_anchors") or {}

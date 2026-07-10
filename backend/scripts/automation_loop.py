@@ -918,6 +918,89 @@ def run_offhour_research_loop(api_base: str, limit: int) -> dict:
     }
 
 
+def summarize_public_opinion(result: dict) -> dict:
+    sectors = list(result.get("sector_signals") or [])
+    return {
+        "schema_version": "public_opinion_supervisor_summary.v1",
+        "status": result.get("status"),
+        "item_count": result.get("item_count", 0),
+        "sector_count": result.get("sector_count", 0),
+        "top_sectors": [
+            {
+                "sector": item.get("sector"),
+                "display_name": item.get("display_name"),
+                "heat_score": item.get("heat_score"),
+                "item_count": item.get("item_count"),
+                "suggested_action": item.get("suggested_action"),
+            }
+            for item in sectors[:5]
+        ],
+        "error_count": len(result.get("errors") or []),
+        "next_action": result.get("next_action"),
+        "allowed_effect": "news_capture_and_sector_signal_review_only",
+        "review_only": result.get("review_only", True),
+        "simulation_only": result.get("simulation_only", True),
+        "live_trading_enabled": result.get("live_trading_enabled"),
+    }
+
+
+def run_public_opinion_status(api_base: str, limit: int) -> dict:
+    """Inspect Codex public-opinion capture capabilities and latest sector signals."""
+    health = ensure_simulation_health(api_base)
+    capabilities = request_json("GET", f"{api_base}/api/public-opinion/capabilities")
+    query = urllib.parse.urlencode({"limit": limit})
+    context = request_json("GET", f"{api_base}/api/public-opinion/context/latest?{query}")
+    latest = request_json("GET", f"{api_base}/api/public-opinion/runs/latest")
+    return {
+        "health": health,
+        "capabilities": capabilities,
+        "latest_context": context,
+        "latest_run": latest,
+        "simulation_only": True,
+        "live_trading_enabled": health.get("live_trading_enabled"),
+    }
+
+
+def run_public_opinion_capture(api_base: str, limit: int) -> dict:
+    """Capture policy/market news into review-only sector signals."""
+    health = ensure_simulation_health(api_base)
+    result = request_json_payload(
+        "POST",
+        f"{api_base}/api/public-opinion/run",
+        {
+            "limit": max(10, limit),
+            "persist": True,
+            "requested_by": "automation_loop",
+            "source_urls": [],
+        },
+    )
+    return {
+        "health": health,
+        "public_opinion": result,
+        "public_opinion_summary": summarize_public_opinion(result),
+        "selection_context": request_json("GET", f"{api_base}/api/public-opinion/context/latest?limit=8"),
+        "simulation_only": True,
+        "live_trading_enabled": health.get("live_trading_enabled"),
+    }
+
+
+def run_operation_readiness(api_base: str, limit: int) -> dict:
+    """Inspect whether the controlled cockpit is ready for review-only operation."""
+    health = ensure_simulation_health(api_base)
+    query = urllib.parse.urlencode({"selection_limit": max(1, limit)})
+    readiness = request_json("GET", f"{api_base}/api/system/operation-readiness?{query}")
+    return {
+        "health": health,
+        "operation_readiness": readiness,
+        "status": readiness.get("status"),
+        "blocking_requirements": readiness.get("blocking_requirements") or [],
+        "attention_requirements": readiness.get("attention_requirements") or [],
+        "next_action": readiness.get("next_action"),
+        "simulation_only": True,
+        "live_trading_enabled": health.get("live_trading_enabled"),
+    }
+
+
 def run_browser_cycle() -> dict:
     completed = subprocess.run(
         ["npm.cmd", "run", "automation:browser"],
@@ -944,7 +1027,45 @@ def append_log(payload: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe simulation automation loop.")
     parser.add_argument("--api-base", default=DEFAULT_API_BASE)
-    parser.add_argument("--mode", choices=["api", "cycle", "discovery", "potential", "browser", "monitor", "agent-task", "agent-learning", "agent-outcomes", "signal-performance", "sandbox-experiments", "paper-simulation", "paper-evaluation", "price-readiness", "daily-bar-cache", "backtest", "experience-review", "code-evolution-review", "realtime-refresh", "realtime-monitoring-sync", "realtime-cycle", "simulation-cockpit-run", "dataset2-training-status", "dataset2-training-run", "sim-cockpit-supervised-cycle", "offhour-research-status", "offhour-simulation-review-plan", "offhour-strategy-learning-packet", "offhour-training-plan-summary", "offhour-research-loop"], default="cycle")
+    parser.add_argument(
+        "--mode",
+        choices=[
+            "api",
+            "cycle",
+            "discovery",
+            "potential",
+            "browser",
+            "monitor",
+            "agent-task",
+            "agent-learning",
+            "agent-outcomes",
+            "signal-performance",
+            "sandbox-experiments",
+            "paper-simulation",
+            "paper-evaluation",
+            "price-readiness",
+            "daily-bar-cache",
+            "backtest",
+            "experience-review",
+            "code-evolution-review",
+            "realtime-refresh",
+            "realtime-monitoring-sync",
+            "realtime-cycle",
+            "simulation-cockpit-run",
+            "dataset2-training-status",
+            "dataset2-training-run",
+            "sim-cockpit-supervised-cycle",
+            "offhour-research-status",
+            "offhour-simulation-review-plan",
+            "offhour-strategy-learning-packet",
+            "offhour-training-plan-summary",
+            "offhour-research-loop",
+            "public-opinion-status",
+            "public-opinion-capture",
+            "operation-readiness",
+        ],
+        default="cycle",
+    )
     parser.add_argument("--task-type", default="offhour_potential_search", help="Task type for agent-task mode")
     parser.add_argument("--interval-seconds", type=int, default=60)
     parser.add_argument("--max-cycles", type=int, default=1, help="Use 0 to run forever.")
@@ -1027,6 +1148,12 @@ def main() -> int:
                 entry["result"] = run_offhour_training_plan_summary(args.api_base, args.limit)
             elif args.mode == "offhour-research-loop":
                 entry["result"] = run_offhour_research_loop(args.api_base, args.limit)
+            elif args.mode == "public-opinion-status":
+                entry["result"] = run_public_opinion_status(args.api_base, args.limit)
+            elif args.mode == "public-opinion-capture":
+                entry["result"] = run_public_opinion_capture(args.api_base, args.limit)
+            elif args.mode == "operation-readiness":
+                entry["result"] = run_operation_readiness(args.api_base, args.limit)
             else:
                 entry["result"] = run_api_cycle(args.api_base, args.limit)
             entry["status"] = "completed"
