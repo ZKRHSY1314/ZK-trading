@@ -11,7 +11,7 @@ class RuleEngine:
 
     def evaluate(self, snapshot: MarketSnapshot) -> CandidateDecision:
         hits: list[RuleHit] = []
-        score = 0.0
+        raw_score = 0.0
         blocked = False
 
         for rule in self.config.get("rules", []):
@@ -20,10 +20,22 @@ class RuleEngine:
 
             hit = self._evaluate_rule(snapshot, rule)
             hits.append(hit)
-            score += hit.score_delta
+            raw_score += hit.score_delta
             blocked = blocked or (hit.hard_block and not hit.passed)
 
+        max_score = self._max_strategy_score()
+        # The configured thresholds use a 0-100 scale, while individual
+        # strategy weights are intentionally small and auditable. Normalize
+        # only enabled positive strategy weights so the default policy can
+        # actually reach its configured tiers without changing rules.yaml.
+        score = self._normalized_score(raw_score, max_score)
+        soft_risk_failed = any(
+            hit.group == "risk" and not hit.hard_block and not hit.passed
+            for hit in hits
+        )
         tier = self._tier(score, blocked)
+        if tier == CandidateTier.strong and soft_risk_failed:
+            tier = CandidateTier.watch
         if (
             tier == CandidateTier.strong
             and snapshot.metadata.get("data_quality") in {"fallback_profile", "realtime_quote_fallback"}
@@ -33,10 +45,25 @@ class RuleEngine:
             symbol=snapshot.symbol,
             name=snapshot.name,
             score=score,
+            raw_score=round(raw_score, 6),
+            max_score=round(max_score, 6),
+            soft_risk_failed=soft_risk_failed,
             tier=tier,
             blocked=blocked,
             hits=hits,
         )
+
+    def _max_strategy_score(self) -> float:
+        return sum(
+            max(0.0, float(rule.get("weight", 0)))
+            for rule in self.config.get("rules", [])
+            if rule.get("enabled", True) and rule.get("group") == "strategy"
+        )
+
+    def _normalized_score(self, raw_score: float, max_score: float) -> float:
+        if max_score <= 0:
+            return 0.0
+        return round(max(0.0, min(100.0, raw_score / max_score * 100.0)), 6)
 
     def _evaluate_rule(self, snapshot: MarketSnapshot, rule: dict) -> RuleHit:
         rule_id = rule["id"]

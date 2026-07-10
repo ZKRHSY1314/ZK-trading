@@ -74,7 +74,7 @@ def test_backtest_run_insufficient_data(store):
 
 def test_backtest_executes_fixture_trade(store):
     seed_benchmark(store)
-    for idx, close in enumerate([10.0, 10.2, 11.9], start=1):
+    for idx, close in enumerate([10.0, 10.2, 10.5], start=1):
         insert_bar(
             store,
             "SH600000",
@@ -136,10 +136,11 @@ def test_backtest_rejects_one_word_limit_up_buy(store):
     seed_benchmark(store)
     insert_bar(store, "SH600002", "2020-01-01", 10, 10.1, 9.9, 10, amount=1000000)
     insert_bar(store, "SH600002", "2020-01-02", 11, 11, 10.95, 11, amount=1000000)
+    insert_bar(store, "SH600002", "2020-01-03", 12.1, 12.1, 12.1, 12.1, amount=1000000)
 
     result = BacktestEngine(config=strategy_config()).run(
         "2020-01-01",
-        "2020-01-02",
+        "2020-01-03",
         ["SH600002"],
         100000,
         1,
@@ -153,11 +154,12 @@ def test_backtest_rejects_one_word_limit_up_buy(store):
 def test_backtest_rejects_low_liquidity_order(store):
     seed_benchmark(store)
     insert_bar(store, "SH600003", "2020-01-01", 10, 10.1, 9.9, 10, amount=1000000)
-    insert_bar(store, "SH600003", "2020-01-02", 10.1, 10.2, 10.0, 10.1, amount=1000)
+    insert_bar(store, "SH600003", "2020-01-02", 10.1, 10.2, 10.0, 10.1, amount=1000000)
+    insert_bar(store, "SH600003", "2020-01-03", 10.1, 10.2, 10.0, 10.1, amount=1000)
 
     result = BacktestEngine(config=strategy_config()).run(
         "2020-01-01",
-        "2020-01-02",
+        "2020-01-03",
         ["SH600003"],
         100000,
         1,
@@ -224,3 +226,87 @@ def test_backtest_filters_null_price_rows_and_benchmark_closes(store):
 
     assert result["status"] == "completed"
     assert result["benchmark"]["status"] == "ready"
+
+
+def test_backtest_executes_close_signal_on_next_trading_day_open(store):
+    seed_benchmark(store)
+    insert_bar(store, "SH600007", "2020-01-01", 10.0, 10.1, 9.9, 10.0, amount=1000000)
+    insert_bar(store, "SH600007", "2020-01-02", 10.0, 10.2, 9.9, 10.1, amount=1000000)
+    insert_bar(store, "SH600007", "2020-01-03", 10.4, 10.6, 10.3, 10.5, amount=1000000)
+
+    result = BacktestEngine(config=strategy_config()).run(
+        "2020-01-01",
+        "2020-01-03",
+        ["SH600007"],
+        100000,
+        1,
+        0.2,
+    )
+    buy = store.fetch_one(
+        """
+        SELECT trade_date, price, reason
+        FROM historical_backtest_trades
+        WHERE run_id = ? AND symbol = 'SH600007' AND side = 'buy'
+        ORDER BY id LIMIT 1
+        """,
+        (result["run_id"],),
+    )
+
+    assert buy is not None
+    assert buy["trade_date"] == "2020-01-03"
+    assert buy["reason"] == "prior_close_strong_signal"
+    assert buy["price"] > 10.4
+
+
+def test_backtest_entry_does_not_use_entry_day_close_regime(monkeypatch, store):
+    seed_benchmark(store)
+    for trade_date, close in (("2020-01-01", 10.0), ("2020-01-02", 10.1), ("2020-01-03", 10.5)):
+        insert_bar(store, "SH600008", trade_date, close, close + 0.2, close - 0.2, close)
+
+    class RegimeByDate:
+        def get_latest_regime(self, trade_date):
+            return {"regime": "extreme_risk" if trade_date == "2020-01-03" else "weak"}
+
+    monkeypatch.setattr("app.backtest.engine.MarketRegimeService", RegimeByDate)
+    result = BacktestEngine(config=strategy_config()).run(
+        "2020-01-01", "2020-01-03", ["SH600008"], 100000, 1, 0.2
+    )
+
+    buy = store.fetch_one(
+        """
+        SELECT trade_date FROM historical_backtest_trades
+        WHERE run_id = ? AND symbol = 'SH600008' AND side = 'buy'
+        """,
+        (result["run_id"],),
+    )
+    assert buy is not None
+    assert buy["trade_date"] == "2020-01-03"
+
+
+def test_backtest_defers_signal_until_symbol_next_available_bar(store):
+    seed_benchmark(store)
+    insert_bar(store, "SH600009", "2020-01-01", 10.0, 10.2, 9.8, 10.0)
+    insert_bar(store, "SH600009", "2020-01-02", 10.0, 10.3, 9.9, 10.1)
+    insert_bar(store, "SH600009", "2020-01-04", 10.4, 10.7, 10.3, 10.5)
+    for day in range(1, 5):
+        insert_bar(store, "SZ000009", f"2020-01-0{day}", 8.0, 8.1, 7.9, 8.0)
+
+    result = BacktestEngine(config=strategy_config()).run(
+        "2020-01-01",
+        "2020-01-04",
+        ["SH600009", "SZ000009"],
+        100000,
+        2,
+        0.2,
+    )
+    buy = store.fetch_one(
+        """
+        SELECT trade_date FROM historical_backtest_trades
+        WHERE run_id = ? AND symbol = 'SH600009' AND side = 'buy'
+        ORDER BY id LIMIT 1
+        """,
+        (result["run_id"],),
+    )
+
+    assert buy is not None
+    assert buy["trade_date"] == "2020-01-04"

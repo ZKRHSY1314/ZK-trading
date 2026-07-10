@@ -1737,9 +1737,9 @@ def automation_cycle_run_once(
         return preflight
 
     effective_cycle_params = {
-        "limit": CYCLE_LIMIT,
-        "monitor_limit": CYCLE_MONITOR_LIMIT,
-        "review_symbol": CYCLE_REVIEW_SYMBOL,
+        "limit": max(1, min(int(limit), 120)),
+        "monitor_limit": max(1, min(int(monitor_limit), 20)),
+        "review_symbol": str(review_symbol).strip().upper() or CYCLE_REVIEW_SYMBOL,
     }
     cycle = supervisor.run_cycle(
         limit=effective_cycle_params["limit"],

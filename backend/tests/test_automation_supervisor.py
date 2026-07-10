@@ -1,8 +1,10 @@
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from app.automation.supervisor import AutomationSupervisor
 from app.config import PROJECT_ROOT, _resolve_project_relative_path
-from app.models import CandidateTier, SimulationPlan
+from app.models import CandidateTier, MarketSnapshot, SimulationPlan
 
 
 def test_database_path_resolution_is_project_root_relative():
@@ -98,3 +100,28 @@ def test_phase_guardrail_relaxation_plan_is_not_overridden():
 
     assert supervisor._plan_relaxes_phase_guardrail(relaxed) is True
     assert supervisor._plan_relaxes_phase_guardrail(hard_blocked) is False
+
+
+def test_plan_snapshot_freshness_rechecks_actual_candidate_trade_date():
+    snapshot = MarketSnapshot(
+        symbol="SH600000",
+        trade_date=date(2026, 7, 9),
+        price=12.0,
+        metadata={"data_quality": "daily_bar"},
+    )
+    sessions = [date(2026, 7, 9), date(2026, 7, 10)]
+
+    after_close = AutomationSupervisor._snapshot_freshness(
+        snapshot,
+        now=datetime(2026, 7, 10, 16, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        trading_dates=sessions,
+    )
+    before_close = AutomationSupervisor._snapshot_freshness(
+        snapshot,
+        now=datetime(2026, 7, 10, 14, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        trading_dates=sessions,
+    )
+
+    assert after_close["allowed"] is False
+    assert after_close["trading_session_age"] == 1
+    assert before_close["allowed"] is True

@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any
 from urllib.request import Request, urlopen
@@ -8,7 +9,7 @@ from urllib.request import Request, urlopen
 import pandas as pd
 
 from app.config import settings
-from app.data.snapshot_builder import MarketDataError, MarketSnapshotBuilder
+from app.data.snapshot_builder import MarketSnapshotBuilder
 from app.data.symbols import normalize_a_share_code
 from app.models import DailyBarCache
 from app.storage.sqlite_store import SQLiteStore
@@ -39,16 +40,10 @@ class DailyBarCacheService:
             (limit,)
         )
         
-        results = []
-        for row in candidates:
-            results.append(self._refresh_stock_symbol(str(row["symbol"]), days=days))
-                
-        summary = self.get_summary()
-        return {
-            "processed": len(results),
-            "summary": summary,
-            "results": results
-        }
+        return self.refresh_symbols(
+            [str(row["symbol"]) for row in candidates],
+            days=days,
+        )
 
     def refresh_symbols(self, symbols: list[str] | tuple[str, ...], days: int = 120) -> dict[str, Any]:
         """
@@ -67,10 +62,20 @@ class DailyBarCacheService:
             if len(cleaned_symbols) >= 200:
                 break
 
-        results = [
-            self._refresh_stock_symbol(symbol, days=days)
-            for symbol in cleaned_symbols
-        ]
+        worker_count = min(5, len(cleaned_symbols))
+        if worker_count:
+            with ThreadPoolExecutor(
+                max_workers=worker_count,
+                thread_name_prefix="daily-bar-refresh",
+            ) as pool:
+                results = list(
+                    pool.map(
+                        lambda symbol: self._refresh_stock_symbol(symbol, days=days),
+                        cleaned_symbols,
+                    )
+                )
+        else:
+            results = []
         return {
             "processed": len(results),
             "summary": self.get_summary(),
@@ -121,11 +126,7 @@ class DailyBarCacheService:
             self._save_error_bar(symbol, error_msg)
             return {"symbol": symbol, "status": "error", "error": "No history returned", "attempts": attempts}
 
-        saved_count = 0
-        for bar in valid_bars:
-            bar.symbol = symbol
-            self._upsert_bar(bar)
-            saved_count += 1
+        saved_count = self._upsert_bars(symbol, valid_bars)
 
         return {
             "symbol": symbol,
@@ -262,6 +263,51 @@ class DailyBarCacheService:
                 bar.quality_status,
                 now_str
             ))
+
+    def _upsert_bars(self, symbol: str, bars: list[DailyBarCache]) -> int:
+        if not bars:
+            return 0
+        now_str = datetime.now().isoformat(timespec="seconds")
+        sql = """
+            INSERT INTO daily_bar_cache
+            (symbol, trade_date, open, high, low, close, volume, amount, source, quality_status, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, trade_date) DO UPDATE SET
+                open = excluded.open,
+                high = excluded.high,
+                low = excluded.low,
+                close = excluded.close,
+                volume = excluded.volume,
+                amount = excluded.amount,
+                source = excluded.source,
+                quality_status = excluded.quality_status,
+                updated_at = excluded.updated_at
+        """
+        rows = []
+        for bar in bars:
+            bar.symbol = symbol
+            rows.append(
+                (
+                    symbol,
+                    bar.trade_date,
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume,
+                    bar.amount,
+                    bar.source,
+                    bar.quality_status,
+                    now_str,
+                )
+            )
+        with self.store.connect() as conn:
+            conn.execute(
+                "DELETE FROM daily_bar_cache WHERE symbol = ? AND trade_date = 'ERROR'",
+                (symbol,),
+            )
+            conn.executemany(sql, rows)
+        return len(rows)
 
     def _save_error_bar(self, symbol: str, error_message: str) -> None:
         """

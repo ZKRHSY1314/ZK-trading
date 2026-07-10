@@ -19,10 +19,12 @@ _PER_ITEM_TASK_TYPES = {
     "offhour_potential_search",
     "auto_discovery_scan",
     "monitoring_run",
+    "full_simulation_cycle",
 }
 # Task types that produce a single system-health sample (no stock symbol)
 _SYSTEM_TASK_TYPES = {
     "local_dashboard_observation",
+    "public_opinion_capture",
 }
 
 # Statuses that should be skipped entirely
@@ -32,8 +34,8 @@ _SKIP_STATUSES = {"blocked", "rejected", "failed", "pending"}
 class AgentLearningExtractionService:
     """Extract learning samples from completed agent-control tasks."""
 
-    def __init__(self) -> None:
-        self.store = SQLiteStore(settings.database_path)
+    def __init__(self, store: SQLiteStore | None = None) -> None:
+        self.store = store or SQLiteStore(settings.database_path)
         self.store.init()
 
     # ------------------------------------------------------------------
@@ -51,25 +53,37 @@ class AgentLearningExtractionService:
 
         skip_reason = self._should_skip(task)
         if skip_reason:
-            return {"task_id": task_id, "created_count": 0, "skipped": skip_reason}
+            result = {"task_id": task_id, "created_count": 0, "skipped": skip_reason}
+            if str(task.get("status") or "").lower() != "pending":
+                self._mark_task_processed(task_id, result)
+            return result
 
         samples = self._extract_samples(task)
         created = self._persist_samples_strict(samples)
-        return {
+        result = {
             "task_id": task_id,
             "task_type": task["task_type"],
             "created_count": created,
             "total_extracted": len(samples),
         }
+        self._mark_task_processed(task_id, result)
+        return result
 
     def extract_from_recent(self, limit: int = 20) -> dict[str, Any]:
         """Extract learning samples from recent completed tasks."""
         limit = max(1, min(limit, 200))
         rows = self.store.fetch_all(
             """
-            SELECT id FROM agent_control_tasks
-            WHERE status = 'completed'
-            ORDER BY id DESC
+            SELECT task.id
+            FROM agent_control_tasks task
+            WHERE task.status = 'completed'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM agent_control_events event
+                  WHERE event.task_id = task.id
+                    AND event.event_type = 'learning_extraction_processed'
+              )
+            ORDER BY task.id ASC
             LIMIT ?
             """,
             (limit,),
@@ -86,6 +100,25 @@ class AgentLearningExtractionService:
             "total_created": total_created,
             "details": results,
         }
+
+    def _mark_task_processed(self, task_id: int, result: dict[str, Any]) -> None:
+        with self.store.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_control_events(task_id, event_type, message, metadata_json)
+                SELECT ?, 'learning_extraction_processed', ?, ?
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM agent_control_events
+                    WHERE task_id = ? AND event_type = 'learning_extraction_processed'
+                )
+                """,
+                (
+                    task_id,
+                    "Learning extraction processed",
+                    json.dumps(result, ensure_ascii=False, default=str),
+                    task_id,
+                ),
+            )
 
     def list_samples(
         self,
@@ -176,7 +209,6 @@ class AgentLearningExtractionService:
     def _extract_samples(self, task: dict[str, Any]) -> list[dict[str, Any]]:
         task_type = task.get("task_type", "")
         result = json.loads(task.get("result_json") or "{}")
-        payload = json.loads(task.get("payload_json") or "{}")
         task_id = task["id"]
 
         approval_meta = {
@@ -194,6 +226,14 @@ class AgentLearningExtractionService:
             return self._samples_from_monitoring(task_id, result, approval_meta)
         elif task_type == "local_dashboard_observation":
             return self._samples_from_dashboard_observation(task_id, result, approval_meta)
+        elif task_type == "full_simulation_cycle":
+            return self._samples_from_full_simulation_cycle(
+                task_id, result, approval_meta
+            )
+        elif task_type == "public_opinion_capture":
+            return self._samples_from_public_opinion_capture(
+                task_id, result, approval_meta
+            )
         return []
 
     def _samples_from_potential_search(
@@ -217,6 +257,7 @@ class AgentLearningExtractionService:
                 "symbol": symbol,
                 "name": item.get("name"),
                 "features": {
+                    "signal_date": item.get("signal_date") or item.get("trade_date"),
                     "current_price": item.get("current_price"),
                     "pct_change": item.get("pct_change"),
                     "turnover_rate": item.get("turnover_rate"),
@@ -373,6 +414,173 @@ class AgentLearningExtractionService:
             "label_source": "auto_extraction",
         }]
 
+    def _samples_from_full_simulation_cycle(
+        self,
+        task_id: int,
+        result: dict[str, Any],
+        approval_meta: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        automation = result.get("automation") or {}
+        run_id = automation.get("run_id") or result.get("automation_run_id")
+        event_payloads: list[dict[str, Any]] = []
+        if run_id is not None:
+            rows = self.store.fetch_all(
+                """
+                SELECT symbol, payload_json, created_at
+                FROM automation_events
+                WHERE run_id = ? AND event_type = 'simulation_plan_created'
+                ORDER BY id
+                """,
+                (run_id,),
+            )
+            for row in rows:
+                payload = self._json_object(row.get("payload_json"))
+                if row.get("symbol") and not payload.get("symbol"):
+                    payload["symbol"] = row["symbol"]
+                payload.setdefault("event_created_at", row.get("created_at"))
+                event_payloads.append(payload)
+
+        if not event_payloads:
+            summary = automation.get("summary") or result.get("summary") or {}
+            event_payloads = [
+                {**item, "symbol": item.get("symbol")}
+                for item in summary.get("items") or []
+                if isinstance(item, dict) and item.get("symbol")
+            ]
+
+        samples: list[dict[str, Any]] = []
+        seen_symbols: set[str] = set()
+        for payload in event_payloads:
+            candidate = payload.get("candidate") or {}
+            snapshot = payload.get("snapshot") or {}
+            decision = payload.get("decision") or {}
+            plan = payload.get("plan") or payload
+            symbol = (
+                payload.get("symbol")
+                or snapshot.get("symbol")
+                or candidate.get("symbol")
+                or plan.get("symbol")
+            )
+            if not symbol or symbol in seen_symbols:
+                continue
+            seen_symbols.add(str(symbol))
+            risk_blocks = payload.get("risk_blocked") or plan.get("risk_blocked") or []
+            risk_flags = self._risk_flags_from_blocks(risk_blocks)
+            allowed = bool(plan.get("allowed", payload.get("allowed", False)))
+            signal_date = snapshot.get("trade_date") or payload.get("signal_date")
+            samples.append(
+                {
+                    "source_task_id": task_id,
+                    "sample_type": "full_simulation_cycle",
+                    "symbol": str(symbol),
+                    "name": snapshot.get("name") or candidate.get("name"),
+                    "features": {
+                        "signal_date": signal_date,
+                        "snapshot": snapshot,
+                        "candidate": candidate,
+                        "decision_score": decision.get("score"),
+                        "decision_raw_score": decision.get("raw_score"),
+                        "decision_max_score": decision.get("max_score"),
+                        "tier": decision.get("tier") or payload.get("tier"),
+                        "action": plan.get("action") or payload.get("action"),
+                        "allowed": allowed,
+                        "automation_run_id": run_id,
+                    },
+                    "decision": {
+                        "decision": decision,
+                        "plan": plan,
+                        "approval": approval_meta,
+                    },
+                    "risk_flags": risk_flags,
+                    "label": (
+                        "simulation_plan_created"
+                        if allowed
+                        else "simulation_plan_blocked"
+                    ),
+                    "label_source": "automation_plan_status",
+                }
+            )
+        return samples
+
+    def _samples_from_public_opinion_capture(
+        self,
+        task_id: int,
+        result: dict[str, Any],
+        approval_meta: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        sectors = [
+            item
+            for item in result.get("sector_signals") or []
+            if isinstance(item, dict)
+        ]
+        sectors.sort(
+            key=lambda item: (
+                -float(item.get("heat_score") or 0),
+                str(item.get("sector") or ""),
+            )
+        )
+        risk_flags = [
+            f"sector_risk:{item.get('sector')}"
+            for item in sectors
+            if int(item.get("risk_count") or 0) > 0
+            or item.get("suggested_action") == "risk_review_only"
+        ]
+        return [
+            {
+                "source_task_id": task_id,
+                "sample_type": "public_opinion_capture",
+                "symbol": None,
+                "name": "market_sector_context",
+                "features": {
+                    "run_id": result.get("run_id"),
+                    "status": result.get("status"),
+                    "source_count": result.get("source_count"),
+                    "item_count": result.get("item_count"),
+                    "sector_count": result.get("sector_count"),
+                    "top_sectors": sectors[:20],
+                    "error_count": len(result.get("errors") or []),
+                    "review_only": result.get("review_only", True),
+                    "simulation_only": result.get("simulation_only", True),
+                },
+                "decision": {
+                    "summary": result.get("summary") or {},
+                    "next_action": result.get("next_action"),
+                    "approval": approval_meta,
+                },
+                "risk_flags": risk_flags,
+                "label": (
+                    "sector_context_ready" if sectors else "sector_context_empty"
+                ),
+                "label_source": "public_opinion_context",
+            }
+        ]
+
+    def _risk_flags_from_blocks(self, blocks: Any) -> list[str]:
+        flags: list[str] = []
+        if not isinstance(blocks, list):
+            return flags
+        for block in blocks:
+            if isinstance(block, dict):
+                value = (
+                    block.get("rule_id")
+                    or block.get("code")
+                    or block.get("reason")
+                )
+            else:
+                value = block
+            if value:
+                flags.append(str(value))
+        return list(dict.fromkeys(flags))
+
+    def _json_object(self, raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        try:
+            parsed = json.loads(raw or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
     def _infer_label(self, item: dict[str, Any]) -> str:
         """Infer a label for a potential search or scored item."""
         score = float(item.get("potential_score") or 0)
@@ -403,7 +611,6 @@ class AgentLearningExtractionService:
         created = 0
         with self.store.connect() as conn:
             for sample in samples:
-                symbol_key = sample.get("symbol") or "__no_symbol__"
                 try:
                     conn.execute(
                         """

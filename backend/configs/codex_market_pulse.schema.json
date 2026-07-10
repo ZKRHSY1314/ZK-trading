@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["retrieved_at", "evidence"],
+  "properties": {
+    "retrieved_at": {
+      "type": "string",
+      "description": "ISO-8601 time when this search batch completed"
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url",
+          "retrieved_at",
+          "published_at_status",
+          "published_at",
+          "title",
+          "summary",
+          "source_name",
+          "source_id",
+          "source_tier",
+          "category",
+          "sector_hints",
+          "claims"
+        ],
+        "properties": {
+          "url": {"type": "string"},
+          "retrieved_at": {"type": "string"},
+          "published_at_status": {"type": "string", "enum": ["known", "unknown"]},
+          "published_at": {"type": ["string", "null"]},
+          "title": {"type": "string"},
+          "summary": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_id": {"type": "string"},
+          "source_tier": {"type": "string", "enum": ["official", "primary_media", "market_media"]},
+          "category": {"type": "string", "enum": ["market", "policy", "sector"]},
+          "sector_hints": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {"type": "string"}
+          },
+          "claims": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

@@ -66,6 +66,10 @@ class CandidateDecision(BaseModel):
     symbol: str
     name: str | None = None
     score: float
+    raw_score: float | None = None
+    max_score: float | None = None
+    score_scale: str = "normalized_0_100"
+    soft_risk_failed: bool = False
     tier: CandidateTier
     blocked: bool
     hits: list[RuleHit]

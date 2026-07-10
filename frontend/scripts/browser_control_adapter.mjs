@@ -2,7 +2,7 @@ import { chromium } from "playwright";
 
 const API_BASE = process.env.TRADING_API_BASE || "http://127.0.0.1:8000";
 const WEB_URL = process.env.TRADING_WEB_URL || "http://127.0.0.1:3000";
-const UI_TIMEOUT = Number(process.env.TRADING_UI_TIMEOUT_MS || 60000);
+const UI_TIMEOUT = Number(process.env.TRADING_UI_TIMEOUT_MS || 240000);
 
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -22,110 +22,139 @@ async function record(runId, eventType, payload = {}, symbol = null) {
   });
 }
 
-async function visibleText(page) {
-  return page.locator("body").innerText();
-}
-
-async function waitForBodyText(page, text, timeout = UI_TIMEOUT) {
-  await page.waitForFunction((expected) => document.body.innerText.includes(expected), text, {
-    timeout
-  });
-}
-
-async function pageFetchJson(page, path, options = {}) {
-  return page.evaluate(
-    async ({ path: innerPath, options: innerOptions }) => {
-      const response = await fetch(innerPath, innerOptions);
-      if (!response.ok) {
-        throw new Error(`${innerPath} returned ${response.status}`);
-      }
-      return response.json();
-    },
-    { path, options }
+async function clickAndRequireResponse(page, testId, responsePath) {
+  const button = page.getByTestId(testId);
+  await button.waitFor({ state: "visible", timeout: UI_TIMEOUT });
+  const responsePromise = page.waitForResponse(
+    (response) => response.request().method() === "POST" && response.url().includes(responsePath),
+    { timeout: UI_TIMEOUT }
   );
+  await button.click();
+  const response = await responsePromise;
+  const responseBody = await response.text();
+  if (!response.ok()) {
+    throw new Error(`${responsePath} returned ${response.status()}: ${responseBody}`);
+  }
+  await page.waitForFunction(
+    (id) => {
+      const element = document.querySelector(`[data-testid="${id}"]`);
+      return element instanceof HTMLButtonElement && !element.disabled;
+    },
+    testId,
+    { timeout: UI_TIMEOUT }
+  );
+  return JSON.parse(responseBody);
+}
+
+async function launchBrowser() {
+  const attempts = [
+    { label: "playwright-chromium", options: { headless: true } },
+    { label: "chrome", options: { channel: "chrome", headless: true } },
+    { label: "msedge", options: { channel: "msedge", headless: true } }
+  ];
+  let lastError;
+  for (const attempt of attempts) {
+    try {
+      return await chromium.launch(attempt.options);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 async function main() {
-  const run = await api("/api/automation/runs/start?mode=browser_control", { method: "POST" });
-  const runId = run.run_id;
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
-  const localScanButton = page.getByTestId("local-scan-button");
-  const automationRunButton = page.getByTestId("automation-run-button");
-  const liveButton = page.getByTestId("live-trading-disabled-button");
-  const simulationPlanButton = page.getByTestId("simulation-plan-button");
+  const health = await api("/health");
+  if (health.live_trading_enabled !== false) {
+    throw new Error("live_trading_enabled is not false; browser control stopped");
+  }
 
+  let runId = null;
+  let browser = null;
+  let page = null;
   const summary = {
+    schema_version: "browser_control_review.v2",
     web_url: WEB_URL,
     checks: [],
     clicked: [],
-    extracted: {}
+    extracted: {},
+    review_only: true,
+    live_trading_enabled: false
   };
 
   try {
-    await page.goto(WEB_URL, { waitUntil: "networkidle" });
-    await localScanButton.waitFor({ timeout: UI_TIMEOUT });
+    browser = await launchBrowser();
+    page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const run = await api("/api/automation/runs/start?mode=browser_control", { method: "POST" });
+    runId = run.run_id;
+    await page.goto(WEB_URL, { waitUntil: "domcontentloaded", timeout: UI_TIMEOUT });
+    await page.getByTestId("trading-dashboard").waitFor({ state: "visible", timeout: UI_TIMEOUT });
     await record(runId, "browser_opened", { url: WEB_URL, title: await page.title() });
 
+    const liveButton = page.getByTestId("live-trading-disabled-button");
     const liveDisabled = await liveButton.isDisabled();
     summary.checks.push({ name: "live_button_disabled", passed: liveDisabled });
-    if (!liveDisabled) {
-      throw new Error("实盘按钮未禁用，停止自动化");
-    }
+    if (!liveDisabled) throw new Error("实盘按钮未禁用，停止自动化");
 
-    await localScanButton.click();
-    try {
-      await waitForBodyText(page, "重点关注", 12000);
-    } catch {
-      const scan = await pageFetchJson(page, "/api/candidates/local-scan?limit=100&persist=true");
-      await record(runId, "ui_local_scan_fallback_fetch", { scan });
-      await page.reload({ waitUntil: "networkidle" });
-      await waitForBodyText(page, "重点关注", UI_TIMEOUT);
+    const pulseRun = await clickAndRequireResponse(
+      page,
+      "public-opinion-capture-button",
+      "/api/public-opinion/run"
+    );
+    if (!["completed", "partial"].includes(pulseRun.status) || Number(pulseRun.item_count || 0) < 1) {
+      throw new Error(`Market Pulse did not produce fresh evidence: ${JSON.stringify({
+        status: pulseRun.status,
+        item_count: pulseRun.item_count,
+        errors: pulseRun.errors
+      })}`);
     }
-    summary.clicked.push("本地扫描");
-    await record(runId, "ui_local_scan_clicked", { text: await visibleText(page) });
-
-    await automationRunButton.click();
-    try {
-      await waitForBodyText(page, "自动化 completed", UI_TIMEOUT * 2);
-    } catch {
-      const automation = await pageFetchJson(page, "/api/automation/run-once?limit=5", {
-        method: "POST"
-      });
-      await record(runId, "ui_automation_fallback_fetch", { automation });
-      await page.reload({ waitUntil: "networkidle" });
-      await waitForBodyText(page, "自动化 completed", UI_TIMEOUT);
-    }
-    summary.clicked.push("运行自动化");
-    await record(runId, "ui_automation_clicked", { text: await visibleText(page) });
-
-    await simulationPlanButton.click();
-    let fallbackPlan = null;
-    try {
-      await waitForBodyText(page, "数量", UI_TIMEOUT * 2);
-    } catch {
-      fallbackPlan = await pageFetchJson(page, "/api/simulation/plan/SH600135");
-      await record(runId, "ui_plan_fallback_fetch", { plan: fallbackPlan });
-    }
-    summary.clicked.push("生成模拟计划");
-
-    const bodyText = await visibleText(page);
-    summary.extracted.body_text = bodyText;
+    summary.clicked.push("立即捕捉");
+    const pulseContext = await api("/api/public-opinion/context/latest?limit=8");
+    summary.extracted.public_opinion = {
+      status: pulseContext.status,
+      run_id: pulseContext.run_id,
+      sector_count: pulseContext.sector_count,
+      context_age_hours: pulseContext.context_age_hours
+    };
     summary.checks.push({
-      name: "focus_stock_visible",
-      passed: bodyText.includes("乐凯胶片") && bodyText.includes("重点关注")
+      name: "public_opinion_run_advanced",
+      passed: Number(pulseContext.run_id) === Number(pulseRun.run_id)
+    });
+    await record(runId, "ui_public_opinion_capture_clicked", summary.extracted.public_opinion);
+
+    const controlRun = await clickAndRequireResponse(
+      page,
+      "control-plane-run-button",
+      "/api/control-plane/run-once"
+    );
+    if (["failed", "blocked"].includes(controlRun.status)) {
+      throw new Error(`Control Plane returned ${controlRun.status}: ${JSON.stringify(controlRun.steps || [])}`);
+    }
+    summary.clicked.push("运行控制平面");
+    const controlStatus = await api("/api/control-plane/status");
+    summary.extracted.control_plane = {
+      status: controlStatus.status,
+      market_stage: controlStatus.market_stage,
+      recommended_profile: controlStatus.recommended_profile,
+      attention_reasons: controlStatus.attention_reasons || []
+    };
+    summary.checks.push({
+      name: "control_plane_response_verified",
+      passed: ["completed", "partial"].includes(controlRun.status) && Array.isArray(controlRun.steps)
     });
     summary.checks.push({
-      name: "training_stock_visible",
-      passed: bodyText.includes("金螳螂") && bodyText.includes("训练关注")
+      name: "control_plane_status_visible",
+      passed: await page.getByTestId("control-plane-status").isVisible()
     });
-    summary.extracted.fallback_plan = fallbackPlan;
     summary.checks.push({
-      name: "simulation_plan_visible",
-      passed: (bodyText.includes("生成模拟计划") && bodyText.includes("数量")) || Boolean(fallbackPlan)
+      name: "market_pulse_evidence_link_visible",
+      passed: (await page.getByTestId("public-opinion-news").locator("a[href]").count()) > 0
     });
-
-    await record(runId, "ui_simulation_plan_created", { text: bodyText });
+    summary.checks.push({
+      name: "ui_reports_simulation_mode",
+      passed: (await page.getByTestId("trading-safety-status").innerText()).includes("模拟模式")
+    });
+    await record(runId, "ui_control_plane_clicked", summary.extracted.control_plane);
 
     const failed = summary.checks.filter((check) => !check.passed);
     const status = failed.length ? "failed" : "completed";
@@ -139,18 +168,19 @@ async function main() {
     console.log(JSON.stringify({ run_id: runId, status, summary }, null, 2));
   } catch (error) {
     summary.error = error instanceof Error ? error.message : String(error);
-    summary.extracted.error_body_text = await page
-      .locator("body")
-      .innerText()
-      .catch(() => "");
-    await record(runId, "browser_control_error", { error: summary.error }).catch(() => {});
-    await api(`/api/automation/runs/${runId}/finish`, {
-      method: "POST",
-      body: JSON.stringify({ status: "failed", summary })
-    }).catch(() => {});
+    summary.extracted.body_text = page
+      ? await page.locator("body").innerText().catch(() => "")
+      : "";
+    if (runId !== null) {
+      await record(runId, "browser_control_error", { error: summary.error }).catch(() => {});
+      await api(`/api/automation/runs/${runId}/finish`, {
+        method: "POST",
+        body: JSON.stringify({ status: "failed", summary })
+      }).catch(() => {});
+    }
     throw error;
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
   }
 }
 

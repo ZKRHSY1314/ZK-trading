@@ -494,9 +494,9 @@ def run_api_cycle(api_base: str, limit: int) -> dict:
 
 def run_full_cycle(api_base: str, limit: int, monitor_limit: int, review_symbol: str) -> dict:
     effective_cycle_params = {
-        "limit": CYCLE_LIMIT,
-        "monitor_limit": CYCLE_MONITOR_LIMIT,
-        "review_symbol": CYCLE_REVIEW_SYMBOL,
+        "limit": max(1, int(limit)),
+        "monitor_limit": max(1, int(monitor_limit)),
+        "review_symbol": str(review_symbol).strip().upper() or CYCLE_REVIEW_SYMBOL,
     }
     query = urllib.parse.urlencode(effective_cycle_params)
     response = request_json("POST", f"{api_base}/api/automation/cycles/run-once?{query}")
@@ -1017,6 +1017,108 @@ def run_browser_cycle() -> dict:
     }
 
 
+_SEMANTIC_COMPONENT_KEYS = (
+    "automation",
+    "dataset2_training",
+    "dataset2_training_run",
+    "offhour_research",
+    "operation_readiness",
+    "public_opinion",
+    "sim_cockpit_cycle",
+    "supervised_sample_gate",
+)
+
+
+def _canonical_semantic_status(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return "completed"
+    if (
+        normalized in {"failed", "error"}
+        or normalized.startswith(("failed_", "error_"))
+        or normalized.endswith(("_failed", "_error"))
+    ):
+        return "failed"
+    if (
+        normalized in {"blocked", "rejected"}
+        or normalized.startswith(("blocked_", "rejected_"))
+        or normalized.endswith(("_blocked", "_rejected"))
+    ):
+        return "blocked"
+    if any(
+        marker in normalized
+        for marker in (
+            "partial",
+            "needs_attention",
+            "not_ready",
+            "degraded",
+            "unavailable",
+            "insufficient",
+            "warning",
+            "empty",
+            "stale",
+        )
+    ):
+        return "partial"
+    if normalized.startswith(("needs_", "pending_", "missing_", "waiting_")):
+        return "partial"
+    if normalized in {"missing", "pending", "skipped", "incomplete", "unknown"}:
+        return "partial"
+    return "completed"
+
+
+def _collect_semantic_statuses(payload: object) -> list[str]:
+    statuses: list[str] = []
+    if isinstance(payload, list):
+        for item in payload:
+            statuses.extend(_collect_semantic_statuses(item))
+        return statuses
+    if not isinstance(payload, dict):
+        return statuses
+    if payload.get("failed_steps"):
+        statuses.append("failed")
+    error_count = int(payload.get("error_count") or 0)
+    errors = payload.get("errors")
+    if error_count > 0 or (isinstance(errors, list) and errors):
+        processed_count = int(
+            payload.get("processed_count")
+            or payload.get("tasks_processed")
+            or payload.get("item_count")
+            or 0
+        )
+        success_count = int(
+            payload.get("outcome_count")
+            or payload.get("created_count")
+            or payload.get("accepted_count")
+            or payload.get("ready_count")
+            or 0
+        )
+        statuses.append(
+            "failed" if processed_count > 0 and success_count == 0 else "partial"
+        )
+    for key, value in payload.items():
+        normalized_key = str(key).lower()
+        if normalized_key == "status" or normalized_key.endswith("_status"):
+            statuses.append(_canonical_semantic_status(value))
+        if isinstance(value, (dict, list)):
+            statuses.extend(_collect_semantic_statuses(value))
+    return statuses
+
+
+def semantic_result_status(result: object) -> str:
+    """Return the strongest current business status exposed by a mode result."""
+
+    if not isinstance(result, dict):
+        return "completed"
+
+    statuses = _collect_semantic_statuses(result)
+
+    for status in ("failed", "blocked", "partial"):
+        if status in statuses:
+            return status
+    return "completed"
+
+
 def append_log(payload: dict) -> None:
     log_dir = PROJECT_ROOT / "backend" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -1098,9 +1200,9 @@ def main() -> int:
             elif args.mode == "cycle":
                 entry["result"] = run_full_cycle(
                     args.api_base,
-                    CYCLE_LIMIT,
-                    CYCLE_MONITOR_LIMIT,
-                    CYCLE_REVIEW_SYMBOL,
+                    args.limit,
+                    args.monitor_limit,
+                    args.review_symbol,
                 )
             elif args.mode == "agent-learning":
                 entry["result"] = run_agent_learning(args.api_base, args.limit)
@@ -1156,7 +1258,7 @@ def main() -> int:
                 entry["result"] = run_operation_readiness(args.api_base, args.limit)
             else:
                 entry["result"] = run_api_cycle(args.api_base, args.limit)
-            entry["status"] = "completed"
+            entry["status"] = semantic_result_status(entry["result"])
         except (urllib.error.URLError, RuntimeError, subprocess.TimeoutExpired) as exc:
             entry["status"] = "failed"
             entry["error"] = str(exc)
@@ -1171,6 +1273,8 @@ def main() -> int:
         else:
             append_log(entry)
             print(json.dumps(entry, ensure_ascii=False, indent=2))
+            if entry["status"] in {"blocked", "failed"} and not args.continue_on_error:
+                return 1
 
         if args.max_cycles <= 0 or cycle < args.max_cycles:
             time.sleep(max(1, args.interval_seconds))

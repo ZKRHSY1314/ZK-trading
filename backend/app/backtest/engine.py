@@ -62,6 +62,7 @@ class BacktestEngine:
         rejected_count = 0
         blocked_by_regime_count = 0
         regime_service = MarketRegimeService()
+        pending_candidates: list[tuple[str, float, MarketSnapshot, dict[str, Any]]] = []
 
         for current_date in all_dates:
             curr_dt = pd.to_datetime(current_date)
@@ -120,6 +121,46 @@ class BacktestEngine:
                 closed_trades.extend(matched)
                 sellable[sym] = max(0, sellable.get(sym, 0) - decision.filled_quantity)
 
+            entry_candidates = pending_candidates
+            deferred_candidates = []
+
+            # Signals are computed after the current session closes and may
+            # only execute on the next available trading bar. This avoids the
+            # former close-to-same-close lookahead path.
+            for sym, signal_score, snapshot, signal_context in entry_candidates:
+                if ledger.open_position_count() >= max_positions:
+                    deferred_candidates.append((sym, signal_score, snapshot, signal_context))
+                    continue
+                if sym not in dfs or curr_dt not in dfs[sym].index:
+                    deferred_candidates.append((sym, signal_score, snapshot, signal_context))
+                    continue
+                bar = dict(dfs[sym].loc[curr_dt])
+                signal_regime = str(signal_context.get("signal_regime") or "neutral")
+                alloc_cap = per_symbol_cap * (0.5 if signal_regime == "weak" else 1.0)
+                equity_before = cash + self._positions_value(ledger, dfs, curr_dt)
+                alloc = min(cash, equity_before * alloc_cap)
+                reference_price = float(bar["open"])
+                buy_price = round(reference_price * (1 + self.slippage), 4)
+                requested_qty = int(alloc / buy_price) // self.lot_size * self.lot_size
+                decision = self.execution.decide(
+                    side="buy",
+                    requested_quantity=requested_qty,
+                    price=buy_price,
+                    bar=bar,
+                    previous_close=self._previous_close(dfs[sym], curr_dt),
+                    limit_pct=self._limit_pct(sym),
+                )
+                self._append_trade(trades, sym, current_date, "prior_close_strong_signal", decision)
+                if decision.fill_status == "rejected":
+                    warnings.append(f"{current_date} {sym} entry blocked: {decision.reject_reason}")
+                    continue
+                total_cost = decision.price * decision.filled_quantity + decision.fee
+                if total_cost > cash:
+                    continue
+                cash -= total_cost
+                ledger.buy(sym, decision.filled_quantity, decision.price, current_date, decision.fee)
+                sellable[sym] = 0
+
             candidates = []
             for sym, df in dfs.items():
                 if curr_dt not in df.index or ledger.quantity(sym) > 0:
@@ -137,39 +178,23 @@ class BacktestEngine:
                 if decision.blocked:
                     rejected_count += 1
                 elif decision.tier == CandidateTier.strong:
-                    candidates.append((sym, decision.score, snapshot, dict(bar)))
+                    candidates.append(
+                        (
+                            sym,
+                            decision.score,
+                            snapshot,
+                            {**dict(bar), "signal_regime": regime},
+                        )
+                    )
 
             candidates.sort(key=lambda item: item[1], reverse=True)
             if regime == "extreme_risk":
                 blocked_by_regime_count += len(candidates)
                 candidates = []
-
-            for sym, _, snapshot, bar in candidates:
-                if ledger.open_position_count() >= max_positions:
-                    break
-                alloc_cap = per_symbol_cap * (0.5 if regime == "weak" else 1.0)
-                equity_before = cash + self._positions_value(ledger, dfs, curr_dt)
-                alloc = min(cash, equity_before * alloc_cap)
-                buy_price = round(snapshot.close * (1 + self.slippage), 4)
-                requested_qty = int(alloc / buy_price) // self.lot_size * self.lot_size
-                decision = self.execution.decide(
-                    side="buy",
-                    requested_quantity=requested_qty,
-                    price=buy_price,
-                    bar=bar,
-                    previous_close=float(snapshot.metadata["previous_close"]),
-                    limit_pct=float(snapshot.metadata["limit_up_threshold"]),
-                )
-                self._append_trade(trades, sym, current_date, "strong_signal", decision)
-                if decision.fill_status == "rejected":
-                    warnings.append(f"{current_date} {sym} entry rejected: {decision.reject_reason}")
-                    continue
-                total_cost = decision.price * decision.filled_quantity + decision.fee
-                if total_cost > cash:
-                    continue
-                cash -= total_cost
-                ledger.buy(sym, decision.filled_quantity, decision.price, current_date, decision.fee)
-                sellable[sym] = 0
+            pending_symbols = {item[0] for item in candidates}
+            pending_candidates = [
+                item for item in deferred_candidates if item[0] not in pending_symbols
+            ] + candidates
 
             positions_value = self._positions_value(ledger, dfs, curr_dt)
             daily_equity.append(

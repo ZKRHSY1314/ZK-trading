@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "vue-tsc --noEmit",
     "build": "vue-tsc && vite build",
     "preview": "vite preview",
+    "smoke": "node scripts/smoke.mjs",
     "automation:browser": "node scripts/browser_control_adapter.mjs"
   },
   "dependencies": {

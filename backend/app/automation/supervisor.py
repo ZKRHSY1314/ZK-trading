@@ -1,14 +1,16 @@
-from datetime import datetime
+from datetime import date, datetime, time as clock_time
 from pathlib import Path
 from typing import Any
 from collections import Counter
 import json
 import time
 import uuid
+from zoneinfo import ZoneInfo
 
 from app.candidates.auto_discovery import AutoDiscoveryScanner
 from app.candidates.local_scanner import LocalCandidateScanner
 from app.config import settings
+from app.data.trading_calendar import trading_session_age
 from app.data.snapshot_builder import MarketDataError, MarketSnapshotBuilder
 from app.decision import DecisionAnalyzer
 from app.sim_cockpit.service import SimCockpitService
@@ -692,6 +694,24 @@ class AutomationSupervisor:
                 symbol = candidate["symbol"]
                 try:
                     snapshot = MarketSnapshotBuilder().build(symbol, candidate.get("name"))
+                    freshness = self._snapshot_freshness(snapshot)
+                    if not freshness["allowed"]:
+                        payload = {
+                            "reason": "stale_market_snapshot",
+                            "candidate": candidate,
+                            "market_data_freshness": freshness,
+                        }
+                        self._event(run_id, "plan_skipped", symbol, payload)
+                        processed.append(
+                            {
+                                "symbol": symbol,
+                                "status": "skipped",
+                                "reason": "stale_market_snapshot",
+                                "market_data_freshness": freshness,
+                            }
+                        )
+                        continue
+                    snapshot.metadata["freshness_gate"] = freshness
                     analysis = DecisionAnalyzer().analyze(snapshot)
                     plan = SimulationPlanner().create_plan(snapshot)
                 except (ValueError, MarketDataError) as exc:
@@ -904,6 +924,47 @@ class AutomationSupervisor:
         summary["duration_ms"] = int((time.perf_counter() - started_at) * 1000)
         self._finish_run(run_id, summary, status=overall_status)
         return {"run_id": run_id, "status": overall_status, "summary": summary}
+
+    @staticmethod
+    def _snapshot_freshness(
+        snapshot: Any,
+        *,
+        now: datetime | None = None,
+        trading_dates: list[date] | None = None,
+    ) -> dict[str, Any]:
+        current = now or datetime.now(ZoneInfo("Asia/Shanghai"))
+        trade_date = snapshot.trade_date
+        data_quality = str((snapshot.metadata or {}).get("data_quality") or "unknown")
+        if trade_date is None:
+            return {
+                "allowed": False,
+                "reason": "trade_date_missing",
+                "trade_date": None,
+                "data_quality": data_quality,
+            }
+        if trade_date > current.date():
+            return {
+                "allowed": False,
+                "reason": "future_trade_date",
+                "trade_date": trade_date.isoformat(),
+                "data_quality": data_quality,
+            }
+        session_age, calendar_source = trading_session_age(
+            trade_date,
+            current.date(),
+            exclude_target_session=current.time() <= clock_time(15, 0),
+            trading_dates=trading_dates,
+        )
+        allowed = session_age == 0 and data_quality != "fallback_profile"
+        return {
+            "allowed": allowed,
+            "reason": None if allowed else "stale_trade_session",
+            "trade_date": trade_date.isoformat(),
+            "target_date": current.date().isoformat(),
+            "trading_session_age": session_age,
+            "trading_calendar_source": calendar_source,
+            "data_quality": data_quality,
+        }
 
     def _risk_blocked_summary(self, processed: list[dict[str, Any]]) -> dict[str, Any]:
         rules = Counter()

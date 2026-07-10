@@ -355,7 +355,16 @@ def test_strategy_selection_v2_uses_public_opinion_sector_tailwind(test_db):
                 run_id,
                 json.dumps(["AI", "芯片"], ensure_ascii=False),
                 json.dumps(
-                    [{"title": "政策支持AI芯片算力建设", "score": 32}],
+                    [
+                        {
+                            "title": "政策支持AI芯片算力建设",
+                            "score": 32,
+                            "source_id": "csrc_policy",
+                            "source_tier": "official",
+                            "tags": ["policy", "positive"],
+                            "freshness_status": "fresh",
+                        }
+                    ],
                     ensure_ascii=False,
                 ),
             ),
@@ -367,6 +376,139 @@ def test_strategy_selection_v2_uses_public_opinion_sector_tailwind(test_db):
     assert result["public_opinion_context"]["top_sectors"][0]["sector"] == "ai_compute"
     assert item["features"]["public_opinion_tailwind"]["matched"] is True
     assert item["features"]["public_opinion_tailwind"]["sector"] == "ai_compute"
+    assert item["features"]["public_opinion_tailwind"]["official_policy_count"] == 1
     assert "PUBLIC_OPINION_SECTOR_TAILWIND" in item["raw_signals"]
     assert item["score_components"]["market_sector"] > 3
     assert item["allow_live_order"] is False
+
+
+def test_strategy_selection_v2_does_not_give_global_news_bonus_without_candidate_match(test_db):
+    _reset(test_db)
+    _insert_profile(
+        test_db,
+        "SZ301100",
+        "食品零售",
+        18,
+        pct_change=5.2,
+        pb=4.0,
+        market_cap_billion=90,
+    )
+    _insert_bars(test_db, "SZ301100", [12 + i * 0.02 for i in range(210)] + [18], last_volume_ratio=1.6)
+
+    baseline = StrategySelectionV2Service(store=test_db).run(mode="balanced", limit=20)
+    baseline_item = _item(baseline, "SZ301100")
+
+    with test_db.connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO public_opinion_runs(
+                status, source_count, item_count, sector_count,
+                summary_json, review_only, simulation_only, live_trading_enabled
+            )
+            VALUES ('completed', 2, 2, 1, '{}', 1, 1, 0)
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO public_opinion_sector_signals(
+                run_id, sector, heat_score, item_count, positive_count,
+                policy_count, market_count, risk_count, keywords_json,
+                evidence_json, suggested_action
+            )
+            VALUES (?, 'ai_compute', 72, 2, 2, 1, 1, 0, ?, '[]', 'sector_watch_review_only')
+            """,
+            (cursor.lastrowid, json.dumps(["AI", "芯片"], ensure_ascii=False)),
+        )
+
+    with_news = StrategySelectionV2Service(store=test_db).run(mode="balanced", limit=20)
+    news_item = _item(with_news, "SZ301100")
+
+    assert news_item["features"]["public_opinion_tailwind"]["matched"] is False
+    assert news_item["features"]["public_opinion_tailwind"]["score_effect"] == "none_without_candidate_sector_match"
+    assert news_item["score_components"]["market_sector"] == baseline_item["score_components"]["market_sector"]
+
+
+def test_strategy_selection_v2_ascii_keyword_requires_token_boundary(test_db):
+    service = StrategySelectionV2Service(store=test_db)
+
+    assert service._candidate_keyword_match("ai 芯片设备", "AI") is True
+    assert service._candidate_keyword_match("external_discovery_failed_review_only", "AI") is False
+
+
+def test_strategy_selection_v2_blocks_stale_production_bars(test_db):
+    _reset(test_db)
+    _insert_profile(test_db, "SH600099", "生产候选", 12.0, pct_change=2.0)
+    _insert_bars(test_db, "SH600099", [10.0 + index * 0.01 for index in range(30)])
+    with test_db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE stock_profiles
+            SET dataset_name = 'production', source_file = 'market_import.csv'
+            WHERE symbol = 'SH600099'
+            """
+        )
+
+    result = StrategySelectionV2Service(store=test_db).run(
+        mode="balanced",
+        limit=20,
+        as_of_date="2026-07-10",
+    )
+    item = _item(result, "SH600099")
+
+    assert "HF007_STALE_MARKET_DATA" in item["hard_blocks"]
+    assert item["plan_type"] == "REJECT_HARD"
+
+
+def test_strategy_selection_v2_ignores_stale_realtime_and_profile_prices(test_db):
+    _reset(test_db)
+    closes = [10.0 + index * 0.1 for index in range(30)]
+    _insert_profile(test_db, "SZ300099", "价格时效测试", 88.0, pct_change=9.0)
+    _insert_bars(test_db, "SZ300099", closes)
+    with test_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO realtime_market_events(
+                symbol, name, price, source, provider_status, event_ts, received_ts,
+                quality_status, payload_json, dedupe_key
+            ) VALUES (
+                'SZ300099', '价格时效测试', 99, 'pytest', 'ok',
+                '2020-01-01T10:00:00+08:00', '2020-01-01T10:00:01+08:00',
+                'realtime_ok', '{}', 'stale-price-fixture'
+            )
+            """
+        )
+
+    result = StrategySelectionV2Service(store=test_db).run(mode="balanced", limit=20)
+    item = _item(result, "SZ300099")
+
+    assert item["features"]["price"] == closes[-1]
+    assert item["features"]["price_source"] == "daily_bar_cache"
+    assert item["features"]["realtime_freshness"]["status"] == "stale_date"
+
+
+def test_strategy_selection_v2_global_rank_keeps_high_score_from_later_source(test_db):
+    _reset(test_db)
+    with test_db.connect() as conn:
+        for index in range(10):
+            conn.execute(
+                """
+                INSERT INTO candidate_lifecycle(symbol, name, state, score, source, raw_json)
+                VALUES (?, ?, 'pending_review', 1, 'lifecycle', '{}')
+                """,
+                (f"SH6001{index:02d}", f"low-{index}"),
+            )
+        conn.execute(
+            """
+            INSERT INTO candidate_scores(
+                symbol, name, total_score, rating, state, source,
+                reasons_json, components_json, raw_json
+            ) VALUES (
+                'SZ300888', 'high-score', 99, 'focus', 'pending_review',
+                'candidate_score', '[]', '{}', '{}'
+            )
+            """
+        )
+
+    universe = StrategySelectionV2Service(store=test_db).candidate_universe(limit=5)
+
+    assert "SZ300888" in universe

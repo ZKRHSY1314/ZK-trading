@@ -1,6 +1,6 @@
 # A股 AI 自动化交易系统
 
-这是第一版项目骨架，目标是先完成“AI 盘中监控 + 严格模拟交易 + 人工确认 + 复盘学习”，暂不接入实盘自动下单。
+这是一个本地优先的 A 股研究、模拟、监控和复盘驾驶舱。当前主运行路径由 Control Plane 统一编排 Market Pulse、模拟周期、训练反馈和候选判断；不接入实盘自动下单。
 
 这是 `ZK-trading` 仓库中的 A股交易软件项目。
 
@@ -13,7 +13,7 @@
 - 策略方式：可配置规则引擎，网页可开关和调参，文件可版本管理。
 - 决策顺序：交易铁律 > 风控 > 策略规则 > 案例相似度 > AI解释。
 - 模拟交易：严格模拟 A股 T+1、涨跌停、集合竞价、手续费、印花税、100股最小交易单位。
-- AI学习：AI 可自动调整策略权重，但只能作用于模拟盘评分，必须经过回测/模拟指标验证。
+- AI学习：系统自动抽取样本、按未来行情标注结果并生成表现汇总；不会自动改写或启用生产评分规则。
 - 实盘按钮：第一版仅显示禁用占位。
 
 ## 目录
@@ -22,51 +22,77 @@
 - `docs/TECHNICAL_ROADMAP.md`：分阶段技术路线。
 - `docs/RISK_BOUNDARIES.md`：风控和权限边界。
 - `docs/AUTOMATION_CONTROL.md`：自动化运行文档。
+- `docs/CONTROL_PLANE.md`：统一运行栈、调度和训练反馈说明。
 - `docs/RELEASE_CHECKLIST.md`：发版自检清单。
 - `backend/`：FastAPI 后端骨架。
 - `frontend/`：Vue 控制台骨架。
 
-## 首次安装与运行 (Demo Mode)
+## 首次安装与运行
 
 本项目支持在没有私有数据集 `数据集1` 的情况下，使用内置的 Demo 种子数据进行运行体验。
 
-1. **后端安装与运行**
+依赖已安装时，在仓库根目录一键启动后端、前端和 review-only worker：
 
 ```powershell
-cd C:\Users\lenovo\Desktop\A股记录\ai_trading_system\backend
+cd D:\codex-A股交易
+.\scripts\run_stack.ps1
+```
+
+启动脚本会固定使用仓库根目录的 `trading_local.sqlite3`，强制设置 `ENABLE_LIVE_TRADING=false`，并启动每 4 小时一次的只读 Codex Market Pulse 搜索。若只想运行固定来源抓取，可使用 `.\scripts\run_stack.ps1 -EnableCodexSearch:$false`。启动后检查：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/readyz
+Invoke-RestMethod http://127.0.0.1:8000/api/control-plane/status
+```
+
+- 控制台：`http://127.0.0.1:3000`
+- API 文档：`http://127.0.0.1:8000/docs`
+- worker 心跳：`backend/logs/control_plane_heartbeat.json`
+- Codex 搜索心跳：`backend/logs/codex_market_pulse_heartbeat.json`
+
+停止整套进程：
+
+```powershell
+.\scripts\stop_stack.ps1
+```
+
+停止脚本会校验 PID、可执行文件、完整命令行和进程创建时间；无法确认身份时只报告 `attention`，不会终止进程。Control Plane 还会检查日线日期、OHLC/质量状态和最新横截面覆盖率；行情过期或覆盖不足时跳过模拟周期与候选判断。
+
+需要手工安装时：
+
+```powershell
+cd D:\codex-A股交易\backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .
+pip install -e ".[dev]"
 
 # 导入种子数据（无私有数据时将自动使用 demo_seed）
 python -X utf8 scripts\import_legacy_data.py
 
 # 启动后端
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
-API 健康检查：`http://127.0.0.1:8000/health`
-API 文档：`http://127.0.0.1:8000/docs`
 
-2. **前端安装与运行**
+另一个终端启动前端：
 
 ```powershell
-cd C:\Users\lenovo\Desktop\A股记录\ai_trading_system\frontend
-npm install
+cd D:\codex-A股交易\frontend
+npm ci
 npm run dev
 ```
-前端访问地址详见终端输出（通常为 `http://127.0.0.1:3000` 或 `http://localhost:5173`）。
 
 ## 导入交易知识库
 
 ```powershell
-cd C:\Users\lenovo\Desktop\A股记录\ai_trading_system\backend
+cd D:\codex-A股交易\backend
 .\.venv\Scripts\Activate.ps1
 python -X utf8 scripts\import_legacy_data.py
 ```
 
 导入结果会写入：
 
-- `backend/trading_local.sqlite3`
+- `trading_local.sqlite3`（仓库根目录，唯一权威运行库）
 
 当前导入内容包括：
 

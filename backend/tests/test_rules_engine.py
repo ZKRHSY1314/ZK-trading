@@ -1,6 +1,6 @@
-import pytest
 from app.models import MarketSnapshot, CandidateTier
 from app.rules.engine import RuleEngine
+from app.rules.loader import load_rule_config
 
 def test_constitution_rules_score_zero():
     config = {
@@ -120,4 +120,50 @@ def test_low_quality_data_caps_strong_candidate_at_watch():
     )
 
     assert decision.score == 100.0
+    assert decision.tier == CandidateTier.watch
+
+
+def test_default_rules_normalize_enabled_strategy_weights_to_reachable_strong():
+    decision = RuleEngine(load_rule_config()).evaluate(
+        MarketSnapshot(
+            symbol="SH600000",
+            price=10.0,
+            pct_change=10.0,
+            pb=3.0,
+            market_cap_billion=100.0,
+            historical_high=30.0,
+            metadata={
+                "high_250": 30.0,
+                "volume_ratio": 2.0,
+                "five_day_pct": 10.0,
+            },
+        )
+    )
+
+    assert decision.raw_score == 45.0
+    assert decision.max_score == 45.0
+    assert decision.score == 100.0
+    assert decision.tier == CandidateTier.strong
+
+
+def test_failed_soft_risk_rule_cannot_produce_strong_candidate():
+    decision = RuleEngine(load_rule_config()).evaluate(
+        MarketSnapshot(
+            symbol="SH600000",
+            price=10.0,
+            pct_change=10.0,
+            pb=3.0,
+            market_cap_billion=100.0,
+            historical_high=30.0,
+            metadata={
+                "high_250": 30.0,
+                "volume_ratio": 2.0,
+                "five_day_pct": 25.0,
+            },
+        )
+    )
+
+    assert decision.score == 100.0
+    assert decision.soft_risk_failed is True
+    assert decision.blocked is False
     assert decision.tier == CandidateTier.watch

@@ -15,8 +15,19 @@ def test_high_risk_frontend_labels_are_readable_chinese():
         "市场概览",
         "五档行情",
         "Release Gate",
+        "Market Pulse",
+        "立即捕捉",
+        "运行控制平面",
+        'data-testid="public-opinion-capture-button"',
+        'data-testid="control-plane-run-button"',
+        'data-testid="control-plane-status"',
+        "/api/public-opinion/context/latest?limit=8",
+        "/api/public-opinion/runs/latest",
+        "/api/control-plane/run-once",
     ]:
         assert text in source
+
+    assert "资金流、板块热图和资讯源等待下一步接入" not in source
 
     for mojibake in [
         "鐎圭偟娲忕粋浣烘暏",
@@ -28,3 +39,27 @@ def test_high_risk_frontend_labels_are_readable_chinese():
         "鍒锋柊璇婃柇",
     ]:
         assert mojibake not in source
+
+
+def test_browser_adapter_targets_the_mounted_trading_dashboard():
+    project_root = Path(__file__).resolve().parents[2]
+    adapter = (project_root / "frontend" / "scripts" / "browser_control_adapter.mjs").read_text(
+        encoding="utf-8"
+    )
+
+    for selector in [
+        "trading-dashboard",
+        "live-trading-disabled-button",
+        "public-opinion-capture-button",
+        "control-plane-run-button",
+        "control-plane-status",
+        "public-opinion-news",
+    ]:
+        assert selector in adapter
+    for legacy_selector in [
+        "local-scan-button",
+        "automation-run-button",
+        "simulation-plan-button",
+    ]:
+        assert legacy_selector not in adapter
+    assert "live_trading_enabled !== false" in adapter

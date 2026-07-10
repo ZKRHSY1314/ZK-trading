@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import date, datetime
+from datetime import date, datetime, time
 import json
 from pathlib import Path
+import re
 from statistics import mean
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 
 from app.config import PROJECT_ROOT, settings
+from app.data.trading_calendar import trading_session_age
 from app.public_opinion.service import CodexPublicOpinionService
 from app.storage.sqlite_store import SQLiteStore
 
@@ -162,6 +165,14 @@ class StrategySelectionV2Service:
         (out_dir / "daily_summary.md").write_text(result["daily_summary_md"], encoding="utf-8")
         return out_dir
 
+    def candidate_universe(self, limit: int = 30) -> list[str]:
+        rows = self._candidate_rows(limit=max(1, min(int(limit), 500)))
+        return [
+            symbol
+            for symbol in (self._normalize_symbol(row.get("symbol")) for row in rows)
+            if symbol
+        ]
+
     def _candidate_rows(self, *, limit: int) -> list[dict[str, Any]]:
         by_symbol: dict[str, dict[str, Any]] = {}
 
@@ -179,6 +190,9 @@ class StrategySelectionV2Service:
                 continue
             merged = by_symbol.setdefault(symbol, {"symbol": symbol})
             merged.setdefault("_evidence_sources", []).append("candidate_lifecycle")
+            merged.setdefault("_source_scores", {})["candidate_lifecycle"] = self._float(
+                row.get("score")
+            ) or 0.0
             merged.update({k: v for k, v in row.items() if v is not None})
             merged["symbol"] = symbol
             merged["lifecycle_raw"] = self._json(row.get("raw_json"))
@@ -201,6 +215,9 @@ class StrategySelectionV2Service:
                 continue
             merged = by_symbol.setdefault(symbol, {"symbol": symbol})
             merged.setdefault("_evidence_sources", []).append("stock_profiles")
+            merged.setdefault("_source_scores", {})["stock_profiles"] = self._float(
+                row.get("score")
+            ) or 0.0
             for key, value in row.items():
                 if value is not None or key not in merged:
                     merged[key] = value
@@ -222,6 +239,9 @@ class StrategySelectionV2Service:
                 continue
             merged = by_symbol.setdefault(symbol, {"symbol": symbol})
             merged.setdefault("_evidence_sources", []).append("auto_discovered_candidates")
+            merged.setdefault("_source_scores", {})["auto_discovered_candidates"] = self._float(
+                row.get("priority")
+            ) or 0.0
             merged.update({k: v for k, v in row.items() if v is not None})
             merged["symbol"] = symbol
             merged["auto_discovery"] = {
@@ -255,6 +275,9 @@ class StrategySelectionV2Service:
                 continue
             merged = by_symbol.setdefault(symbol, {"symbol": symbol})
             merged.setdefault("_evidence_sources", []).append("potential_search_items")
+            merged.setdefault("_source_scores", {})["potential_search_items"] = self._float(
+                row.get("score")
+            ) or 0.0
             for key, value in row.items():
                 if value is not None:
                     merged[key] = value
@@ -292,6 +315,9 @@ class StrategySelectionV2Service:
                 continue
             merged = by_symbol.setdefault(symbol, {"symbol": symbol})
             merged.setdefault("_evidence_sources", []).append("candidate_scores")
+            merged.setdefault("_source_scores", {})["candidate_scores"] = self._float(
+                row.get("score")
+            ) or 0.0
             for key, value in row.items():
                 if value is not None and (key not in merged or merged.get(key) is None):
                     merged[key] = value
@@ -314,7 +340,23 @@ class StrategySelectionV2Service:
         if has_real_evidence:
             rows = [row for row in rows if not self._unit_test_only(row)]
         for row in rows:
+            row["_fixture_only"] = self._unit_test_only(row)
+            source_scores = row.pop("_source_scores", {})
+            row["universe_rank_score"] = max(
+                (float(value or 0) for value in source_scores.values()),
+                default=0.0,
+            )
+            row["universe_rank_sources"] = source_scores
             row["evidence_sources"] = list(dict.fromkeys(row.pop("_evidence_sources", [])))
+        rows.sort(
+            key=lambda row: (
+                float(row.get("universe_rank_score") or 0),
+                str(row.get("updated_at") or row.get("created_at") or ""),
+                len(row.get("evidence_sources") or []),
+                str(row.get("symbol") or ""),
+            ),
+            reverse=True,
+        )
         return rows[:limit]
 
     def _split_rows_by_market_basis(
@@ -419,6 +461,10 @@ class StrategySelectionV2Service:
         source_file = str(row.get("source_file") or "").lower()
         return dataset_name == "unit_test" or source_file.startswith("test_")
 
+    @staticmethod
+    def _fixture_market_data_allowed(row: dict[str, Any]) -> bool:
+        return row.get("_fixture_only") is True
+
     def _evaluate_candidate(
         self,
         row: dict[str, Any],
@@ -430,7 +476,13 @@ class StrategySelectionV2Service:
         symbol = self._normalize_symbol(row.get("symbol")) or str(row.get("symbol") or "")
         bars = self._daily_bars(symbol)
         realtime = self._latest_realtime(symbol)
-        features = self._features(row, bars, realtime, public_opinion_context)
+        features = self._features(
+            row,
+            bars,
+            realtime,
+            public_opinion_context,
+            run_date=run_date,
+        )
         hard_blocks = self._hard_blocks(row, features)
         position_class = self._position_class(features)
         strategies = self._strategy_candidates(row, features, position_class)
@@ -474,6 +526,8 @@ class StrategySelectionV2Service:
         bars: list[dict[str, Any]],
         realtime: dict[str, Any] | None,
         public_opinion_context: dict[str, Any],
+        *,
+        run_date: str,
     ) -> dict[str, Any]:
         closes = [self._float(bar.get("close")) for bar in bars]
         highs = [self._float(bar.get("high")) for bar in bars]
@@ -486,15 +540,38 @@ class StrategySelectionV2Service:
         volumes = [value for value in volumes if value is not None]
         amounts = [value for value in amounts if value is not None]
 
-        realtime_price = self._float((realtime or {}).get("price"))
+        realtime_freshness = self._realtime_freshness(realtime, run_date)
+        usable_realtime = realtime if realtime_freshness["fresh"] else None
+        realtime_price = self._float((usable_realtime or {}).get("price"))
         latest_bar = bars[-1] if bars else {}
+        row_snapshot_freshness = self._candidate_snapshot_freshness(row, run_date)
+        row_snapshot_fresh = row_snapshot_freshness["fresh"]
+        row_snapshot_price = (
+            self._float(row.get("current_price") or row.get("price"))
+            if row_snapshot_fresh
+            else None
+        )
         price = (
             realtime_price
-            or self._float(row.get("current_price"))
+            or row_snapshot_price
             or self._float(latest_bar.get("close"))
+            or self._float(row.get("current_price"))
             or self._float(row.get("price"))
         )
-        pct_change = self._float(row.get("pct_change")) or self._pct_change_from_bars(bars)
+        pct_change = (
+            self._float(row.get("pct_change"))
+            if row_snapshot_fresh
+            else self._pct_change_from_bars(bars) or self._float(row.get("pct_change"))
+        )
+        price_source = (
+            "fresh_realtime"
+            if realtime_price is not None
+            else "same_day_candidate_snapshot"
+            if row_snapshot_price is not None
+            else "daily_bar_cache"
+            if latest_bar
+            else "stale_profile_fallback"
+        )
         high_250 = max(highs[-250:]) if highs else None
         low_250 = min(lows[-250:]) if lows else None
         high_500 = max(highs[-500:]) if highs else high_250
@@ -561,9 +638,15 @@ class StrategySelectionV2Service:
             row,
             public_opinion_context,
         )
+        market_data = self._market_data_freshness(
+            bars,
+            run_date,
+            fixture=self._fixture_market_data_allowed(row),
+        )
         return {
             "bars_count": len(bars),
             "price": price,
+            "price_source": price_source,
             "pct_change": pct_change,
             "pb": pb,
             "market_cap_billion": market_cap,
@@ -588,9 +671,12 @@ class StrategySelectionV2Service:
             "target_price": target_price,
             "cost_line_near": cost_line_near,
             "a_kill_repair": a_kill_repair,
-            "latest_realtime": realtime,
+            "latest_realtime": usable_realtime,
+            "realtime_freshness": realtime_freshness,
+            "candidate_snapshot_freshness": row_snapshot_freshness,
             "public_opinion_tailwind": public_opinion_tailwind,
-            "data_quality": self._data_quality(bars, realtime, price),
+            "data_quality": self._data_quality(bars, usable_realtime, price),
+            "market_data": market_data,
         }
 
     def _hard_blocks(self, row: dict[str, Any], features: dict[str, Any]) -> list[str]:
@@ -607,6 +693,8 @@ class StrategySelectionV2Service:
             blocks.append("HF004_INVALID_DATA")
         if features.get("pct_change") is not None and features["pct_change"] <= -9.8:
             blocks.append("HF006_UNTRADEABLE_LIMIT_DOWN")
+        if not (features.get("market_data") or {}).get("fresh", False):
+            blocks.append("HF007_STALE_MARKET_DATA")
         return blocks
 
     def _position_class(self, features: dict[str, Any]) -> str:
@@ -671,10 +759,24 @@ class StrategySelectionV2Service:
         public_opinion_tailwind = features.get("public_opinion_tailwind") or {}
         public_opinion_bonus = 0.0
         if public_opinion_tailwind.get("matched"):
-            if public_opinion_tailwind.get("suggested_action") != "risk_review_only":
+            if (
+                int(public_opinion_tailwind.get("fresh_positive_count") or 0) > 0
+                and int(public_opinion_tailwind.get("fresh_risk_count") or 0) == 0
+                and (
+                    int(
+                        public_opinion_tailwind.get(
+                            "fresh_official_positive_policy_count"
+                        )
+                        or 0
+                    )
+                    >= 1
+                    or int(public_opinion_tailwind.get("fresh_positive_source_count") or 0)
+                    >= 2
+                )
+                and public_opinion_tailwind.get("suggested_action")
+                not in {"risk_review_only", "mixed_review_only"}
+            ):
                 public_opinion_bonus = min(4.0, float(public_opinion_tailwind.get("heat_score") or 0) / 12.0)
-        elif public_opinion_tailwind.get("top_sector_count"):
-            public_opinion_bonus = min(1.0, float(public_opinion_tailwind.get("top_sector_count") or 0) * 0.2)
         components["market_sector"] = min(
             weights["market_sector"],
             3.0 + (2.0 if "STRATEGY_005" in strategies else 0.0) + public_opinion_bonus,
@@ -807,9 +909,27 @@ class StrategySelectionV2Service:
         best: dict[str, Any] | None = None
         best_score = -1.0
         for sector in sectors:
+            fresh_item_count = int(sector.get("fresh_item_count") or 0)
+            independent_source_count = int(sector.get("independent_source_count") or 0)
+            fresh_independent_source_count = int(
+                sector.get("fresh_independent_source_count") or 0
+            )
+            policy_count = int(sector.get("policy_count") or 0)
+            official_policy_count = int(sector.get("official_policy_count") or 0)
+            fresh_official_policy_count = int(
+                sector.get("fresh_official_policy_count") or 0
+            )
+            confidence_ok = fresh_item_count > 0 and (
+                fresh_independent_source_count >= 2
+                or fresh_official_policy_count >= 1
+            )
+            if not confidence_ok:
+                continue
             keywords = [str(keyword) for keyword in sector.get("keywords") or []]
             matched_keywords = [
-                keyword for keyword in keywords if keyword and keyword.lower() in candidate_text
+                keyword
+                for keyword in keywords
+                if keyword and self._candidate_keyword_match(candidate_text, keyword)
             ]
             if not matched_keywords:
                 continue
@@ -825,6 +945,22 @@ class StrategySelectionV2Service:
                     "display_name": sector.get("display_name"),
                     "heat_score": heat_score,
                     "item_count": sector.get("item_count"),
+                    "fresh_item_count": fresh_item_count,
+                    "independent_source_count": independent_source_count,
+                    "fresh_independent_source_count": fresh_independent_source_count,
+                    "policy_count": policy_count,
+                    "official_policy_count": official_policy_count,
+                    "fresh_official_policy_count": fresh_official_policy_count,
+                    "fresh_official_positive_policy_count": int(
+                        sector.get("fresh_official_positive_policy_count") or 0
+                    ),
+                    "positive_count": int(sector.get("positive_count") or 0),
+                    "risk_count": int(sector.get("risk_count") or 0),
+                    "fresh_positive_count": int(sector.get("fresh_positive_count") or 0),
+                    "fresh_risk_count": int(sector.get("fresh_risk_count") or 0),
+                    "fresh_positive_source_count": int(
+                        sector.get("fresh_positive_source_count") or 0
+                    ),
                     "suggested_action": sector.get("suggested_action"),
                     "matched_keywords": matched_keywords,
                     "evidence": list(sector.get("evidence") or [])[:3],
@@ -839,6 +975,8 @@ class StrategySelectionV2Service:
             "context_status": context.get("status"),
             "run_id": context.get("run_id"),
             "top_sector_count": len(sectors),
+            "score_effect": "none_without_candidate_sector_match",
+            "confidence_gate": "requires_fresh_and_two_sources_or_official_policy",
             "top_sectors": [
                 {
                     "sector": sector.get("sector"),
@@ -848,6 +986,20 @@ class StrategySelectionV2Service:
                 for sector in sectors[:3]
             ],
         }
+
+    @staticmethod
+    def _candidate_keyword_match(candidate_text: str, keyword: str) -> bool:
+        normalized = keyword.strip().lower()
+        if not normalized:
+            return False
+        if re.fullmatch(r"[a-z0-9.+-]+", normalized):
+            return bool(
+                re.search(
+                    rf"(?<![a-z0-9]){re.escape(normalized)}(?![a-z0-9])",
+                    candidate_text,
+                )
+            )
+        return normalized in candidate_text
 
     def _risk_flags(
         self,
@@ -898,7 +1050,8 @@ class StrategySelectionV2Service:
         public_opinion_tailwind = features.get("public_opinion_tailwind") or {}
         if (
             public_opinion_tailwind.get("matched")
-            and public_opinion_tailwind.get("suggested_action") == "risk_review_only"
+            and public_opinion_tailwind.get("suggested_action")
+            in {"risk_review_only", "mixed_review_only"}
         ):
             add("SECTOR_RETREAT", 0.5)
         return list(dict.fromkeys(flags)), round(min(35.0, penalty), 2)
@@ -1089,7 +1242,10 @@ class StrategySelectionV2Service:
             """
             SELECT trade_date, open, high, low, close, volume, amount, source, quality_status, updated_at
             FROM daily_bar_cache
-            WHERE symbol = ? AND trade_date != 'ERROR'
+            WHERE symbol = ?
+              AND trade_date != 'ERROR'
+              AND open > 0 AND high > 0 AND low > 0 AND close > 0
+              AND (quality_status IS NULL OR LOWER(quality_status) IN ('ready', 'ok', 'valid'))
             ORDER BY trade_date ASC
             """,
             (symbol,),
@@ -1213,6 +1369,142 @@ class StrategySelectionV2Service:
         if bars:
             return "daily_bar_cache"
         return "profile_or_partial"
+
+    @staticmethod
+    def _market_data_freshness(
+        bars: list[dict[str, Any]],
+        run_date: str,
+        *,
+        fixture: bool,
+    ) -> dict[str, Any]:
+        latest_value = (bars[-1] if bars else {}).get("trade_date")
+        if not latest_value:
+            return {
+                "fresh": False,
+                "status": "missing",
+                "latest_trade_date": None,
+                "business_session_age": None,
+            }
+        if fixture:
+            return {
+                "fresh": True,
+                "status": "fixture",
+                "latest_trade_date": str(latest_value),
+                "business_session_age": 0,
+            }
+        try:
+            latest_date = date.fromisoformat(str(latest_value)[:10])
+            target_date = date.fromisoformat(str(run_date)[:10])
+        except ValueError:
+            return {
+                "fresh": False,
+                "status": "invalid",
+                "latest_trade_date": str(latest_value),
+                "business_session_age": None,
+            }
+        if latest_date > target_date:
+            return {
+                "fresh": False,
+                "status": "future",
+                "latest_trade_date": latest_date.isoformat(),
+                "business_session_age": 0,
+            }
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        allow_previous_session = (
+            target_date == now.date()
+            and now.time() <= time(15, 0)
+        )
+        business_age, calendar_source = trading_session_age(
+            latest_date,
+            target_date,
+            exclude_target_session=allow_previous_session,
+        )
+        fresh = business_age == 0
+        return {
+            "fresh": fresh,
+            "status": "fresh" if fresh else "stale",
+            "latest_trade_date": latest_date.isoformat(),
+            "business_session_age": business_age,
+            "trading_calendar_source": calendar_source,
+        }
+
+    @staticmethod
+    def _realtime_freshness(
+        realtime: dict[str, Any] | None,
+        run_date: str,
+    ) -> dict[str, Any]:
+        if not realtime:
+            return {"fresh": False, "status": "missing", "age_minutes": None}
+        raw_timestamp = realtime.get("event_ts") or realtime.get("received_ts")
+        if not raw_timestamp:
+            return {"fresh": False, "status": "missing_timestamp", "age_minutes": None}
+        try:
+            parsed = datetime.fromisoformat(str(raw_timestamp).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+            local_timestamp = parsed.astimezone(ZoneInfo("Asia/Shanghai"))
+            target_date = date.fromisoformat(str(run_date)[:10])
+        except ValueError:
+            return {"fresh": False, "status": "invalid_timestamp", "age_minutes": None}
+        if local_timestamp.date() != target_date:
+            return {
+                "fresh": False,
+                "status": "stale_date",
+                "event_ts": local_timestamp.isoformat(),
+                "age_minutes": None,
+            }
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        if target_date != now.date():
+            return {
+                "fresh": True,
+                "status": "historical_same_day",
+                "event_ts": local_timestamp.isoformat(),
+                "age_minutes": None,
+            }
+        age_minutes = (now - local_timestamp).total_seconds() / 60
+        fresh = -5 <= age_minutes <= 30
+        return {
+            "fresh": fresh,
+            "status": "fresh" if fresh else "stale_age",
+            "event_ts": local_timestamp.isoformat(),
+            "age_minutes": round(age_minutes, 2),
+        }
+
+    @staticmethod
+    def _candidate_snapshot_freshness(
+        row: dict[str, Any],
+        run_date: str,
+    ) -> dict[str, Any]:
+        trade_date = str(row.get("trade_date") or "")[:10]
+        target_date = str(run_date)[:10]
+        if not trade_date or trade_date != target_date:
+            return {"fresh": False, "status": "date_mismatch", "age_minutes": None}
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        try:
+            target = date.fromisoformat(target_date)
+        except ValueError:
+            return {"fresh": False, "status": "invalid_date", "age_minutes": None}
+        if target != now.date():
+            return {"fresh": True, "status": "historical_same_day", "age_minutes": None}
+        if now.time() > time(15, 0):
+            return {"fresh": False, "status": "after_close", "age_minutes": None}
+        raw_timestamp = row.get("updated_at") or row.get("created_at")
+        if not raw_timestamp:
+            return {"fresh": False, "status": "missing_timestamp", "age_minutes": None}
+        try:
+            parsed = datetime.fromisoformat(str(raw_timestamp).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+            local_timestamp = parsed.astimezone(ZoneInfo("Asia/Shanghai"))
+        except ValueError:
+            return {"fresh": False, "status": "invalid_timestamp", "age_minutes": None}
+        age_minutes = (now - local_timestamp).total_seconds() / 60
+        fresh = -5 <= age_minutes <= 30
+        return {
+            "fresh": fresh,
+            "status": "fresh" if fresh else "stale_age",
+            "age_minutes": round(age_minutes, 2),
+        }
 
     def _write_json(self, path: Path, payload: Any) -> None:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")

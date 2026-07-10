@@ -1,5 +1,24 @@
 # 自动化控制方案
 
+## 当前主入口：Control Plane
+
+旧的 `automation_loop.py` 模式继续保留兼容性；新的常驻运行、语义状态、舆情调度和训练反馈统一从 Control Plane 进入：
+
+```powershell
+cd D:\codex-A股交易
+.\scripts\run_stack.ps1
+
+Invoke-RestMethod http://127.0.0.1:8000/api/control-plane/status
+Invoke-RestMethod -Method Post `
+  -ContentType "application/json" `
+  -Body '{"profile":"adaptive","limit":30}' `
+  http://127.0.0.1:8000/api/control-plane/run-once
+```
+
+Control Plane 固定执行以下语义链：Market Pulse → Simulation Cycle → Training Feedback → Decision Snapshot。调用成功不等于业务完成；每个步骤分别返回 `completed`、`partial`、`blocked` 或 `failed`。详见 [CONTROL_PLANE.md](CONTROL_PLANE.md)。
+
+Codex Market Pulse worker 通过只读、临时的 `codex exec` 网络研究生成结构化证据，再调用独立 evidence interface。固定网页抓取和 Codex 搜索是两个 Adapter：前者保证基础可用性，后者负责最新政策与跨来源核验。
+
 ## 当前阶段
 
 自动化进程先以“模拟优先”运行。它可以自动完成：

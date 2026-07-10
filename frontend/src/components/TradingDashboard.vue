@@ -19,7 +19,7 @@
           <span>Release Gate</span>
           <strong>{{ releaseGateStatus }}</strong>
         </div>
-        <div class="status-pill safe">
+        <div class="status-pill safe" data-testid="trading-safety-status">
           <span>交易权限</span>
           <strong>{{ healthStatus }}</strong>
         </div>
@@ -370,17 +370,17 @@
           <article class="card heatmap-card">
             <div class="card-title-row">
               <h2>行业板块热力图</h2>
-              <span class="muted">涨跌分布</span>
+              <span class="muted">Market Pulse · {{ publicOpinionStatusLabel }}</span>
             </div>
             <div class="heatmap">
               <button
                 v-for="sector in sectors"
                 :key="sector.name"
                 type="button"
-                :class="sector.pending ? 'heat-pending' : sector.change >= 0 ? 'heat-up' : 'heat-down'"
+                :class="sector.pending ? 'heat-pending' : sector.risk ? 'heat-down' : 'heat-up'"
               >
                 <strong>{{ sector.name }}</strong>
-                <span>{{ sector.pending ? "待接入" : formatChange(sector.change) }}</span>
+                <span>{{ sector.pending ? sector.label : `热度 ${sector.heatScore.toFixed(1)}` }}</span>
               </button>
             </div>
           </article>
@@ -388,15 +388,35 @@
           <article class="card news-card">
             <div class="card-title-row">
               <h2>资讯 / 信号</h2>
-              <div class="tabs compact">
-                <button type="button" class="active">资讯</button>
-                <button type="button">信号</button>
+              <div class="market-pulse-actions">
+                <span data-testid="control-plane-status" class="pulse-status">{{ controlPlaneStatus }}</span>
+                <button
+                  data-testid="control-plane-run-button"
+                  type="button"
+                  :disabled="controlPlaneLoading"
+                  @click="runControlPlane"
+                >
+                  {{ controlPlaneLoading ? "运行中" : "运行控制平面" }}
+                </button>
+                <button
+                  data-testid="public-opinion-capture-button"
+                  type="button"
+                  :disabled="publicOpinionCaptureLoading"
+                  @click="capturePublicOpinion"
+                >
+                  {{ publicOpinionCaptureLoading ? "捕捉中" : "立即捕捉" }}
+                </button>
               </div>
             </div>
             <div class="news-list">
-              <article v-for="item in news" :key="item.title">
+              <article
+                v-for="item in news"
+                :key="`${item.title}-${item.time}`"
+                data-testid="public-opinion-news"
+              >
                 <span>{{ item.tag }}</span>
-                <strong>{{ item.title }}</strong>
+                <a v-if="item.url" :href="item.url" target="_blank" rel="noreferrer">{{ item.title }}</a>
+                <strong v-else>{{ item.title }}</strong>
                 <em>{{ item.time }}</em>
               </article>
             </div>
@@ -518,6 +538,50 @@ type SimulationAccount = {
   positions: Array<{ symbol: string; quantity: number; avg_cost: number }>;
 };
 
+type PublicOpinionSector = {
+  sector: string;
+  display_name?: string;
+  heat_score?: number;
+  item_count?: number;
+  risk_count?: number;
+  suggested_action?: string;
+};
+
+type PublicOpinionContext = {
+  status: string;
+  run_status?: string;
+  freshness_status?: string;
+  context_age_hours?: number | null;
+  top_sectors?: PublicOpinionSector[];
+  last_known_top_sectors?: PublicOpinionSector[];
+  summary?: { quality_warnings?: string[] };
+};
+
+type PublicOpinionItem = {
+  title: string;
+  url?: string | null;
+  source_name?: string;
+  category?: string;
+  published_at?: string | null;
+  created_at?: string | null;
+  freshness_status?: string;
+  direction?: string;
+};
+
+type PublicOpinionRun = {
+  status: string;
+  items?: PublicOpinionItem[];
+  sector_signals?: PublicOpinionSector[];
+  completed_at?: string | null;
+};
+
+type ControlPlaneRunResult = {
+  status?: string;
+  run_id?: number | string;
+  next_action?: string;
+  summary?: { status?: string };
+};
+
 const navItems = [
   { label: "大盘", icon: "盘" },
   { label: "沪深", icon: "沪" },
@@ -555,6 +619,13 @@ const selectionV2 = ref<SelectionV2Result | null>(null);
 const dailyBars = ref<DailyBar[]>([]);
 const realtimeEvent = ref<RealtimeEvent | null>(null);
 const simulationAccount = ref<SimulationAccount | null>(null);
+const publicOpinionContext = ref<PublicOpinionContext | null>(null);
+const publicOpinionRun = ref<PublicOpinionRun | null>(null);
+const publicOpinionLoading = ref(true);
+const publicOpinionCaptureLoading = ref(false);
+const publicOpinionError = ref("");
+const controlPlaneLoading = ref(false);
+const controlPlaneStatus = ref("控制平面待运行");
 
 const watchlist = ref<Stock[]>([]);
 
@@ -615,26 +686,59 @@ const holdings = computed(() => {
   ];
 });
 
-const sectors = [
-  { name: "半导体", change: 0, pending: true },
-  { name: "电力设备", change: 0, pending: true },
-  { name: "医药生物", change: 0, pending: true },
-  { name: "银行", change: 0, pending: true },
-  { name: "食品饮料", change: 0, pending: true },
-  { name: "非银金融", change: 0, pending: true },
-  { name: "电子", change: 0, pending: true },
-  { name: "计算机", change: 0, pending: true },
-  { name: "汽车", change: 0, pending: true },
-  { name: "有色金属", change: 0, pending: true },
-  { name: "通信", change: 0, pending: true }
-];
+const publicOpinionStatusLabel = computed(() => {
+  if (publicOpinionCaptureLoading.value) return "正在捕捉";
+  if (publicOpinionLoading.value) return "加载中";
+  if (publicOpinionError.value) return "离线";
+  const status = publicOpinionContext.value?.status ?? "empty";
+  if (status === "stale") return "信号已过期";
+  if (status === "empty") return "暂无信号";
+  if (status === "partial") return "部分来源可用";
+  return "信号正常";
+});
 
-const news = [
-  { title: "V2评分已接入：硬风控、软评分、等待计划与拒绝跟踪", time: "今日", tag: "策略" },
-  { title: "K线已改为日线缓存驱动，缺失指数不再显示假数", time: "今日", tag: "数据" },
-  { title: "实盘入口保持禁用，模拟计划仍需人工确认", time: "今日", tag: "安全" },
-  { title: "资金流、板块热图和资讯源等待下一步接入", time: "待接入", tag: "数据" }
-];
+const sectors = computed(() => {
+  const context = publicOpinionContext.value;
+  const rows = context?.status === "stale"
+    ? context.last_known_top_sectors ?? []
+    : context?.top_sectors ?? [];
+  if (!rows.length) {
+    return [{ name: "暂无板块信号", heatScore: 0, pending: true, risk: false, label: publicOpinionStatusLabel.value }];
+  }
+  return rows.slice(0, 8).map((sector) => ({
+    name: sector.display_name || sector.sector,
+    heatScore: Number(sector.heat_score ?? 0),
+    pending: context?.status === "stale",
+    risk: sector.suggested_action === "risk_review_only" || Number(sector.risk_count ?? 0) > 0,
+    label: context?.status === "stale" ? "历史信号" : `${sector.item_count ?? 0} 条证据`
+  }));
+});
+
+const news = computed(() => {
+  if (publicOpinionLoading.value) {
+    return [{ title: "正在加载最新股市、政策与板块风向", time: "--", tag: "加载", url: null }];
+  }
+  if (publicOpinionError.value) {
+    return [{ title: `舆情模块离线：${publicOpinionError.value}`, time: "离线", tag: "状态", url: null }];
+  }
+  const items = publicOpinionRun.value?.items ?? [];
+  if (!items.length) {
+    return [{ title: "暂无已捕捉资讯，可点击“立即捕捉”运行 review-only 搜索", time: "暂无", tag: "状态", url: null }];
+  }
+  const stale = publicOpinionContext.value?.status === "stale";
+  return items.slice(0, 6).map((item) => ({
+    title: item.title,
+    time: formatNewsTime(item.published_at || item.created_at),
+    tag: stale
+      ? "已过期"
+      : item.direction === "negative"
+      ? "风险"
+      : item.category === "policy"
+      ? "政策"
+      : "市场",
+    url: item.url ?? null
+  }));
+});
 
 const filteredWatchlist = computed(() => {
   if (watchTab.value === "全部") return watchlist.value;
@@ -818,22 +922,109 @@ function buildDepth(side: "buy" | "sell") {
   });
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
   if (!response.ok) throw new Error(`${response.status} ${url}`);
   return response.json() as Promise<T>;
 }
 
+function formatNewsTime(value?: string | null) {
+  if (!value) return "时间未知";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "时间未知";
+  const ageMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+  if (ageMinutes < 60) return `${ageMinutes} 分钟前`;
+  if (ageMinutes < 24 * 60) return `${Math.floor(ageMinutes / 60)} 小时前`;
+  return new Date(timestamp).toLocaleDateString("zh-CN");
+}
+
+async function loadPublicOpinionData() {
+  publicOpinionLoading.value = true;
+  publicOpinionError.value = "";
+  try {
+    const [contextResult, latestResult] = await Promise.allSettled([
+      fetchJson<PublicOpinionContext>("/api/public-opinion/context/latest?limit=8"),
+      fetchJson<PublicOpinionRun>("/api/public-opinion/runs/latest")
+    ]);
+    if (contextResult.status === "rejected") throw contextResult.reason;
+    publicOpinionContext.value = contextResult.value;
+    publicOpinionRun.value = latestResult.status === "fulfilled"
+      ? latestResult.value
+      : { status: "empty", items: [], sector_signals: [] };
+  } catch (error) {
+    publicOpinionContext.value = null;
+    publicOpinionRun.value = null;
+    publicOpinionError.value = error instanceof Error ? error.message : "无法连接后端";
+  } finally {
+    publicOpinionLoading.value = false;
+  }
+}
+
+async function capturePublicOpinion() {
+  publicOpinionCaptureLoading.value = true;
+  publicOpinionError.value = "";
+  try {
+    await fetchJson<PublicOpinionRun>("/api/public-opinion/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        limit: 60,
+        persist: true,
+        requested_by: "frontend_market_pulse",
+        source_urls: []
+      })
+    });
+    await loadPublicOpinionData();
+  } catch (error) {
+    publicOpinionError.value = error instanceof Error ? error.message : "捕捉失败";
+  } finally {
+    publicOpinionCaptureLoading.value = false;
+  }
+}
+
+async function loadControlPlaneStatus() {
+  try {
+    const result = await fetchJson<ControlPlaneRunResult>("/api/control-plane/status");
+    controlPlaneStatus.value = result.status || result.summary?.status || "控制平面就绪";
+  } catch {
+    controlPlaneStatus.value = "控制平面离线";
+  }
+}
+
+async function runControlPlane() {
+  controlPlaneLoading.value = true;
+  controlPlaneStatus.value = "adaptive 运行中";
+  try {
+    const result = await fetchJson<ControlPlaneRunResult>("/api/control-plane/run-once", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile: "adaptive", requested_by: "frontend_control_plane" })
+    });
+    const status = result.status || result.summary?.status || "completed";
+    controlPlaneStatus.value = result.run_id ? `${status} · #${result.run_id}` : status;
+    await Promise.all([loadPublicOpinionData(), loadDashboardData()]);
+  } catch (error) {
+    controlPlaneStatus.value = error instanceof Error ? `运行失败：${error.message}` : "运行失败";
+  } finally {
+    controlPlaneLoading.value = false;
+  }
+}
+
 async function loadDashboardData() {
   try {
+    const health = await fetchJson<{ live_trading_enabled: boolean }>("/health");
+    healthStatus.value = health.live_trading_enabled ? "实盘已开启" : "模拟模式";
+  } catch {
+    healthStatus.value = "状态未知";
+  }
+
+  try {
     dataStatus.value = "正在同步候选与行情";
-    const [health, stability, selection, account] = await Promise.all([
-      fetchJson<{ live_trading_enabled: boolean }>("/health"),
+    const [stability, selection, account] = await Promise.all([
       fetchJson<{ release_gate?: { status?: string } }>("/api/system/v1-stability"),
       fetchJson<SelectionV2Result>("/api/candidates/selection-v2/summary?mode=balanced&limit=120"),
       fetchJson<SimulationAccount>("/api/simulation/account")
     ]);
-    healthStatus.value = health.live_trading_enabled ? "实盘已开启" : "模拟模式";
     releaseGateStatus.value = stability.release_gate?.status ?? "未加载";
     selectionV2.value = selection;
     simulationAccount.value = account;
@@ -853,7 +1044,6 @@ async function loadDashboardData() {
     await loadIndexOverview();
     dataStatus.value = watchlist.value.length ? `已同步 ${watchlist.value.length} 只候选` : "暂无候选，需先运行候选发现";
   } catch (error) {
-    healthStatus.value = "模拟模式";
     releaseGateStatus.value = "离线展示";
     dataStatus.value = error instanceof Error ? `数据同步失败：${error.message}` : "数据同步失败";
   }
@@ -905,7 +1095,11 @@ async function loadIndexOverview() {
   ));
 }
 
-onMounted(loadDashboardData);
+onMounted(() => {
+  void loadDashboardData();
+  void loadPublicOpinionData();
+  void loadControlPlaneStatus();
+});
 </script>
 
 <style scoped>
@@ -1848,9 +2042,47 @@ em {
   line-height: 1.35;
 }
 
+.news-list a {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.news-list a:hover {
+  color: #2563eb;
+}
+
 .news-list em {
   text-align: right;
   font-size: 12px;
+}
+
+.market-pulse-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.market-pulse-actions button {
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 8px;
+}
+
+.market-pulse-actions button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.pulse-status {
+  color: #64748b;
+  font-size: 11px;
 }
 
 @media (max-width: 1320px) {
