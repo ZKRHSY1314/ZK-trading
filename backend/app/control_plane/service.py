@@ -163,17 +163,32 @@ class ControlPlaneService:
             steps.append(refresh_payload["step"])
             market_data = refresh_payload["market_data"]
 
+        decision_payload: dict[str, Any] | None = None
+        if selected_profile in {"pulse", "maintenance", "full"}:
+            decision_payload = self._run_decision_step(limit=safe_limit, now=now)
+            steps.append(decision_payload["step"])
+
         task_payload: dict[str, Any] | None = None
         if selected_profile == "full":
+            decision_snapshot = (decision_payload or {}).get("result") or {}
+            decision_ready = (
+                market_data["status"] == "fresh"
+                and (decision_payload or {}).get("step", {}).get("status") == "completed"
+                and bool(decision_snapshot.get("daily_candidate_snapshot"))
+            )
             task_payload = (
                 self._run_simulation_task(
                     limit=safe_limit,
                     monitor_limit=safe_monitor_limit,
                     review_symbol=review_symbol,
                     requested_by=requested_by,
+                    decision_snapshot=decision_snapshot,
                 )
-                if market_data["status"] == "fresh"
-                else self._skip_simulation_task(market_data)
+                if decision_ready
+                else self._skip_simulation_task(
+                    market_data,
+                    decision_status=(decision_payload or {}).get("step", {}).get("status"),
+                )
             )
             steps.append(task_payload["step"])
 
@@ -186,15 +201,6 @@ class ControlPlaneService:
                         horizon_days=5,
                     ),
                     compact=self._compact_feedback,
-                )
-            )
-
-        if selected_profile in {"pulse", "maintenance", "full"}:
-            steps.append(
-                self._run_step(
-                    "decision_snapshot",
-                    lambda: self._run_decision_snapshot(limit=safe_limit, now=now),
-                    compact=self._compact_selection,
                 )
             )
 
@@ -221,6 +227,7 @@ class ControlPlaneService:
         monitor_limit: int,
         review_symbol: str,
         requested_by: str,
+        decision_snapshot: dict[str, Any],
     ) -> dict[str, Any]:
         started = monotonic_time.perf_counter()
         try:
@@ -233,6 +240,7 @@ class ControlPlaneService:
                         "limit": limit,
                         "monitor_limit": monitor_limit,
                         "review_symbol": review_symbol,
+                        "decision_snapshot": decision_snapshot,
                     },
                 )
             )
@@ -266,20 +274,55 @@ class ControlPlaneService:
             }
 
     @staticmethod
-    def _skip_simulation_task(market_data: dict[str, Any]) -> dict[str, Any]:
+    def _skip_simulation_task(
+        market_data: dict[str, Any],
+        *,
+        decision_status: str | None = None,
+    ) -> dict[str, Any]:
+        reason = (
+            f"daily_bar_cache_{market_data['status']}"
+            if market_data.get("status") != "fresh"
+            else f"decision_snapshot_{decision_status or 'unavailable'}"
+        )
         return {
             "task_id": None,
             "step": {
                 "step_id": "simulation_cycle",
                 "status": "partial",
                 "duration_ms": 0,
-                "reason": f"daily_bar_cache_{market_data['status']}",
+                "reason": reason,
                 "details": {
-                    "business_status": "skipped_stale_market_data",
+                    "business_status": "skipped_decision_not_ready",
                     "market_data": market_data,
+                    "decision_status": decision_status,
                 },
             },
         }
+
+    def _run_decision_step(self, *, limit: int, now: datetime) -> dict[str, Any]:
+        started = monotonic_time.perf_counter()
+        try:
+            result = self._run_decision_snapshot(limit=limit, now=now)
+            business_status = self._normalize_status(str(result.get("status") or "completed"))
+            return {
+                "result": result,
+                "step": {
+                    "step_id": "decision_snapshot",
+                    "status": business_status,
+                    "duration_ms": int((monotonic_time.perf_counter() - started) * 1000),
+                    "details": self._compact_selection(result),
+                },
+            }
+        except Exception as exc:
+            return {
+                "result": None,
+                "step": {
+                    "step_id": "decision_snapshot",
+                    "status": "failed",
+                    "duration_ms": int((monotonic_time.perf_counter() - started) * 1000),
+                    "reason": str(exc),
+                },
+            }
 
     def _run_market_data_refresh(
         self,

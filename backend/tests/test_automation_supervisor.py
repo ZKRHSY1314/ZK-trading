@@ -18,7 +18,8 @@ def test_run_cycle_records_monitoring_quality_gate_without_missing_run_id(monkey
     supervisor = AutomationSupervisor()
     run_id = supervisor._start_run("pytest_cycle")
 
-    def fake_run_once(self, limit=30):
+    def fake_run_once(self, limit=30, decision_snapshot=None):
+        assert decision_snapshot is None
         return {"run_id": run_id, "status": "completed", "summary": {"status": "completed"}}
 
     class FakeLearningService:
@@ -66,6 +67,43 @@ def test_run_cycle_records_monitoring_quality_gate_without_missing_run_id(monkey
     )
     assert row is not None
     assert row["symbol"] == "SZ002081"
+
+
+def test_decision_snapshot_is_the_candidate_source_for_simulation_cycle():
+    snapshot = {
+        "schema_version": "strategy_selection_v2.1",
+        "date": "2026-07-10",
+        "daily_candidate_snapshot": [
+            {
+                "symbol": "SH600001",
+                "name": "strong",
+                "plan_type": "SIM_BUY_PLAN",
+                "final_score": 82.0,
+            },
+            {
+                "symbol": "SZ000002",
+                "name": "watch",
+                "plan_type": "WAIT_PULLBACK_PLAN",
+                "final_score": 68.0,
+            },
+            {
+                "symbol": "SZ000003",
+                "name": "reject",
+                "plan_type": "REJECT_HARD",
+                "final_score": 20.0,
+            },
+        ],
+    }
+
+    scan = AutomationSupervisor._scan_from_decision_snapshot(snapshot, limit=10)
+
+    assert scan["source"] == "decision_snapshot"
+    assert [item["symbol"] for item in scan["buckets"]["strong"]] == ["SH600001"]
+    assert [item["symbol"] for item in scan["buckets"]["watch"]] == ["SZ000002"]
+    assert [item["symbol"] for item in scan["buckets"]["rejected"]] == ["SZ000003"]
+    assert scan["strong_count"] == 1
+    assert scan["watch_count"] == 1
+    assert scan["rejected_count"] == 1
 
 
 def test_phase_guardrail_relaxation_plan_is_not_overridden():

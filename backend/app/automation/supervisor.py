@@ -420,10 +420,27 @@ class AutomationSupervisor:
 
         return "pass"
 
-    def run_once(self, limit: int = 30) -> dict[str, Any]:
+    def run_once(
+        self,
+        limit: int = 30,
+        *,
+        decision_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         run_id = self._start_run("simulation_once")
         started_at = time.perf_counter()
-        self._event(run_id, "automation_started", None, {"limit": limit})
+        self._event(
+            run_id,
+            "automation_started",
+            None,
+            {
+                "limit": limit,
+                "candidate_source": (
+                    "decision_snapshot" if decision_snapshot is not None else "legacy_scanner"
+                ),
+                "decision_date": (decision_snapshot or {}).get("date"),
+                "decision_schema_version": (decision_snapshot or {}).get("schema_version"),
+            },
+        )
 
         run_steps: list[dict[str, Any]] = []
         failed_steps: list[dict[str, Any]] = []
@@ -488,7 +505,18 @@ class AutomationSupervisor:
 
         step_start = time.perf_counter()
         try:
-            discovery = AutoDiscoveryScanner().scan(limit=max(20, limit * 4), persist=True)
+            if decision_snapshot is not None:
+                discovery = {
+                    "status": "skipped",
+                    "reason": "immutable_decision_snapshot_provided",
+                    "discovered_count": 0,
+                    "limit_up_count": 0,
+                    "near_limit_up_count": 0,
+                    "strong_mover_count": 0,
+                    "scored_count": 0,
+                }
+            else:
+                discovery = AutoDiscoveryScanner().scan(limit=max(20, limit * 4), persist=True)
             self._event(
                 run_id,
                 "auto_discovery_completed",
@@ -504,7 +532,7 @@ class AutomationSupervisor:
                 _step_entry(
                     "auto_discovery",
                     "auto_discovery",
-                    "completed",
+                    "skipped" if decision_snapshot is not None else "completed",
                     step_start,
                     {
                         "status": discovery.get("status"),
@@ -559,7 +587,11 @@ class AutomationSupervisor:
 
         step_start = time.perf_counter()
         try:
-            scan = LocalCandidateScanner().scan(limit=limit, persist=True)
+            scan = (
+                self._scan_from_decision_snapshot(decision_snapshot, limit=limit)
+                if decision_snapshot is not None
+                else LocalCandidateScanner().scan(limit=limit, persist=True)
+            )
             self._event(
                 run_id,
                 "candidate_scan_completed",
@@ -579,6 +611,7 @@ class AutomationSupervisor:
                     step_start,
                     {
                         "scan_id": scan.get("scan_id"),
+                        "source": scan.get("source", "local_candidate_scanner"),
                         "strong_count": scan["strong_count"],
                         "watch_count": scan["watch_count"],
                         "rejected_count": scan["rejected_count"],
@@ -1068,6 +1101,60 @@ class AutomationSupervisor:
         except Exception as exc:
             return [{"status": "failed", "reason": str(exc)}]
 
+    @staticmethod
+    def _scan_from_decision_snapshot(
+        snapshot: dict[str, Any],
+        *,
+        limit: int,
+    ) -> dict[str, Any]:
+        """Adapt one immutable Decision Snapshot to the legacy planning seam.
+
+        The adapter intentionally performs no rescoring.  It preserves the V2
+        rank and only maps plan types to the three buckets consumed by the
+        existing review-only planning implementation.
+        """
+        buckets: dict[str, list[dict[str, Any]]] = {
+            "strong": [],
+            "watch": [],
+            "rejected": [],
+        }
+        strong_types = {"SIM_BUY_PLAN"}
+        watch_types = {
+            "WAIT_PULLBACK_PLAN",
+            "WAIT_BREAKOUT_PLAN",
+            "WATCH_ONLY_PLAN",
+            "SECTOR_BAROMETER",
+        }
+        rows = list(snapshot.get("daily_candidate_snapshot") or [])[: max(1, int(limit))]
+        for raw in rows:
+            if not isinstance(raw, dict) or not raw.get("symbol"):
+                continue
+            item = dict(raw)
+            item["score"] = float(item.get("final_score") or item.get("score") or 0.0)
+            plan_type = str(item.get("plan_type") or "WATCH_ONLY_PLAN")
+            if plan_type in strong_types:
+                item["tier"] = "strong"
+                buckets["strong"].append(item)
+            elif plan_type in watch_types:
+                item["tier"] = "watch"
+                buckets["watch"].append(item)
+            else:
+                item["tier"] = "rejected"
+                buckets["rejected"].append(item)
+        return {
+            "scan_id": snapshot.get("snapshot_id") or snapshot.get("date"),
+            "source": "decision_snapshot",
+            "schema_version": snapshot.get("schema_version"),
+            "decision_date": snapshot.get("date"),
+            "config_version": snapshot.get("config_version"),
+            "buckets": buckets,
+            "lifecycle": None,
+            "scoring": {"source": "strategy_selection_v2", "rescored": False},
+            "strong_count": len(buckets["strong"]),
+            "watch_count": len(buckets["watch"]),
+            "rejected_count": len(buckets["rejected"]),
+        }
+
     def _phase_guardrail_for(
         self,
         symbol: str,
@@ -1099,6 +1186,7 @@ class AutomationSupervisor:
         limit: int = 5,
         monitor_limit: int = 5,
         review_symbol: str = "SZ002081",
+        decision_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run the safe observe-plan-monitor-review loop once."""
         cycle_started_at = time.perf_counter()
@@ -1118,7 +1206,7 @@ class AutomationSupervisor:
         failed_steps = cycle["failed_steps"]
 
         step_start = time.perf_counter()
-        automation = self.run_once(limit=limit)
+        automation = self.run_once(limit=limit, decision_snapshot=decision_snapshot)
         cycle["automation"] = automation
         automation_status = automation.get("status", "failed")
         automation_run_id = automation.get("run_id")

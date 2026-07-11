@@ -50,6 +50,9 @@ class _Selection:
     def run(self, **_: object) -> dict:
         return {
             "status": "completed",
+            "schema_version": "strategy_selection_v2.1",
+            "date": "2026-07-10",
+            "config_version": "pytest-v1",
             "summary": {"candidate_count": 1},
             "daily_candidate_snapshot": [
                 {
@@ -68,6 +71,8 @@ class _AgentControl:
     def create_task(self, task):
         assert task.task_type == "full_simulation_cycle"
         assert task.payload["limit"] == 20
+        assert task.payload["decision_snapshot"]["schema_version"] == "strategy_selection_v2.1"
+        assert task.payload["decision_snapshot"]["daily_candidate_snapshot"][0]["symbol"] == "SZ000001"
         return SimpleNamespace(id=99)
 
     def execute_task(self, task_id: int):
@@ -130,9 +135,9 @@ def test_control_plane_full_run_preserves_partial_business_status(test_db):
     assert result["task_id"] == 99
     assert [step["step_id"] for step in result["steps"]] == [
         "market_pulse",
+        "decision_snapshot",
         "simulation_cycle",
         "training_feedback",
-        "decision_snapshot",
     ]
     simulation = next(step for step in result["steps"] if step["step_id"] == "simulation_cycle")
     assert simulation["status"] == "partial"
@@ -188,8 +193,8 @@ def test_control_plane_adaptive_offhour_runs_maintenance(test_db):
     assert [step["step_id"] for step in result["steps"]] == [
         "market_pulse",
         "market_data_refresh",
-        "training_feedback",
         "decision_snapshot",
+        "training_feedback",
     ]
     decision = next(step for step in result["steps"] if step["step_id"] == "decision_snapshot")
     assert decision["status"] == "partial"

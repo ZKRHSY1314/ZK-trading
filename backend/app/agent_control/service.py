@@ -321,7 +321,13 @@ class AgentControlService:
                 limit = task.payload.get("limit", 5)
                 monitor_limit = task.payload.get("monitor_limit", 5)
                 review_symbol = task.payload.get("review_symbol", "SZ002081")
-                result = AutomationSupervisor().run_cycle(limit=limit, monitor_limit=monitor_limit, review_symbol=review_symbol)
+                decision_snapshot = task.payload.get("decision_snapshot")
+                result = AutomationSupervisor().run_cycle(
+                    limit=limit,
+                    monitor_limit=monitor_limit,
+                    review_symbol=review_symbol,
+                    decision_snapshot=decision_snapshot,
+                )
             elif task.task_type == "offhour_research_loop":
                 result = OffhourResearchLoopService().run(
                     limit=task.payload.get("limit", 100),
