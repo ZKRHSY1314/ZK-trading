@@ -144,6 +144,32 @@ def test_control_plane_full_run_preserves_partial_business_status(test_db):
     assert result["safety"]["broker_access"] is False
 
 
+def test_control_plane_persists_every_ranked_candidate_horizon_in_forecast_ledger(test_db):
+    result = _service(test_db, market_status="fresh").run_once(
+        profile="pulse",
+        limit=20,
+        requested_by="pytest-ledger",
+    )
+
+    decision = next(step for step in result["steps"] if step["step_id"] == "decision_snapshot")
+    decision_id = decision["details"]["snapshot_id"]
+    rows = test_db.fetch_all(
+        """
+        SELECT decision_id, scope, subject, horizon_days, review_only
+        FROM forecast_decisions
+        WHERE decision_id = ?
+        ORDER BY horizon_days
+        """,
+        (decision_id,),
+    )
+
+    assert [row["horizon_days"] for row in rows] == [1, 3, 5, 10, 20]
+    assert {row["subject"] for row in rows} == {"SZ000001"}
+    assert {row["scope"] for row in rows} == {"stock"}
+    assert all(row["review_only"] == 1 for row in rows)
+    assert decision["details"]["forecast_ledger"]["recorded_count"] == 5
+
+
 def test_control_plane_full_run_skips_simulation_when_market_data_is_stale(test_db):
     result = _service(test_db, market_status="stale").run_once(profile="full", limit=20)
 

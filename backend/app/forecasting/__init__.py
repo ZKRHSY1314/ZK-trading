@@ -1,4 +1,5 @@
 from app.forecasting.ledger import (
+    FORECAST_HORIZONS,
     ForecastConflictError,
     ForecastDecision,
     ForecastLedger,
@@ -7,6 +8,7 @@ from app.forecasting.ledger import (
 )
 
 __all__ = [
+    "FORECAST_HORIZONS",
     "ForecastConflictError",
     "ForecastDecision",
     "ForecastLedger",

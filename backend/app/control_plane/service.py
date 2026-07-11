@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, time
+import hashlib
+import json
 import time as monotonic_time
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.data.trading_calendar import trading_session_age
+from app.forecasting import FORECAST_HORIZONS, ForecastDecision, ForecastLedger
 from app.models import AgentTaskInput
 from app.storage.sqlite_store import SQLiteStore
 
@@ -74,6 +77,8 @@ class ControlPlaneService:
                 "agent_learning_samples",
                 "agent_learning_outcomes",
                 "public_opinion_runs",
+                "forecast_decisions",
+                "forecast_outcomes",
             )
         }
         latest_automation = self._latest_row(
@@ -403,10 +408,115 @@ class ControlPlaneService:
                 "data_gap_candidates": [],
                 "market_data": market_data,
             }
-        return {
+        result = {
             **self._selection_factory().run(mode="balanced", limit=limit),
             "market_data": market_data,
         }
+        return self._record_decision_forecasts(result, now=now)
+
+    def _record_decision_forecasts(
+        self,
+        result: dict[str, Any],
+        *,
+        now: datetime,
+    ) -> dict[str, Any]:
+        candidates = [
+            item
+            for item in result.get("daily_candidate_snapshot") or []
+            if isinstance(item, dict) and item.get("symbol")
+        ]
+        canonical = json.dumps(
+            {
+                "decision_cutoff": now.isoformat(),
+                "schema_version": result.get("schema_version"),
+                "config_version": result.get("config_version"),
+                "candidates": candidates,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+        decision_id = f"decision-{now.strftime('%Y%m%dT%H%M%S')}-{digest}"
+        cutoff = now.isoformat()
+        market_data = result.get("market_data") or {}
+        data_version = str(
+            market_data.get("latest_trade_date")
+            or result.get("date")
+            or now.date().isoformat()
+        )
+        model_version = ".".join(
+            part
+            for part in (
+                str(result.get("schema_version") or "strategy_selection_v2"),
+                str(result.get("config_version") or "unversioned"),
+            )
+            if part
+        )
+        prompt_version = str(
+            (result.get("public_opinion_context") or {}).get("schema_version")
+            or "codex_market_pulse.v1"
+        )
+        ledger = ForecastLedger(self.store)
+        recorded = 0
+        for rank, candidate in enumerate(candidates, start=1):
+            raw_evidence = candidate.get("evidence")
+            if isinstance(raw_evidence, list):
+                evidence = [item for item in raw_evidence if isinstance(item, dict)]
+            elif isinstance(raw_evidence, dict):
+                evidence = [{"kind": "selection_evidence", "payload": raw_evidence}]
+            else:
+                evidence = []
+            structure = (candidate.get("features") or {}).get("structure_signal") or {}
+            probability = structure.get("pre_markup_probability")
+            if probability is not None:
+                try:
+                    probability = max(0.0, min(1.0, float(probability)))
+                except (TypeError, ValueError):
+                    probability = None
+            score = candidate.get("final_score")
+            try:
+                score = float(score) if score is not None else None
+            except (TypeError, ValueError):
+                score = None
+            reasons = [str(item) for item in candidate.get("reasons") or []]
+            for horizon in sorted(FORECAST_HORIZONS):
+                ledger.record_forecast(
+                    ForecastDecision(
+                        decision_id=decision_id,
+                        scope="stock",
+                        subject=str(candidate["symbol"]),
+                        decision_cutoff=cutoff,
+                        available_at=cutoff,
+                        horizon_days=horizon,
+                        rank=rank,
+                        score=score,
+                        probability=probability,
+                        model_version=model_version,
+                        prompt_version=prompt_version,
+                        data_version=data_version,
+                        features=self._json_safe(candidate.get("features") or {}),
+                        evidence=self._json_safe(evidence),
+                        reasons=reasons,
+                        status="pending_outcome",
+                    )
+                )
+                recorded += 1
+        result["snapshot_id"] = decision_id
+        result["decision_cutoff"] = cutoff
+        result["forecast_ledger"] = {
+            "status": "recorded" if recorded else "empty",
+            "recorded_count": recorded,
+            "candidate_count": len(candidates),
+            "horizons": sorted(FORECAST_HORIZONS),
+            "review_only": True,
+        }
+        return result
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
     def _market_data_snapshot(self, now: datetime, limit: int = 30) -> dict[str, Any]:
         scope_limit = max(5, min(int(limit), 120))
@@ -565,6 +675,9 @@ class ControlPlaneService:
         summary = result.get("summary") or {}
         candidates = list(result.get("daily_candidate_snapshot") or [])
         return {
+            "snapshot_id": result.get("snapshot_id"),
+            "decision_cutoff": result.get("decision_cutoff"),
+            "forecast_ledger": result.get("forecast_ledger"),
             "summary": summary,
             "top_candidates": [
                 {
