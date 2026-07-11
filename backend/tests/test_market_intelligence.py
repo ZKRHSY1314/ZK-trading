@@ -269,7 +269,7 @@ def test_public_opinion_ingest_derives_event_fact_and_oil_sector_thesis(test_db)
                 "claims": ["航运受阻", "原油价格上涨"],
             }
         ],
-        persist=False,
+        persist=True,
         requested_by="pytest_market_intelligence",
     )
 
@@ -287,6 +287,20 @@ def test_public_opinion_ingest_derives_event_fact_and_oil_sector_thesis(test_db)
     assert thesis["direction"] == "positive"
     assert thesis["invalidation"]
     assert thesis["auto_trade_allowed"] is False
+    assert result["forecast_ledger"]["recorded_count"] == (
+        5 * result["forecast_ledger"]["sector_count"]
+    )
+    rows = test_db.fetch_all(
+        """
+        SELECT scope, subject, horizon_days
+        FROM forecast_decisions
+        WHERE decision_id = ? AND subject = 'oil_gas'
+        """,
+        (result["forecast_ledger"]["decision_id"],),
+    )
+    assert {row["scope"] for row in rows} == {"sector"}
+    assert {row["subject"] for row in rows} == {"oil_gas"}
+    assert {row["horizon_days"] for row in rows} == {1, 3, 5, 10, 20}
 
 
 def test_codex_schema_and_api_preserve_structured_event_fact(client, monkeypatch):

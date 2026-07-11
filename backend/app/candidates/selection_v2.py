@@ -13,8 +13,10 @@ import yaml
 
 from app.config import PROJECT_ROOT, settings
 from app.data.trading_calendar import trading_session_age
+from app.forecasting import ForecastLedger
 from app.learning.structure_scoring import ObservableStructureScorer
-from app.public_opinion.service import CodexPublicOpinionService
+from app.market_intelligence import SectorExposureResolver
+from app.public_opinion.service import CodexPublicOpinionService, SECTOR_TAXONOMY
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -56,6 +58,7 @@ class StrategySelectionV2Service:
     def __init__(self, store: SQLiteStore | None = None, config_path: Path | None = None) -> None:
         self.store = store or SQLiteStore(settings.database_path)
         self.store.init()
+        self._sector_exposure = SectorExposureResolver(self.store)
         self.config = self._load_config(config_path or CONFIG_PATH)
 
     def run(
@@ -734,6 +737,7 @@ class StrategySelectionV2Service:
         public_opinion_tailwind = self._candidate_public_opinion_tailwind(
             row,
             public_opinion_context,
+            as_of_date=run_date,
         )
         market_data = self._market_data_freshness(
             bars,
@@ -976,6 +980,7 @@ class StrategySelectionV2Service:
     def _public_opinion_context(self, *, as_of_date: str) -> dict[str, Any]:
         try:
             service = CodexPublicOpinionService(store=self.store)
+            sector_forecasts = self._sector_forecasts_as_of(as_of_date)
             captures = self.store.fetch_all(
                 """
                 SELECT id, status, item_count, sector_count, summary_json,
@@ -991,9 +996,10 @@ class StrategySelectionV2Service:
             )
             if not captures:
                 return {
-                    "status": "empty",
+                    "status": "completed" if sector_forecasts else "empty",
                     "as_of_date": as_of_date,
-                    "top_sectors": [],
+                    "top_sectors": list(sector_forecasts),
+                    "sector_forecasts": sector_forecasts,
                     "review_only": True,
                     "simulation_only": True,
                     "live_trading_enabled": settings.enable_live_trading,
@@ -1018,6 +1024,21 @@ class StrategySelectionV2Service:
                 (selected["id"], as_of_date),
             )
             sectors = [service._hydrate_sector_signal(row) for row in rows]
+            by_sector = {str(item.get("sector")): item for item in sectors}
+            for forecast in sector_forecasts:
+                existing = by_sector.get(str(forecast.get("sector")))
+                if existing is None:
+                    sectors.append(dict(forecast))
+                    continue
+                existing.update(
+                    {
+                        "sector_forecast": True,
+                        "forecast_confidence": forecast.get("forecast_confidence"),
+                        "forecast_direction": forecast.get("forecast_direction"),
+                        "forecast_horizon": forecast.get("forecast_horizon"),
+                        "forecast_decision_id": forecast.get("forecast_decision_id"),
+                    }
+                )
             run_status = str(selected.get("status") or "empty")
             return {
                 "status": run_status,
@@ -1031,7 +1052,8 @@ class StrategySelectionV2Service:
                 "item_count": selected.get("item_count"),
                 "sector_count": selected.get("sector_count"),
                 "summary": self._json(selected.get("summary_json")),
-                "top_sectors": sectors if usable else [],
+                "top_sectors": sectors if (usable or sector_forecasts) else [],
+                "sector_forecasts": sector_forecasts,
                 "review_only": bool(selected.get("review_only")),
                 "simulation_only": bool(selected.get("simulation_only")),
                 "live_trading_enabled": bool(selected.get("live_trading_enabled")),
@@ -1044,6 +1066,7 @@ class StrategySelectionV2Service:
                 "error": str(exc),
                 "as_of_date": as_of_date,
                 "top_sectors": [],
+                "sector_forecasts": [],
                 "review_only": True,
                 "simulation_only": True,
                 "live_trading_enabled": settings.enable_live_trading,
@@ -1053,6 +1076,8 @@ class StrategySelectionV2Service:
         self,
         row: dict[str, Any],
         context: dict[str, Any],
+        *,
+        as_of_date: str,
     ) -> dict[str, Any]:
         sectors = list(context.get("top_sectors") or [])
         if not sectors:
@@ -1075,6 +1100,11 @@ class StrategySelectionV2Service:
             if row.get(key):
                 text_parts.append(json.dumps(row.get(key), ensure_ascii=False, default=str))
         candidate_text = " ".join(str(part or "") for part in text_parts).lower()
+        membership_rows = self._sector_exposure.sectors_for(
+            self._normalize_symbol(row.get("symbol")) or str(row.get("symbol") or ""),
+            as_of=as_of_date,
+        )
+        membership_sectors = {str(item.get("sector")) for item in membership_rows}
 
         best: dict[str, Any] | None = None
         best_score = -1.0
@@ -1089,10 +1119,15 @@ class StrategySelectionV2Service:
             fresh_official_policy_count = int(
                 sector.get("fresh_official_policy_count") or 0
             )
-            confidence_ok = fresh_item_count > 0 and (
-                fresh_independent_source_count >= 2
-                or fresh_official_policy_count >= 1
-            )
+            sector_forecast = bool(sector.get("sector_forecast"))
+            forecast_confidence = float(sector.get("forecast_confidence") or 0.0)
+            confidence_ok = (
+                fresh_item_count > 0
+                and (
+                    fresh_independent_source_count >= 2
+                    or fresh_official_policy_count >= 1
+                )
+            ) or (sector_forecast and forecast_confidence >= 0.55)
             if not confidence_ok:
                 continue
             keywords = [str(keyword) for keyword in sector.get("keywords") or []]
@@ -1101,6 +1136,9 @@ class StrategySelectionV2Service:
                 for keyword in keywords
                 if keyword and self._candidate_keyword_match(candidate_text, keyword)
             ]
+            membership_match = str(sector.get("sector")) in membership_sectors
+            if membership_match:
+                matched_keywords.append(f"sector_membership:{sector.get('sector')}")
             if not matched_keywords:
                 continue
             heat_score = float(sector.get("heat_score") or 0)
@@ -1133,6 +1171,14 @@ class StrategySelectionV2Service:
                     ),
                     "suggested_action": sector.get("suggested_action"),
                     "matched_keywords": matched_keywords,
+                    "matched_via": (
+                        "sector_membership_history" if membership_match else "candidate_text"
+                    ),
+                    "sector_forecast": sector_forecast,
+                    "forecast_confidence": forecast_confidence,
+                    "forecast_direction": sector.get("forecast_direction"),
+                    "forecast_horizon": sector.get("forecast_horizon"),
+                    "sector_memberships": membership_rows,
                     "evidence": list(sector.get("evidence") or [])[:3],
                     "review_only": True,
                     "simulation_only": True,
@@ -1156,6 +1202,48 @@ class StrategySelectionV2Service:
                 for sector in sectors[:3]
             ],
         }
+
+    def _sector_forecasts_as_of(self, as_of_date: str) -> list[dict[str, Any]]:
+        cutoff = f"{str(as_of_date)[:10]}T23:59:59+08:00"
+        forecasts = ForecastLedger(self.store).as_of(
+            cutoff,
+            scope="sector",
+            horizon_days=5,
+        )
+        rows: list[dict[str, Any]] = []
+        for forecast in forecasts:
+            features = forecast.features or {}
+            sector = forecast.subject
+            taxonomy = SECTOR_TAXONOMY.get(sector, {})
+            direction = str(features.get("direction") or "neutral")
+            confidence = float(forecast.probability or features.get("confidence") or 0.0)
+            positive = direction == "positive"
+            risk = direction in {"negative", "mixed"}
+            rows.append(
+                {
+                    "sector": sector,
+                    "display_name": taxonomy.get("display_name", sector),
+                    "keywords": list(taxonomy.get("keywords") or []),
+                    "heat_score": round(confidence * 100.0, 4),
+                    "item_count": len(features.get("event_ids") or []),
+                    "fresh_item_count": len(features.get("event_ids") or []) or 1,
+                    "positive_count": 1 if positive else 0,
+                    "risk_count": 1 if risk else 0,
+                    "fresh_positive_count": 1 if positive else 0,
+                    "fresh_risk_count": 1 if risk else 0,
+                    "suggested_action": (
+                        "sector_watch_review_only" if positive else "risk_review_only"
+                    ),
+                    "sector_forecast": True,
+                    "forecast_confidence": confidence,
+                    "forecast_direction": direction,
+                    "forecast_horizon": features.get("horizon"),
+                    "forecast_decision_id": forecast.decision_id,
+                    "evidence": list(forecast.evidence),
+                    "review_only": True,
+                }
+            )
+        return rows
 
     @staticmethod
     def _candidate_keyword_match(candidate_text: str, keyword: str) -> bool:

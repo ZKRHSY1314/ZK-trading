@@ -4,6 +4,8 @@ from datetime import date, timedelta
 import json
 
 from app.candidates.selection_v2 import StrategySelectionV2Service
+from app.forecasting import ForecastDecision, ForecastLedger
+from app.market_intelligence import SectorExposureResolver, SectorMembership
 
 
 def _reset(store) -> None:
@@ -670,3 +672,57 @@ def test_strategy_selection_v2_as_of_date_excludes_all_future_evidence(test_db):
     assert item["features"]["latest_realtime"]["event_ts"].startswith("2026-01-02")
     assert result["public_opinion_context"]["run_id"] == past_run_id
     assert result["public_opinion_context"]["top_sectors"][0]["sector"] == "ai_compute"
+
+
+def test_sector_forecast_matches_candidate_through_point_in_time_membership(test_db):
+    _reset(test_db)
+    SectorExposureResolver(test_db).record(
+        SectorMembership(
+            symbol="SH600321",
+            sector="semiconductors",
+            effective_from="2026-01-01",
+            effective_to=None,
+            source="pytest",
+            available_at="2026-01-02T08:00:00+08:00",
+            confidence=0.95,
+        )
+    )
+    ForecastLedger(test_db).record_forecast(
+        ForecastDecision(
+            decision_id="sector-thesis-pit",
+            scope="sector",
+            subject="semiconductors",
+            decision_cutoff="2026-01-02T09:00:00+08:00",
+            available_at="2026-01-02T09:00:00+08:00",
+            horizon_days=5,
+            rank=1,
+            score=82.0,
+            probability=0.82,
+            model_version="market_intelligence_snapshot.v1",
+            prompt_version="codex_market_pulse.v2",
+            data_version="2026-01-02",
+            features={
+                "sector": "semiconductors",
+                "direction": "positive",
+                "confidence": 0.82,
+                "horizon": "1-4w",
+            },
+            evidence=[],
+            reasons=["cross-market confirmation"],
+            status="pending_outcome",
+        )
+    )
+    service = StrategySelectionV2Service(store=test_db)
+
+    context = service._public_opinion_context(as_of_date="2026-01-03")
+    tailwind = service._candidate_public_opinion_tailwind(
+        {"symbol": "SH600321", "name": "fixture-company"},
+        context,
+        as_of_date="2026-01-03",
+    )
+
+    assert context["sector_forecasts"][0]["sector"] == "semiconductors"
+    assert tailwind["matched"] is True
+    assert tailwind["sector_forecast"] is True
+    assert tailwind["matched_via"] == "sector_membership_history"
+    assert tailwind["sector"] == "semiconductors"

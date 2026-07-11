@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 from typing import Any
 
 from app.config import settings
+from app.forecasting import FORECAST_HORIZONS, ForecastDecision, ForecastLedger
 from app.market_intelligence.models import EventFact
 from app.market_intelligence.service import MarketIntelligenceService
 from app.market_intelligence.taxonomy import SECTOR_TAXONOMY
@@ -343,6 +344,79 @@ class CodexPublicOpinionService:
             self._finish_run(run_id, result, errors, status=status)
         return {"run_id": run_id, **result}
 
+    def _record_sector_forecasts(
+        self,
+        intelligence: dict[str, Any],
+        *,
+        run_id: int | None,
+    ) -> dict[str, Any]:
+        theses = [
+            item
+            for item in intelligence.get("sector_theses") or []
+            if isinstance(item, dict) and item.get("sector")
+        ]
+        if run_id is None:
+            return {
+                "status": "not_persisted",
+                "decision_id": None,
+                "recorded_count": 0,
+                "review_only": True,
+            }
+        decision_id = f"sector-thesis-run-{run_id}"
+        cutoff = str(intelligence.get("as_of") or datetime.now(timezone.utc).isoformat())
+        facts = {
+            str(item.get("event_id")): item
+            for item in intelligence.get("event_facts") or []
+            if isinstance(item, dict) and item.get("event_id")
+        }
+        ledger = ForecastLedger(self.store)
+        recorded = 0
+        for rank, thesis in enumerate(theses, start=1):
+            event_evidence = [
+                {
+                    "event_id": event_id,
+                    "available_at": facts[event_id].get("available_at"),
+                    "raw_hash": facts[event_id].get("raw_hash"),
+                    "evidence_urls": facts[event_id].get("evidence_urls") or [],
+                }
+                for event_id in thesis.get("event_ids") or []
+                if event_id in facts
+            ]
+            confidence = max(0.0, min(1.0, float(thesis.get("confidence") or 0.0)))
+            for horizon in sorted(FORECAST_HORIZONS):
+                ledger.record_forecast(
+                    ForecastDecision(
+                        decision_id=decision_id,
+                        scope="sector",
+                        subject=str(thesis["sector"]),
+                        decision_cutoff=cutoff,
+                        available_at=cutoff,
+                        horizon_days=horizon,
+                        rank=rank,
+                        score=round(confidence * 100.0, 4),
+                        probability=confidence,
+                        model_version="market_intelligence_snapshot.v1",
+                        prompt_version="codex_market_pulse.v2",
+                        data_version=str(
+                            (intelligence.get("cross_market_context") or {}).get("as_of")
+                            or cutoff
+                        ),
+                        features=thesis,
+                        evidence=event_evidence,
+                        reasons=[str(item) for item in thesis.get("rationale") or []],
+                        status="pending_outcome",
+                    )
+                )
+                recorded += 1
+        return {
+            "status": "recorded" if recorded else "empty",
+            "decision_id": decision_id,
+            "recorded_count": recorded,
+            "sector_count": len(theses),
+            "horizons": sorted(FORECAST_HORIZONS),
+            "review_only": True,
+        }
+
     def ingest_evidence(
         self,
         evidence: list[dict[str, Any]],
@@ -489,6 +563,10 @@ class CodexPublicOpinionService:
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
         }
+        result["forecast_ledger"] = self._record_sector_forecasts(
+            intelligence,
+            run_id=run_id,
+        )
         if run_id:
             self._persist_items(run_id, accepted)
             self._persist_sector_signals(run_id, sector_signals)
