@@ -43,3 +43,45 @@ def test_stop_stack_requires_exact_process_identity():
     assert "Get-DescendantProcessIds" in source
     assert "remaining_descendant_pids" in source
     assert "Remove-Item -LiteralPath $PidFile" in source
+
+
+def test_ensure_stack_is_idempotent_and_refuses_unsafe_backend():
+    project_root = Path(__file__).resolve().parents[2]
+    source = (project_root / "scripts" / "ensure_stack.ps1").read_text(encoding="utf-8")
+
+    assert 'status = "already_running"' in source
+    assert "live_trading_enabled -ne $false" in source
+    assert '$env:ENABLE_LIVE_TRADING = "false"' in source
+    assert "stop_stack.ps1" in source
+    assert "run_stack.ps1" in source
+    assert "Stack startup returned without reaching healthy review-only state" in source
+
+
+def test_control_plane_task_runs_hidden_review_only_health_ensure():
+    project_root = Path(__file__).resolve().parents[2]
+    source = (project_root / "scripts" / "control_plane_task.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ZKTrading-ReviewOnly-ControlPlane" in source
+    assert "ensure_stack.ps1" in source
+    assert "-WindowStyle" in source and "Hidden" in source
+    assert "New-ScheduledTaskPrincipal" in source
+    assert "-RunLevel Limited" in source
+    assert "-MultipleInstances IgnoreNew" in source
+    assert "never enables live trading" in source
+
+
+def test_github_ci_enforces_tests_build_and_live_disabled():
+    project_root = Path(__file__).resolve().parents[2]
+    source = (project_root / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "actions/checkout@v7" in source
+    assert "actions/setup-python@v6" in source
+    assert 'ENABLE_LIVE_TRADING: "false"' in source
+    assert "python -m pytest -q" in source
+    assert "python -m ruff check app tests" in source
+    assert "npm test" in source
+    assert "npm run build" in source
