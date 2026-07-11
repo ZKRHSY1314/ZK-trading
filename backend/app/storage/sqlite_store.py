@@ -1318,6 +1318,82 @@ CREATE INDEX IF NOT EXISTS idx_forecast_outcomes_matured
     ON forecast_outcomes(status, observed_at, horizon_days);
 CREATE INDEX IF NOT EXISTS idx_forecast_outcomes_subject
     ON forecast_outcomes(scope, subject, horizon_days, observed_at);
+
+CREATE TABLE IF NOT EXISTS disclosure_facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fact_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    fact_type TEXT NOT NULL CHECK(fact_type IN (
+        'balance_sheet',
+        'income_statement',
+        'cash_flow_statement',
+        'earnings_forecast',
+        'share_buyback',
+        'shareholder_reduction',
+        'share_unlock',
+        'private_placement',
+        'major_contract'
+    )),
+    period_end TEXT,
+    published_at TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    retrieved_at TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    source_tier TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    raw_hash TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision >= 1),
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(fact_id, revision),
+    UNIQUE(fact_id, raw_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_disclosure_facts_symbol_available
+    ON disclosure_facts(symbol, available_at);
+CREATE INDEX IF NOT EXISTS idx_disclosure_facts_type_available
+    ON disclosure_facts(fact_type, available_at);
+CREATE INDEX IF NOT EXISTS idx_disclosure_facts_revision
+    ON disclosure_facts(fact_id, revision DESC);
+
+CREATE TABLE IF NOT EXISTS global_market_bars (
+    symbol TEXT NOT NULL,
+    asset_class TEXT NOT NULL,
+    bar_time TEXT NOT NULL,
+    open REAL,
+    high REAL,
+    low REAL,
+    close REAL,
+    volume REAL,
+    source TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    quality_status TEXT NOT NULL,
+    UNIQUE(symbol, bar_time, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_global_market_bars_symbol_time
+    ON global_market_bars(symbol, bar_time);
+CREATE INDEX IF NOT EXISTS idx_global_market_bars_available
+    ON global_market_bars(available_at);
+
+CREATE TABLE IF NOT EXISTS sector_membership_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    sector TEXT NOT NULL,
+    effective_from TEXT NOT NULL,
+    effective_to TEXT,
+    source TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    UNIQUE(symbol, sector, effective_from, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sector_membership_symbol_effective
+    ON sector_membership_history(symbol, effective_from, effective_to);
+CREATE INDEX IF NOT EXISTS idx_sector_membership_sector_available
+    ON sector_membership_history(sector, available_at);
 """
 
 
