@@ -92,7 +92,7 @@ class ObservableStructureScorer:
                 evidence.append("abnormal_volume_expansion")
 
         if upper_shadow is not None:
-            if upper_shadow >= 0.42:
+            if upper_shadow >= 0.55:
                 distribution += 1.1
                 pre -= 0.35
                 evidence.append("long_upper_shadow")

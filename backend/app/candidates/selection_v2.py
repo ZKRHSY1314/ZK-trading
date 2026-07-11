@@ -13,6 +13,7 @@ import yaml
 
 from app.config import PROJECT_ROOT, settings
 from app.data.trading_calendar import trading_session_age
+from app.learning.structure_scoring import ObservableStructureScorer
 from app.public_opinion.service import CodexPublicOpinionService
 from app.storage.sqlite_store import SQLiteStore
 
@@ -40,6 +41,7 @@ FORBID_BUY_FLAGS = {
     "PB_HIGH",
     "CHASE_RISK",
     "DATA_WEAK",
+    "STRUCTURE_DISTRIBUTION_VETO",
 }
 
 
@@ -568,6 +570,18 @@ class StrategySelectionV2Service:
         )
         hard_blocks = self._hard_blocks(row, features)
         position_class = self._position_class(features)
+        tailwind = features.get("public_opinion_tailwind") or {}
+        sector_probability = None
+        if tailwind.get("matched"):
+            sector_probability = max(
+                0.0,
+                min(1.0, float(tailwind.get("heat_score") or 0.0) / 100.0),
+            )
+        features["structure_signal"] = ObservableStructureScorer.score(
+            features,
+            position_class=position_class,
+            sector_probability=sector_probability,
+        ).as_dict()
         strategies = self._strategy_candidates(row, features, position_class)
         base_components = self._base_components(row, features, position_class, strategies)
         base_score = round(sum(base_components.values()), 2)
@@ -944,6 +958,16 @@ class StrategySelectionV2Service:
         if features.get("data_quality") != "missing_price":
             components["data_explainability"] += 1.0
 
+        structure = features.get("structure_signal") or {}
+        if float(structure.get("confidence") or 0.0) >= 0.45:
+            if structure.get("distribution_veto"):
+                components["buy_maturity"] = min(components["buy_maturity"], 1.0)
+            else:
+                components["buy_maturity"] += min(
+                    3.0,
+                    float(structure.get("pre_markup_probability") or 0.0) * 3.0,
+                )
+
         return {
             key: round(min(float(weights[key]), value), 2)
             for key, value in components.items()
@@ -1168,6 +1192,8 @@ class StrategySelectionV2Service:
             add("DATA_WEAK", 0.65)
         if position_class == "HIGH_DISTRIBUTION":
             add("HIGH_DISTRIBUTION", 0.75)
+        if (features.get("structure_signal") or {}).get("distribution_veto"):
+            add("STRUCTURE_DISTRIBUTION_VETO", 0.85)
         if (features.get("volume_ratio") or 0) >= 5:
             add("VOLUME_ABNORMAL", 0.65)
         if (

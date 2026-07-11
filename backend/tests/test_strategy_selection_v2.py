@@ -178,6 +178,12 @@ def test_strategy_selection_v2_soft_scores_and_plan_buckets(test_db):
 
     distribution = _item(result, "SZ300002")
     assert "HIGH_DISTRIBUTION" in distribution["risk_flags"]
+    assert "STRUCTURE_DISTRIBUTION_VETO" in distribution["risk_flags"]
+    assert distribution["features"]["structure_signal"]["distribution_veto"] is True
+    assert (
+        distribution["features"]["structure_signal"]["distribution_probability"]
+        > distribution["features"]["structure_signal"]["pre_markup_probability"]
+    )
     assert distribution["plan_type"] != "SIM_BUY_PLAN"
 
     weak_low = _item(result, "SZ300003")
@@ -198,6 +204,11 @@ def test_strategy_selection_v2_soft_scores_and_plan_buckets(test_db):
     assert a_kill["plan_type"] != "SIM_BUY_PLAN"
 
     cost_line = _item(result, "SZ300007")
+    assert cost_line["features"]["structure_signal"]["review_only"] is True
+    assert (
+        cost_line["features"]["structure_signal"]["pre_markup_probability"]
+        > cost_line["features"]["structure_signal"]["distribution_probability"]
+    )
     assert "STRATEGY_004" in cost_line["strategy_candidates"]
     assert cost_line["plan_type"] == "WAIT_BREAKOUT_PLAN"
 
