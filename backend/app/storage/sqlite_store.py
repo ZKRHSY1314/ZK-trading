@@ -1260,6 +1260,64 @@ CREATE INDEX IF NOT EXISTS idx_experience_events_category ON experience_events(c
 CREATE INDEX IF NOT EXISTS idx_experience_reviews_period ON experience_reviews(period_type, period_start, period_end);
 CREATE INDEX IF NOT EXISTS idx_strategy_perf_strategy ON strategy_performance_snapshots(strategy_name);
 CREATE INDEX IF NOT EXISTS idx_code_evolution_status ON code_evolution_records(status);
+
+CREATE TABLE IF NOT EXISTS forecast_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK(scope IN ('sector', 'stock', 'system')),
+    subject TEXT NOT NULL,
+    decision_cutoff TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL CHECK(horizon_days IN (1, 3, 5, 10, 20)),
+    rank INTEGER,
+    score REAL,
+    probability REAL,
+    model_version TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    data_version TEXT NOT NULL,
+    features_json TEXT NOT NULL DEFAULT '{}',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    reasons_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL,
+    review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(decision_id, scope, subject, horizon_days)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_decisions_snapshot
+    ON forecast_decisions(decision_cutoff DESC, decision_id);
+CREATE INDEX IF NOT EXISTS idx_forecast_decisions_subject
+    ON forecast_decisions(scope, subject, horizon_days, decision_cutoff DESC);
+CREATE INDEX IF NOT EXISTS idx_forecast_decisions_available
+    ON forecast_decisions(available_at, decision_cutoff);
+
+CREATE TABLE IF NOT EXISTS forecast_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK(scope IN ('sector', 'stock', 'system')),
+    subject TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL CHECK(horizon_days IN (1, 3, 5, 10, 20)),
+    observed_at TEXT NOT NULL,
+    continuous_return REAL NOT NULL,
+    benchmark_return REAL NOT NULL,
+    sector_return REAL NOT NULL,
+    benchmark_neutral_return REAL NOT NULL,
+    sector_neutral_return REAL NOT NULL,
+    data_version TEXT NOT NULL,
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'matured' CHECK(status = 'matured'),
+    review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(decision_id, scope, subject, horizon_days),
+    FOREIGN KEY(decision_id, scope, subject, horizon_days)
+        REFERENCES forecast_decisions(decision_id, scope, subject, horizon_days)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_outcomes_matured
+    ON forecast_outcomes(status, observed_at, horizon_days);
+CREATE INDEX IF NOT EXISTS idx_forecast_outcomes_subject
+    ON forecast_outcomes(scope, subject, horizon_days, observed_at);
 """
 
 
