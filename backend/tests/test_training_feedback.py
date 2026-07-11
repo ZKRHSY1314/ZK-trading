@@ -153,6 +153,47 @@ def test_public_opinion_capture_extracts_sector_context(test_db):
     assert json.loads(sample["risk_flags_json"]) == ["sector_risk:medicine"]
 
 
+def test_public_opinion_without_symbol_is_explicitly_unsupported_for_stock_outcome(test_db):
+    _reset(test_db)
+    task_id = _insert_task(
+        test_db,
+        "public_opinion_capture",
+        {
+            "run_id": 8,
+            "status": "completed",
+            "source_count": 2,
+            "item_count": 3,
+            "sector_count": 1,
+            "sector_signals": [
+                {"sector": "ai_compute", "heat_score": 45, "risk_count": 0}
+            ],
+            "review_only": True,
+            "simulation_only": True,
+        },
+    )
+    AgentLearningExtractionService(store=test_db).extract_from_task(task_id)
+    sample = test_db.fetch_one(
+        "SELECT * FROM agent_learning_samples WHERE source_task_id = ?",
+        (task_id,),
+    )
+    with test_db.connect() as conn:
+        conn.execute(
+            "UPDATE agent_learning_samples SET created_at = '2020-01-01' WHERE id = ?",
+            (sample["id"],),
+        )
+
+    outcome = OutcomeLabelingService(store=test_db, provider=object()).label_sample(
+        sample["id"],
+        horizon_days=5,
+    )
+
+    features = json.loads(sample["features_json"])
+    assert features["market_outcome_support"] == "unsupported_without_symbol"
+    assert outcome["outcome_label"] == "unsupported_non_market_sample"
+    assert outcome["metrics"]["reason"] == "symbol_required_for_market_outcome"
+    assert outcome["outcome_label"] != "system_stable"
+
+
 def test_recent_extraction_processes_oldest_unprocessed_task_first(test_db):
     _reset(test_db)
     oldest_id = _insert_task(
@@ -221,8 +262,48 @@ def test_outcome_labeling_prefers_local_daily_bar_cache(test_db):
     )
 
     assert provider.calls == 0
-    assert outcome["outcome_label"] == "strong_follow_through"
+    assert outcome["outcome_label"] == "mild_follow_through"
+    assert outcome["start_date"] == "2026-01-05"
+    assert outcome["start_price"] == 10.4
     assert outcome["metrics"]["data_source"] == "daily_bar_cache"
+
+
+def test_outcome_labeling_starts_at_next_trading_day_open_and_excludes_signal_day(test_db):
+    _reset(test_db)
+    sample_id = _insert_sample(test_db, "SH600088", "2026-01-02")
+    with test_db.connect() as conn:
+        for trade_date, open_, close, high, low in (
+            ("2026-01-02", 10.0, 10.0, 100.0, 1.0),
+            ("2026-01-05", 11.0, 12.0, 13.0, 10.0),
+            ("2026-01-06", 12.0, 14.0, 15.0, 11.0),
+        ):
+            conn.execute(
+                """
+                INSERT INTO daily_bar_cache(
+                    symbol, trade_date, open, high, low, close,
+                    volume, amount, source, quality_status
+                ) VALUES ('SH600088', ?, ?, ?, ?, ?, 1000, 1000000, 'fixture', 'ready')
+                """,
+                (trade_date, open_, high, low, close),
+            )
+
+    class NeverCalledProvider:
+        def get_daily_bars(self, symbol: str):
+            raise AssertionError("local post-signal bars should satisfy the horizon")
+
+    outcome = OutcomeLabelingService(
+        store=test_db,
+        provider=NeverCalledProvider(),
+    ).label_sample(sample_id, horizon_days=2)
+
+    assert outcome["start_date"] == "2026-01-05"
+    assert outcome["end_date"] == "2026-01-06"
+    assert outcome["start_price"] == 11.0
+    assert outcome["end_price"] == 14.0
+    assert round(outcome["max_return_pct"], 2) == 36.36
+    assert round(outcome["min_return_pct"], 2) == -9.09
+    assert outcome["metrics"]["signal_date"] == "2026-01-02"
+    assert outcome["metrics"]["entry_price_basis"] == "next_trading_day_open"
 
 
 def test_outcome_labeling_accepts_standard_akshare_chinese_columns(test_db):
@@ -237,8 +318,9 @@ def test_outcome_labeling_accepts_standard_akshare_chinese_columns(test_db):
             return pd.DataFrame(
                 {
                     "日期": ["2026-01-02", "2026-01-05", "2026-01-06"],
-                    "收盘": [10.0, 10.2, 10.3],
-                    "最高": [10.1, 10.3, 10.4],
+                    "开盘": [10.0, 10.2, 10.3],
+                    "收盘": [10.0, 10.2, 10.4],
+                    "最高": [10.1, 10.3, 10.5],
                     "最低": [9.9, 10.0, 10.1],
                 }
             )
@@ -252,6 +334,33 @@ def test_outcome_labeling_accepts_standard_akshare_chinese_columns(test_db):
     assert outcome["outcome_label"] == "mild_follow_through"
     assert repeated["id"] == outcome["id"]
     assert outcome["metrics"]["data_source"] == "akshare_fallback"
+
+
+def test_outcome_labeling_supports_standard_1_3_5_10_20_day_horizons(test_db):
+    _reset(test_db)
+    sample_id = _insert_sample(test_db, "SH600089", "2026-01-01")
+    rows = [("2026-01-01", 10.0, 10.1, 9.9)]
+    rows.extend(
+        (
+            (pd.Timestamp("2026-01-01") + pd.Timedelta(days=index)).strftime("%Y-%m-%d"),
+            10.0 + index * 0.1,
+            10.2 + index * 0.1,
+            9.9 + index * 0.1,
+        )
+        for index in range(1, 21)
+    )
+    _insert_bars(test_db, "SH600089", rows)
+    service = OutcomeLabelingService(store=test_db)
+
+    outcomes = [
+        service.label_sample(sample_id, horizon_days=horizon)
+        for horizon in (1, 3, 5, 10, 20)
+    ]
+
+    assert [item["horizon_days"] for item in outcomes] == [1, 3, 5, 10, 20]
+    assert all(item["outcome_label"] != "pending_future_data" for item in outcomes)
+    assert all(item["start_date"] == "2026-01-02" for item in outcomes)
+    assert all(item["metrics"]["signal_day_excluded"] is True for item in outcomes)
 
 
 def test_training_feedback_run_marks_small_resolved_sample_set_insufficient(test_db):

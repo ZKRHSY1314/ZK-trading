@@ -541,6 +541,10 @@ class AgentLearningExtractionService:
                     "error_count": len(result.get("errors") or []),
                     "review_only": result.get("review_only", True),
                     "simulation_only": result.get("simulation_only", True),
+                    "market_outcome_support": "unsupported_without_symbol",
+                    "market_outcome_reason": (
+                        "sector_benchmark_proxy_not_available"
+                    ),
                 },
                 "decision": {
                     "summary": result.get("summary") or {},

@@ -303,7 +303,6 @@ def test_strategy_selection_v2_quarantines_candidates_without_market_basis(test_
             )
             """
         )
-
     result = StrategySelectionV2Service(store=test_db).run(mode="balanced", limit=20)
     active_symbols = {item["symbol"] for item in result["daily_candidate_snapshot"]}
     gap_symbols = {item["symbol"] for item in result["data_gap_candidates"]}
@@ -443,7 +442,8 @@ def test_strategy_selection_v2_blocks_stale_production_bars(test_db):
         conn.execute(
             """
             UPDATE stock_profiles
-            SET dataset_name = 'production', source_file = 'market_import.csv'
+            SET dataset_name = 'production', source_file = 'market_import.csv',
+                raw_json = '{"as_of_date":"2026-07-10"}'
             WHERE symbol = 'SH600099'
             """
         )
@@ -512,3 +512,150 @@ def test_strategy_selection_v2_global_rank_keeps_high_score_from_later_source(te
     universe = StrategySelectionV2Service(store=test_db).candidate_universe(limit=5)
 
     assert "SZ300888" in universe
+
+
+def test_strategy_selection_v2_as_of_date_excludes_all_future_evidence(test_db):
+    _reset(test_db)
+    with test_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO candidate_scores(
+                symbol, name, total_score, source, reasons_json,
+                components_json, raw_json, created_at
+            ) VALUES (
+                'SH600888', 'past-ai-candidate', 20, 'pytest', '[]', '{}', '{}',
+                '2026-01-02T09:00:00'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO candidate_scores(
+                symbol, name, total_score, source, reasons_json,
+                components_json, raw_json, created_at
+            ) VALUES (
+                'SH600888', 'future-overwrite', 99, 'pytest', '[]', '{}', '{}',
+                '2026-01-03T09:00:00'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO candidate_scores(
+                symbol, name, total_score, source, reasons_json,
+                components_json, raw_json, created_at
+            ) VALUES (
+                'SZ300999', 'future-only-candidate', 100, 'pytest', '[]', '{}', '{}',
+                '2026-01-03T09:00:00'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO stock_profiles(
+                symbol, name, current_price, score, rating,
+                dataset_name, source_file, raw_json
+            ) VALUES (
+                'SZ300777', 'undated-profile', 42, 100, 'future-unknown',
+                'production', 'undated.csv', '{}'
+            )
+            """
+        )
+        for trade_date, close in (
+            ('2026-01-01', 10.0),
+            ('2026-01-02', 11.0),
+            ('2026-01-03', 99.0),
+        ):
+            conn.execute(
+                """
+                INSERT INTO daily_bar_cache(
+                    symbol, trade_date, open, high, low, close, volume, amount,
+                    source, quality_status
+                ) VALUES ('SH600888', ?, ?, ?, ?, ?, 1000, 1000000, 'pytest', 'ready')
+                """,
+                (trade_date, close, close * 1.01, close * 0.99, close),
+            )
+        for event_ts, price, dedupe_key in (
+            ('2026-01-02T10:00:00+08:00', 12.0, 'as-of-past'),
+            ('2026-01-03T10:00:00+08:00', 100.0, 'as-of-future'),
+        ):
+            conn.execute(
+                """
+                INSERT INTO realtime_market_events(
+                    symbol, name, price, source, provider_status, event_ts,
+                    received_ts, quality_status, payload_json, dedupe_key
+                ) VALUES (
+                    'SH600888', 'past-ai-candidate', ?, 'pytest', 'ok', ?, ?,
+                    'realtime_ok', '{}', ?
+                )
+                """,
+                (price, event_ts, event_ts, dedupe_key),
+            )
+
+        past_run_id = int(
+            conn.execute(
+                """
+                INSERT INTO public_opinion_runs(
+                    status, item_count, sector_count, summary_json,
+                    review_only, simulation_only, live_trading_enabled,
+                    created_at, completed_at
+                ) VALUES (
+                    'completed', 1, 1, '{}', 1, 1, 0,
+                    '2026-01-02T11:00:00', '2026-01-02T11:01:00'
+                )
+                """
+            ).lastrowid
+        )
+        conn.execute(
+            """
+            INSERT INTO public_opinion_sector_signals(
+                run_id, sector, heat_score, item_count, positive_count,
+                keywords_json, evidence_json, suggested_action, created_at
+            ) VALUES (?, 'ai_compute', 40, 1, 1, '["AI"]', '[]',
+                      'sector_watch_review_only', '2026-01-02T11:01:00')
+            """,
+            (past_run_id,),
+        )
+        future_run_id = int(
+            conn.execute(
+                """
+                INSERT INTO public_opinion_runs(
+                    status, item_count, sector_count, summary_json,
+                    review_only, simulation_only, live_trading_enabled,
+                    created_at, completed_at
+                ) VALUES (
+                    'completed', 1, 1, '{}', 1, 1, 0,
+                    '2026-01-03T11:00:00', '2026-01-03T11:01:00'
+                )
+                """
+            ).lastrowid
+        )
+        conn.execute(
+            """
+            INSERT INTO public_opinion_sector_signals(
+                run_id, sector, heat_score, item_count, positive_count,
+                keywords_json, evidence_json, suggested_action, created_at
+            ) VALUES (?, 'defense', 99, 1, 1, '["defense"]', '[]',
+                      'sector_watch_review_only', '2026-01-03T11:01:00')
+            """,
+            (future_run_id,),
+        )
+
+    result = StrategySelectionV2Service(store=test_db).run(
+        mode="balanced",
+        limit=20,
+        as_of_date="2026-01-02",
+    )
+
+    symbols = {
+        item["symbol"]
+        for item in result["daily_candidate_snapshot"] + result["data_gap_candidates"]
+    }
+    item = _item(result, "SH600888")
+    assert symbols == {"SH600888"}
+    assert item["name"] == "past-ai-candidate"
+    assert item["features"]["bars_count"] == 2
+    assert item["features"]["price"] == 12.0
+    assert item["features"]["latest_realtime"]["event_ts"].startswith("2026-01-02")
+    assert result["public_opinion_context"]["run_id"] == past_run_id
+    assert result["public_opinion_context"]["top_sectors"][0]["sector"] == "ai_compute"

@@ -30,18 +30,10 @@ class OutcomeLabelingService:
         if not sample:
             raise ValueError(f"Sample {sample_id} not found")
 
-        created_at = str(sample.get("created_at") or datetime.now().isoformat())
         symbol = sample.get("symbol")
         start_date = self._sample_start_date(sample)
 
         if not symbol or symbol == "__no_symbol__":
-            outcome_label = "pending_future_data"
-            try:
-                created_dt = datetime.fromisoformat(created_at.replace("Z", ""))
-                if (datetime.now() - created_dt).days >= horizon_days:
-                    outcome_label = "system_stable"
-            except ValueError:
-                pass
             return self._save_outcome(
                 AgentLearningOutcome(
                     sample_id=sample_id,
@@ -54,13 +46,17 @@ class OutcomeLabelingService:
                     max_return_pct=None,
                     min_return_pct=None,
                     close_return_pct=None,
-                    outcome_label=outcome_label,
+                    outcome_label="unsupported_non_market_sample",
                     risk_outcome="unknown",
-                    metrics={"data_source": "non_market_sample"},
+                    metrics={
+                        "data_source": "non_market_sample",
+                        "reason": "symbol_required_for_market_outcome",
+                        "sample_type": sample.get("sample_type"),
+                    },
                 )
             )
 
-        required_bars = horizon_days + 1
+        required_bars = horizon_days
         bars, data_source = self._load_daily_bars(
             str(symbol),
             start_date=start_date,
@@ -83,7 +79,9 @@ class OutcomeLabelingService:
                 )
             )
 
-        future = bars[bars["trade_date"] >= start_date].sort_values("trade_date")
+        # A signal generated during a session cannot be filled at that same
+        # session's close. Outcomes begin at the next tradable session's open.
+        future = bars[bars["trade_date"] > start_date].sort_values("trade_date")
         if len(future) < required_bars:
             return self._save_outcome(
                 AgentLearningOutcome(
@@ -105,7 +103,8 @@ class OutcomeLabelingService:
 
         evaluation = future.head(required_bars)
         try:
-            start_price = float(evaluation.iloc[0]["close"])
+            evaluation_start_date = str(evaluation.iloc[0]["trade_date"])
+            start_price = float(evaluation.iloc[0]["open"])
             end_price = float(evaluation.iloc[-1]["close"])
             max_price = float(evaluation["high"].max())
             min_price = float(evaluation["low"].min())
@@ -130,6 +129,7 @@ class OutcomeLabelingService:
             else:
                 risk_outcome = "low_drawdown"
         except (KeyError, ValueError, IndexError, ZeroDivisionError):
+            evaluation_start_date = start_date
             start_price = None
             end_price = None
             max_return_pct = None
@@ -139,7 +139,13 @@ class OutcomeLabelingService:
             outcome_label = "pending_future_data"
             risk_outcome = "unknown"
 
-        metrics = {"data_source": data_source}
+        metrics = {
+            "data_source": data_source,
+            "signal_date": start_date,
+            "entry_price_basis": "next_trading_day_open",
+            "signal_day_excluded": True,
+            "evaluated_session_count": int(len(evaluation)),
+        }
         if max_return_pct is not None:
             metrics.update(
                 {
@@ -153,7 +159,7 @@ class OutcomeLabelingService:
                 sample_id=sample_id,
                 symbol=str(symbol),
                 horizon_days=horizon_days,
-                start_date=start_date,
+                start_date=evaluation_start_date,
                 end_date=end_date,
                 start_price=start_price,
                 end_price=end_price,
@@ -208,11 +214,12 @@ class OutcomeLabelingService:
         placeholders = ",".join("?" for _ in variants)
         rows = self.store.fetch_all(
             f"""
-            SELECT trade_date, close, high, low
+            SELECT trade_date, open, close, high, low
             FROM daily_bar_cache
             WHERE symbol IN ({placeholders})
               AND trade_date != 'ERROR'
               AND quality_status = 'ready'
+              AND open IS NOT NULL
               AND close IS NOT NULL
               AND high IS NOT NULL
               AND low IS NOT NULL
@@ -241,6 +248,7 @@ class OutcomeLabelingService:
             return self._empty_frame()
         aliases = {
             "trade_date": ("trade_date", "date", "日期"),
+            "open": ("open", "开盘"),
             "close": ("close", "收盘"),
             "high": ("high", "最高"),
             "low": ("low", "最低"),
@@ -255,18 +263,21 @@ class OutcomeLabelingService:
         normalized["trade_date"] = pd.to_datetime(
             normalized["trade_date"], errors="coerce"
         ).dt.strftime("%Y-%m-%d")
-        for column in ("close", "high", "low"):
+        for column in ("open", "close", "high", "low"):
             normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
-        normalized.dropna(subset=["trade_date", "close", "high", "low"], inplace=True)
+        normalized.dropna(
+            subset=["trade_date", "open", "close", "high", "low"],
+            inplace=True,
+        )
         return normalized.sort_values("trade_date").drop_duplicates("trade_date", keep="last")
 
     def _future_bar_count(self, frame: pd.DataFrame, start_date: str) -> int:
         if frame.empty:
             return 0
-        return int((frame["trade_date"] >= start_date).sum())
+        return int((frame["trade_date"] > start_date).sum())
 
     def _empty_frame(self) -> pd.DataFrame:
-        return pd.DataFrame(columns=["trade_date", "close", "high", "low"])
+        return pd.DataFrame(columns=["trade_date", "open", "close", "high", "low"])
 
     def _json_object(self, raw: Any) -> dict[str, Any]:
         if isinstance(raw, dict):

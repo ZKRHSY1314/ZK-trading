@@ -66,9 +66,16 @@ class StrategySelectionV2Service:
     ) -> dict[str, Any]:
         mode = mode if mode in {"strict", "balanced", "exploratory"} else "balanced"
         run_date = as_of_date or date.today().isoformat()
-        rows = self._candidate_rows(limit=max(1, min(int(limit), 500)))
-        public_opinion_context = self._public_opinion_context()
-        active_rows, data_gap_rows = self._split_rows_by_market_basis(rows)
+        rows = self._candidate_rows(
+            limit=max(1, min(int(limit), 500)),
+            as_of_date=run_date,
+            strict_point_in_time=as_of_date is not None,
+        )
+        public_opinion_context = self._public_opinion_context(as_of_date=run_date)
+        active_rows, data_gap_rows = self._split_rows_by_market_basis(
+            rows,
+            as_of_date=run_date,
+        )
         candidates = [
             self._evaluate_candidate(
                 row,
@@ -165,25 +172,40 @@ class StrategySelectionV2Service:
         (out_dir / "daily_summary.md").write_text(result["daily_summary_md"], encoding="utf-8")
         return out_dir
 
-    def candidate_universe(self, limit: int = 30) -> list[str]:
-        rows = self._candidate_rows(limit=max(1, min(int(limit), 500)))
+    def candidate_universe(
+        self,
+        limit: int = 30,
+        as_of_date: str | None = None,
+    ) -> list[str]:
+        rows = self._candidate_rows(
+            limit=max(1, min(int(limit), 500)),
+            as_of_date=as_of_date or date.today().isoformat(),
+            strict_point_in_time=as_of_date is not None,
+        )
         return [
             symbol
             for symbol in (self._normalize_symbol(row.get("symbol")) for row in rows)
             if symbol
         ]
 
-    def _candidate_rows(self, *, limit: int) -> list[dict[str, Any]]:
+    def _candidate_rows(
+        self,
+        *,
+        limit: int,
+        as_of_date: str,
+        strict_point_in_time: bool,
+    ) -> list[dict[str, Any]]:
         by_symbol: dict[str, dict[str, Any]] = {}
 
         for row in self.store.fetch_all(
             """
             SELECT symbol, name, state, score, rating, risk_level, source, reason, raw_json, updated_at
             FROM candidate_lifecycle
+            WHERE date(updated_at) <= date(?)
             ORDER BY updated_at DESC, score DESC
             LIMIT ?
             """,
-            (limit,),
+            (as_of_date, limit),
         ):
             symbol = self._normalize_symbol(row.get("symbol"))
             if not symbol:
@@ -213,6 +235,12 @@ class StrategySelectionV2Service:
             symbol = self._normalize_symbol(row.get("symbol"))
             if not symbol:
                 continue
+            profile_raw = self._json(row.get("raw_json"))
+            if strict_point_in_time and not self._profile_available_as_of(
+                profile_raw,
+                as_of_date,
+            ):
+                continue
             merged = by_symbol.setdefault(symbol, {"symbol": symbol})
             merged.setdefault("_evidence_sources", []).append("stock_profiles")
             merged.setdefault("_source_scores", {})["stock_profiles"] = self._float(
@@ -222,17 +250,30 @@ class StrategySelectionV2Service:
                 if value is not None or key not in merged:
                     merged[key] = value
             merged["symbol"] = symbol
-            merged["profile_raw"] = self._json(row.get("raw_json"))
+            merged["profile_raw"] = profile_raw
 
         for row in self.store.fetch_all(
             """
-            SELECT symbol, name, trade_date, current_price, pct_change, turnover_rate,
-                   volume, amount, priority, discovery_type, source, reasons_json, raw_json, created_at
-            FROM auto_discovered_candidates
-            ORDER BY id DESC
+            SELECT adc.symbol, adc.name, adc.trade_date, adc.current_price,
+                   adc.pct_change, adc.turnover_rate, adc.volume, adc.amount,
+                   adc.priority, adc.discovery_type, adc.source,
+                   adc.reasons_json, adc.raw_json, adc.created_at
+            FROM auto_discovered_candidates adc
+            JOIN (
+                SELECT symbol, MAX(id) AS latest_id
+                FROM auto_discovered_candidates
+                WHERE symbol IS NOT NULL
+                  AND date(created_at) <= date(?)
+                  AND (
+                      trade_date IS NULL
+                      OR date(trade_date) <= date(?)
+                  )
+                GROUP BY symbol
+            ) latest ON latest.latest_id = adc.id
+            ORDER BY adc.id DESC
             LIMIT ?
             """,
-            (limit,),
+            (as_of_date, as_of_date, limit),
         ):
             symbol = self._normalize_symbol(row.get("symbol"))
             if not symbol:
@@ -263,12 +304,13 @@ class StrategySelectionV2Service:
                 SELECT symbol, MAX(id) AS latest_id
                 FROM potential_search_items
                 WHERE symbol IS NOT NULL
+                  AND date(created_at) <= date(?)
                 GROUP BY symbol
             ) latest ON latest.latest_id = psi.id
             ORDER BY psi.potential_score DESC, psi.id DESC
             LIMIT ?
             """,
-            (limit,),
+            (as_of_date, limit),
         ):
             symbol = self._normalize_symbol(row.get("symbol"))
             if not symbol:
@@ -303,12 +345,13 @@ class StrategySelectionV2Service:
                 SELECT symbol, MAX(id) AS latest_id
                 FROM candidate_scores
                 WHERE symbol IS NOT NULL
+                  AND date(created_at) <= date(?)
                 GROUP BY symbol
             ) latest ON latest.latest_id = cs.id
             ORDER BY cs.total_score DESC, cs.id DESC
             LIMIT ?
             """,
-            (limit,),
+            (as_of_date, limit),
         ):
             symbol = self._normalize_symbol(row.get("symbol"))
             if not symbol:
@@ -362,14 +405,19 @@ class StrategySelectionV2Service:
     def _split_rows_by_market_basis(
         self,
         rows: list[dict[str, Any]],
+        *,
+        as_of_date: str,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         symbols = [
             symbol
             for symbol in (self._normalize_symbol(row.get("symbol")) for row in rows)
             if symbol
         ]
-        bar_symbols = self._symbols_with_daily_bars(symbols)
-        realtime_symbols = self._symbols_with_realtime_price(symbols)
+        bar_symbols = self._symbols_with_daily_bars(symbols, as_of_date=as_of_date)
+        realtime_symbols = self._symbols_with_realtime_price(
+            symbols,
+            as_of_date=as_of_date,
+        )
         active: list[dict[str, Any]] = []
         data_gap: list[dict[str, Any]] = []
         for row in rows:
@@ -388,7 +436,12 @@ class StrategySelectionV2Service:
                 data_gap.append(gap_row)
         return active, data_gap
 
-    def _symbols_with_daily_bars(self, symbols: list[str]) -> set[str]:
+    def _symbols_with_daily_bars(
+        self,
+        symbols: list[str],
+        *,
+        as_of_date: str,
+    ) -> set[str]:
         unique = sorted(set(symbols))
         if not unique:
             return set()
@@ -399,13 +452,19 @@ class StrategySelectionV2Service:
             FROM daily_bar_cache
             WHERE symbol IN ({placeholders})
               AND trade_date != 'ERROR'
+              AND date(trade_date) <= date(?)
               AND close IS NOT NULL
             """,
-            tuple(unique),
+            (*unique, as_of_date),
         )
         return {str(row.get("symbol")) for row in rows if row.get("symbol")}
 
-    def _symbols_with_realtime_price(self, symbols: list[str]) -> set[str]:
+    def _symbols_with_realtime_price(
+        self,
+        symbols: list[str],
+        *,
+        as_of_date: str,
+    ) -> set[str]:
         unique = sorted(set(symbols))
         if not unique:
             return set()
@@ -417,9 +476,10 @@ class StrategySelectionV2Service:
             WHERE symbol IN ({placeholders})
               AND price IS NOT NULL
               AND price > 0
+              AND substr(event_ts, 1, 10) <= ?
             GROUP BY symbol
             """,
-            tuple(unique),
+            (*unique, as_of_date),
         )
         return {str(row.get("symbol")) for row in rows if row.get("symbol")}
 
@@ -462,6 +522,29 @@ class StrategySelectionV2Service:
         return dataset_name == "unit_test" or source_file.startswith("test_")
 
     @staticmethod
+    def _profile_available_as_of(
+        raw: dict[str, Any],
+        as_of_date: str,
+    ) -> bool:
+        """Reject mutable profiles that cannot prove when they were known."""
+        snapshot_value = next(
+            (
+                raw.get(key)
+                for key in ("as_of_date", "snapshot_date", "trade_date", "data_date")
+                if raw.get(key)
+            ),
+            None,
+        )
+        if not snapshot_value:
+            return False
+        try:
+            snapshot_date = date.fromisoformat(str(snapshot_value)[:10])
+            target_date = date.fromisoformat(str(as_of_date)[:10])
+        except ValueError:
+            return False
+        return snapshot_date <= target_date
+
+    @staticmethod
     def _fixture_market_data_allowed(row: dict[str, Any]) -> bool:
         return row.get("_fixture_only") is True
 
@@ -474,8 +557,8 @@ class StrategySelectionV2Service:
         public_opinion_context: dict[str, Any],
     ) -> dict[str, Any]:
         symbol = self._normalize_symbol(row.get("symbol")) or str(row.get("symbol") or "")
-        bars = self._daily_bars(symbol)
-        realtime = self._latest_realtime(symbol)
+        bars = self._daily_bars(symbol, as_of_date=run_date)
+        realtime = self._latest_realtime(symbol, as_of_date=run_date)
         features = self._features(
             row,
             bars,
@@ -866,13 +949,76 @@ class StrategySelectionV2Service:
             for key, value in components.items()
         }
 
-    def _public_opinion_context(self) -> dict[str, Any]:
+    def _public_opinion_context(self, *, as_of_date: str) -> dict[str, Any]:
         try:
-            return CodexPublicOpinionService(store=self.store).latest_context(limit=8)
+            service = CodexPublicOpinionService(store=self.store)
+            captures = self.store.fetch_all(
+                """
+                SELECT id, status, item_count, sector_count, summary_json,
+                       review_only, simulation_only, live_trading_enabled,
+                       created_at, completed_at
+                FROM public_opinion_runs
+                WHERE date(created_at) <= date(?)
+                  AND date(COALESCE(completed_at, created_at)) <= date(?)
+                ORDER BY id DESC
+                LIMIT 24
+                """,
+                (as_of_date, as_of_date),
+            )
+            if not captures:
+                return {
+                    "status": "empty",
+                    "as_of_date": as_of_date,
+                    "top_sectors": [],
+                    "review_only": True,
+                    "simulation_only": True,
+                    "live_trading_enabled": settings.enable_live_trading,
+                }
+            latest_capture = captures[0]
+            usable = [
+                row
+                for row in captures
+                if str(row.get("status") or "") in {"completed", "partial"}
+                and int(row.get("item_count") or 0) > 0
+            ]
+            selected = usable[0] if usable else latest_capture
+            rows = self.store.fetch_all(
+                """
+                SELECT *
+                FROM public_opinion_sector_signals
+                WHERE run_id = ?
+                  AND date(created_at) <= date(?)
+                ORDER BY heat_score DESC, item_count DESC, sector ASC
+                LIMIT 8
+                """,
+                (selected["id"], as_of_date),
+            )
+            sectors = [service._hydrate_sector_signal(row) for row in rows]
+            run_status = str(selected.get("status") or "empty")
+            return {
+                "status": run_status,
+                "run_status": run_status,
+                "freshness_status": "available_as_of_date",
+                "as_of_date": as_of_date,
+                "run_id": selected.get("id"),
+                "latest_capture_run_id": latest_capture.get("id"),
+                "latest_capture_status": latest_capture.get("status"),
+                "selection_reason": "latest_usable_run_available_as_of_date",
+                "item_count": selected.get("item_count"),
+                "sector_count": selected.get("sector_count"),
+                "summary": self._json(selected.get("summary_json")),
+                "top_sectors": sectors if usable else [],
+                "review_only": bool(selected.get("review_only")),
+                "simulation_only": bool(selected.get("simulation_only")),
+                "live_trading_enabled": bool(selected.get("live_trading_enabled")),
+                "created_at": selected.get("created_at"),
+                "completed_at": selected.get("completed_at"),
+            }
         except Exception as exc:
             return {
                 "status": "unavailable",
                 "error": str(exc),
+                "as_of_date": as_of_date,
                 "top_sectors": [],
                 "review_only": True,
                 "simulation_only": True,
@@ -1237,31 +1383,43 @@ class StrategySelectionV2Service:
             f"处理建议：{diagnostics['recommendation']}\n"
         )
 
-    def _daily_bars(self, symbol: str) -> list[dict[str, Any]]:
+    def _daily_bars(
+        self,
+        symbol: str,
+        *,
+        as_of_date: str,
+    ) -> list[dict[str, Any]]:
         return self.store.fetch_all(
             """
             SELECT trade_date, open, high, low, close, volume, amount, source, quality_status, updated_at
             FROM daily_bar_cache
             WHERE symbol = ?
               AND trade_date != 'ERROR'
+              AND date(trade_date) <= date(?)
               AND open > 0 AND high > 0 AND low > 0 AND close > 0
               AND (quality_status IS NULL OR LOWER(quality_status) IN ('ready', 'ok', 'valid'))
             ORDER BY trade_date ASC
             """,
-            (symbol,),
+            (symbol, as_of_date),
         )
 
-    def _latest_realtime(self, symbol: str) -> dict[str, Any] | None:
+    def _latest_realtime(
+        self,
+        symbol: str,
+        *,
+        as_of_date: str,
+    ) -> dict[str, Any] | None:
         row = self.store.fetch_one(
             """
             SELECT symbol, name, price, volume, amount, source, provider_status,
                    event_ts, received_ts, latency_ms, quality_status, fallback_used
             FROM realtime_market_events
             WHERE symbol = ?
+              AND substr(event_ts, 1, 10) <= ?
             ORDER BY event_ts DESC, id DESC
             LIMIT 1
             """,
-            (symbol,),
+            (symbol, as_of_date),
         )
         return row
 
