@@ -16,6 +16,9 @@ import xml.etree.ElementTree as ET
 from typing import Any
 
 from app.config import settings
+from app.market_intelligence.models import EventFact
+from app.market_intelligence.service import MarketIntelligenceService
+from app.market_intelligence.taxonomy import SECTOR_TAXONOMY
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -61,61 +64,6 @@ DEFAULT_SOURCES: tuple[PublicOpinionSource, ...] = (
     ),
 )
 
-
-SECTOR_TAXONOMY: dict[str, dict[str, Any]] = {
-    "ai_compute": {
-        "display_name": "AI computing",
-        "keywords": [
-            "人工智能",
-            "AI",
-            "大模型",
-            "算力",
-            "数据中心",
-            "光模块",
-            "CPO",
-            "半导体",
-            "芯片",
-            "存储",
-            "机器人",
-        ],
-    },
-    "digital_economy": {
-        "display_name": "Digital economy",
-        "keywords": ["数字经济", "数据要素", "信创", "网络安全", "鸿蒙", "云计算", "工业互联网"],
-    },
-    "brokerage_finance": {
-        "display_name": "Brokerage and capital market",
-        "keywords": ["券商", "证券", "资本市场", "交易所", "融资融券", "并购重组", "注册制", "印花税"],
-    },
-    "state_owned_reform": {
-        "display_name": "SOE reform",
-        "keywords": ["国企改革", "央企", "市值管理", "资产注入", "混改", "重组"],
-    },
-    "new_energy": {
-        "display_name": "New energy",
-        "keywords": ["新能源", "光伏", "储能", "锂电", "电池", "风电", "充电桩", "固态电池"],
-    },
-    "low_altitude": {
-        "display_name": "Low-altitude economy",
-        "keywords": ["低空经济", "无人机", "通航", "eVTOL", "飞行汽车", "空管"],
-    },
-    "medicine": {
-        "display_name": "Medicine",
-        "keywords": ["创新药", "医药", "医疗器械", "CRO", "疫苗", "中药"],
-    },
-    "consumer": {
-        "display_name": "Consumer",
-        "keywords": ["消费", "食品饮料", "白酒", "旅游", "免税", "家电", "汽车"],
-    },
-    "infrastructure": {
-        "display_name": "Infrastructure",
-        "keywords": ["基建", "水利", "特高压", "电网", "铁路", "工程机械", "城市更新"],
-    },
-    "defense": {
-        "display_name": "Defense",
-        "keywords": ["军工", "航空发动机", "卫星", "北斗", "航天", "雷达"],
-    },
-}
 
 POSITIVE_KEYWORDS = [
     "利好",
@@ -233,6 +181,9 @@ class CodexPublicOpinionService:
                 "policy_market_risk_tagging",
                 "sector_signal_persistence",
                 "codex_structured_evidence_ingest",
+                "event_fact_normalization",
+                "point_in_time_cross_market_context",
+                "review_only_sector_theses",
                 "selection_v2_tailwind_context",
             ],
             "recommended_cadence": ["09:00", "11:30", "13:00", "15:10", "20:30"],
@@ -501,6 +452,10 @@ class CodexPublicOpinionService:
         source_stats["future_filtered_count"] = future_filtered_count
         source_stats["ingest_mode"] = "codex_structured_evidence"
         sector_signals = self._sector_signals(accepted)
+        intelligence = MarketIntelligenceService(store=self.store).build_snapshot(
+            accepted,
+            as_of=datetime.now(timezone.utc).isoformat(),
+        )
         status = "partial" if errors or stale_filtered_count or future_filtered_count else (
             "completed" if accepted else "empty"
         )
@@ -523,6 +478,9 @@ class CodexPublicOpinionService:
             "sector_count": len(sector_signals),
             "items": accepted,
             "sector_signals": sector_signals,
+            "event_facts": intelligence["event_facts"],
+            "cross_market_context": intelligence["cross_market_context"],
+            "sector_theses": intelligence["sector_theses"],
             "errors": errors,
             "summary": summary,
             "next_action": summary["next_action"],
@@ -1544,10 +1502,18 @@ class CodexPublicOpinionService:
         if not source_id:
             source_id = urllib.parse.urlparse(url).hostname or "codex_search"
         source_id = re.sub(r"[^a-zA-Z0-9_.-]+", "_", source_id).strip("_") or "codex_search"
+        validated_source_tier = self._validated_source_tier(payload.get("source_tier"), url)
+        event_fact = EventFact.from_evidence(
+            {
+                **payload,
+                "source_tier": validated_source_tier,
+                "evidence_urls": payload.get("evidence_urls") or [url],
+            }
+        ).to_dict()
         item = {
             "source_id": source_id,
             "source_name": source_name,
-            "source_tier": self._validated_source_tier(payload.get("source_tier"), url),
+            "source_tier": validated_source_tier,
             "category": "market" if category == "sector" else category,
             "title": title,
             "url": url,
@@ -1555,12 +1521,14 @@ class CodexPublicOpinionService:
             "summary": summary,
             "retrieved_at": retrieved_at.isoformat(),
             "published_at_status": publication_status,
+            "event_fact": event_fact,
             "raw": {
                 "parser": "codex_structured_evidence",
                 "retrieved_at": retrieved_at.isoformat(),
                 "published_at_status": publication_status,
-                "source_tier": self._validated_source_tier(payload.get("source_tier"), url),
+                "source_tier": validated_source_tier,
                 "claims": payload.get("claims") or [],
+                "event_fact": event_fact,
             },
         }
         return self._annotate_freshness(item)

@@ -1,14 +1,116 @@
 import json
 from datetime import datetime
+import sqlite3
+from typing import Any
 
 from app.config import settings
+from app.market_intelligence.models import iso_utc, parse_utc
 from app.storage.sqlite_store import SQLiteStore
 
 
+GLOBAL_MARKET_BARS_REQUIREMENT = {
+    "table": "global_market_bars",
+    "required_columns": [
+        "symbol",
+        "asset_class",
+        "bar_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "source",
+        "available_at",
+        "quality_status",
+    ],
+    "point_in_time_rule": "bar_time <= as_of AND available_at <= as_of",
+    "recommended_unique_key": ["symbol", "bar_time", "source"],
+}
+
+
 class MarketRegimeService:
-    def __init__(self):
-        self.store = SQLiteStore(settings.database_path)
+    def __init__(self, store: SQLiteStore | None = None):
+        self.store = store or SQLiteStore(settings.database_path)
         self.store.init()
+
+    def get_cross_market_features(self, as_of: str) -> dict[str, Any]:
+        """Return only global bars that were available at the requested cutoff."""
+
+        parsed_as_of = parse_utc(as_of, field="as_of")
+        assert parsed_as_of is not None
+        cutoff = iso_utc(parsed_as_of) or str(as_of)
+        with self.store.connect() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (GLOBAL_MARKET_BARS_REQUIREMENT["table"],),
+            ).fetchone()
+            if not exists:
+                return self._missing_cross_market(cutoff, "global_market_bars_missing")
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT symbol, asset_class, bar_time, close, source, available_at
+                    FROM global_market_bars
+                    WHERE quality_status = 'ready'
+                      AND datetime(bar_time) <= datetime(?)
+                      AND datetime(available_at) <= datetime(?)
+                    ORDER BY symbol ASC, datetime(bar_time) DESC, datetime(available_at) DESC
+                    """,
+                    (cutoff, cutoff),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return self._missing_cross_market(cutoff, "global_market_bars_schema_invalid")
+
+        grouped: dict[str, list[Any]] = {}
+        for row in rows:
+            grouped.setdefault(str(row["symbol"]), []).append(row)
+        features: list[dict[str, Any]] = []
+        for symbol, symbol_rows in grouped.items():
+            latest = symbol_rows[0]
+            latest_close = float(latest["close"])
+            return_1d = self._period_return(latest_close, symbol_rows, 1)
+            return_5d = self._period_return(latest_close, symbol_rows, 5)
+            features.append(
+                {
+                    "symbol": symbol,
+                    "asset_class": str(latest["asset_class"]),
+                    "bar_time": str(latest["bar_time"]),
+                    "available_at": str(latest["available_at"]),
+                    "close": latest_close,
+                    "return_1d": return_1d,
+                    "return_5d": return_5d,
+                    "bar_count": len(symbol_rows),
+                    "source": str(latest["source"]),
+                }
+            )
+        return {
+            "status": "ready" if features else "insufficient_data",
+            "as_of": cutoff,
+            "features": features,
+            "reason": None if features else "no_global_market_bars_at_as_of",
+            "required_table": GLOBAL_MARKET_BARS_REQUIREMENT,
+            "point_in_time": True,
+        }
+
+    @staticmethod
+    def _period_return(latest_close: float, rows: list[Any], periods: int) -> float | None:
+        if len(rows) <= periods:
+            return None
+        baseline = float(rows[periods]["close"])
+        if baseline == 0:
+            return None
+        return round(latest_close / baseline - 1.0, 6)
+
+    @staticmethod
+    def _missing_cross_market(as_of: str, reason: str) -> dict[str, Any]:
+        return {
+            "status": "insufficient_data",
+            "as_of": as_of,
+            "features": [],
+            "reason": reason,
+            "required_table": GLOBAL_MARKET_BARS_REQUIREMENT,
+            "point_in_time": True,
+        }
 
     def get_latest_regime(self, as_of_date: str | None = None) -> dict:
         date_filter = "AND trade_date <= ?" if as_of_date else ""

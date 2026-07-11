@@ -16,8 +16,21 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "event_id",
+          "cluster_id",
+          "type",
+          "entities",
+          "geography",
+          "status",
+          "direction",
+          "magnitude",
           "url",
           "retrieved_at",
+          "first_seen_at",
+          "available_at",
+          "revision",
+          "evidence_urls",
+          "raw_hash",
           "published_at_status",
           "published_at",
           "title",
@@ -30,8 +43,67 @@
           "claims"
         ],
         "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Stable identifier for this event fact"
+          },
+          "cluster_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Stable identifier shared by independent reports of the same event"
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Event type such as policy, listing, earnings, supply_disruption, geopolitical, commodity_move, or cross_market_move"
+          },
+          "entities": {
+            "type": "array",
+            "maxItems": 30,
+            "items": {"type": "string"}
+          },
+          "geography": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {"type": "string"}
+          },
+          "status": {
+            "type": "string",
+            "enum": ["new", "ongoing", "updated", "resolved", "unconfirmed"]
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["positive", "negative", "mixed", "neutral"]
+          },
+          "magnitude": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
           "url": {"type": "string"},
           "retrieved_at": {"type": "string"},
+          "first_seen_at": {"type": "string"},
+          "available_at": {
+            "type": "string",
+            "description": "Earliest time this fact is available to the system; never earlier than retrieved_at"
+          },
+          "revision": {"type": "integer", "minimum": 1},
+          "evidence_urls": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {"type": "string"}
+          },
+          "raw_hash": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Digest of the raw title, summary, claims, and evidence URLs; ingestion recomputes the authoritative SHA-256"
+          },
           "published_at_status": {"type": "string", "enum": ["known", "unknown"]},
           "published_at": {"type": ["string", "null"]},
           "title": {"type": "string"},

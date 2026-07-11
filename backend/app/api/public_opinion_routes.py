@@ -13,8 +13,21 @@ router = APIRouter(prefix="/api/public-opinion", tags=["public-opinion"])
 
 
 class CodexEvidenceItemInput(BaseModel):
+    event_id: str | None = Field(default=None, min_length=1, max_length=160)
+    cluster_id: str | None = Field(default=None, min_length=1, max_length=160)
+    type: str | None = Field(default=None, min_length=1, max_length=80)
+    entities: list[str] = Field(default_factory=list, max_length=30)
+    geography: list[str] = Field(default_factory=list, max_length=20)
+    status: Literal["new", "ongoing", "updated", "resolved", "unconfirmed"] = "new"
+    direction: Literal["positive", "negative", "mixed", "neutral"] = "neutral"
+    magnitude: float = Field(default=0.0, ge=0.0, le=1.0)
     url: str = Field(min_length=8, max_length=2048)
     retrieved_at: datetime
+    first_seen_at: datetime | None = None
+    available_at: datetime | None = None
+    revision: int = Field(default=1, ge=1)
+    evidence_urls: list[str] = Field(default_factory=list, max_length=20)
+    raw_hash: str | None = Field(default=None, min_length=1, max_length=128)
     published_at_status: Literal["known", "unknown"]
     published_at: datetime | None = None
     title: str = Field(min_length=6, max_length=160)
