@@ -6,11 +6,13 @@ from app.forecasting.ledger import (
     ForecastOutcome,
     MaturedForecast,
 )
+from app.forecasting.feedback import ForecastFeedback
 
 __all__ = [
     "FORECAST_HORIZONS",
     "ForecastConflictError",
     "ForecastDecision",
+    "ForecastFeedback",
     "ForecastLedger",
     "ForecastOutcome",
     "MaturedForecast",

@@ -46,6 +46,22 @@ class _Feedback:
         }
 
 
+class _ForecastFeedback:
+    def label_due(self, *_: object, **__: object) -> dict:
+        return {
+            "status": "completed",
+            "eligible_count": 0,
+            "labelled_count": 0,
+            "pending_count": 0,
+        }
+
+    def evaluate(self, *_: object, **__: object) -> dict:
+        return {
+            "status": "ready",
+            "horizons": [{"horizon_days": 5, "status": "ready", "sample_count": 20}],
+        }
+
+
 class _Selection:
     def run(self, **_: object) -> dict:
         return {
@@ -72,7 +88,9 @@ class _AgentControl:
         assert task.task_type == "full_simulation_cycle"
         assert task.payload["limit"] == 20
         assert task.payload["decision_snapshot"]["schema_version"] == "strategy_selection_v2.1"
-        assert task.payload["decision_snapshot"]["daily_candidate_snapshot"][0]["symbol"] == "SZ000001"
+        assert (
+            task.payload["decision_snapshot"]["daily_candidate_snapshot"][0]["symbol"] == "SZ000001"
+        )
         return SimpleNamespace(id=99)
 
     def execute_task(self, task_id: int):
@@ -99,6 +117,7 @@ def _service(
         store=test_db,
         public_opinion_factory=lambda: _Pulse(pulse_status),
         feedback_factory=_Feedback,
+        forecast_feedback_factory=_ForecastFeedback,
         selection_factory=_Selection,
         agent_control_factory=_AgentControl,
         market_data_factory=lambda _now, _limit: {
@@ -137,6 +156,7 @@ def test_control_plane_full_run_preserves_partial_business_status(test_db):
         "market_pulse",
         "decision_snapshot",
         "simulation_cycle",
+        "forecast_feedback",
         "training_feedback",
     ]
     simulation = next(step for step in result["steps"] if step["step_id"] == "simulation_cycle")
@@ -197,6 +217,7 @@ def test_control_plane_refreshes_stale_market_data_before_simulation(test_db):
         store=test_db,
         public_opinion_factory=_Pulse,
         feedback_factory=_Feedback,
+        forecast_feedback_factory=_ForecastFeedback,
         selection_factory=_Selection,
         agent_control_factory=_AgentControl,
         market_data_factory=market_data,
@@ -206,7 +227,9 @@ def test_control_plane_refreshes_stale_market_data_before_simulation(test_db):
 
     result = service.run_once(profile="full", limit=20)
 
-    refresh_step = next(step for step in result["steps"] if step["step_id"] == "market_data_refresh")
+    refresh_step = next(
+        step for step in result["steps"] if step["step_id"] == "market_data_refresh"
+    )
     assert refresh_step["status"] == "completed"
     assert result["market_data"]["status"] == "fresh"
     assert result["task_id"] == 99
@@ -220,6 +243,7 @@ def test_control_plane_adaptive_offhour_runs_maintenance(test_db):
         "market_pulse",
         "market_data_refresh",
         "decision_snapshot",
+        "forecast_feedback",
         "training_feedback",
     ]
     decision = next(step for step in result["steps"] if step["step_id"] == "decision_snapshot")
@@ -236,6 +260,7 @@ def test_control_plane_insufficient_training_samples_is_partial(test_db):
         store=test_db,
         public_opinion_factory=_Pulse,
         feedback_factory=InsufficientFeedback,
+        forecast_feedback_factory=_ForecastFeedback,
         selection_factory=_Selection,
         agent_control_factory=_AgentControl,
         clock=lambda: datetime(2026, 7, 10, 22, 0, tzinfo=SHANGHAI),
@@ -244,7 +269,11 @@ def test_control_plane_insufficient_training_samples_is_partial(test_db):
     result = service.run_once(profile="training", limit=20)
 
     assert result["status"] == "partial"
-    assert result["steps"][0]["status"] == "partial"
+    assert [step["step_id"] for step in result["steps"]] == [
+        "forecast_feedback",
+        "training_feedback",
+    ]
+    assert result["steps"][1]["status"] == "partial"
 
 
 def test_control_plane_source_failure_is_not_reported_completed(test_db):

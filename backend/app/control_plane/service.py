@@ -10,7 +10,12 @@ from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.data.trading_calendar import trading_session_age
-from app.forecasting import FORECAST_HORIZONS, ForecastDecision, ForecastLedger
+from app.forecasting import (
+    FORECAST_HORIZONS,
+    ForecastDecision,
+    ForecastFeedback,
+    ForecastLedger,
+)
 from app.models import AgentTaskInput
 from app.storage.sqlite_store import SQLiteStore
 
@@ -34,6 +39,7 @@ class ControlPlaneService:
         public_opinion_factory: Callable[[], Any] | None = None,
         agent_control_factory: Callable[[], Any] | None = None,
         feedback_factory: Callable[[], Any] | None = None,
+        forecast_feedback_factory: Callable[[], Any] | None = None,
         selection_factory: Callable[[], Any] | None = None,
         market_data_factory: Callable[[datetime, int], dict[str, Any]] | None = None,
         market_data_refresh_factory: Callable[[int], dict[str, Any]] | None = None,
@@ -44,6 +50,9 @@ class ControlPlaneService:
         self._public_opinion_factory = public_opinion_factory or self._default_public_opinion
         self._agent_control_factory = agent_control_factory or self._default_agent_control
         self._feedback_factory = feedback_factory or self._default_feedback
+        self._forecast_feedback_factory = (
+            forecast_feedback_factory or self._default_forecast_feedback
+        )
         self._selection_factory = selection_factory or self._default_selection
         self._market_data_factory = market_data_factory or self._market_data_snapshot
         self._market_data_refresh_factory = (
@@ -104,7 +113,9 @@ class ControlPlaneService:
 
         return {
             "schema_version": "control_plane_status.v1",
-            "status": "blocked" if settings.enable_live_trading else ("attention" if blockers else "ready"),
+            "status": "blocked"
+            if settings.enable_live_trading
+            else ("attention" if blockers else "ready"),
             "market_stage": stage,
             "recommended_profile": self._profile_for_stage(stage),
             "checked_at": now.isoformat(timespec="seconds"),
@@ -130,7 +141,9 @@ class ControlPlaneService:
     ) -> dict[str, Any]:
         started = monotonic_time.perf_counter()
         now = self._clock()
-        selected_profile = self._profile_for_stage(self._market_stage(now)) if profile == "adaptive" else profile
+        selected_profile = (
+            self._profile_for_stage(self._market_stage(now)) if profile == "adaptive" else profile
+        )
         safe_limit = max(5, min(int(limit), 120))
         safe_monitor_limit = max(1, min(int(monitor_limit), 20))
         steps: list[dict[str, Any]] = []
@@ -200,6 +213,13 @@ class ControlPlaneService:
         if selected_profile in {"training", "maintenance", "full"}:
             steps.append(
                 self._run_step(
+                    "forecast_feedback",
+                    lambda: self._run_forecast_feedback(now=now, limit=safe_limit),
+                    compact=self._compact_forecast_feedback,
+                )
+            )
+            steps.append(
+                self._run_step(
                     "training_feedback",
                     lambda: self._feedback_factory().run(
                         limit=safe_limit,
@@ -251,7 +271,9 @@ class ControlPlaneService:
             )
             completed = control.execute_task(int(task.id))
             payload = completed.model_dump(mode="json")
-            business_status = str((payload.get("result") or {}).get("status") or payload.get("status") or "completed")
+            business_status = str(
+                (payload.get("result") or {}).get("status") or payload.get("status") or "completed"
+            )
             step_status = self._normalize_status(business_status)
             return {
                 "task_id": payload.get("id"),
@@ -409,10 +431,27 @@ class ControlPlaneService:
                 "market_data": market_data,
             }
         result = {
-            **self._selection_factory().run(mode="balanced", limit=limit),
+            **self._selection_factory().run(
+                mode="balanced",
+                limit=limit,
+                as_of_date=now.astimezone(SHANGHAI).date().isoformat(),
+            ),
             "market_data": market_data,
         }
         return self._record_decision_forecasts(result, now=now)
+
+    def _run_forecast_feedback(self, *, now: datetime, limit: int) -> dict[str, Any]:
+        feedback = self._forecast_feedback_factory()
+        labels = feedback.label_due(now, limit=max(100, limit * len(FORECAST_HORIZONS)))
+        evaluation = feedback.evaluate(now, k=min(5, limit))
+        return {
+            "status": evaluation.get("status") or labels.get("status") or "completed",
+            "labels": labels,
+            "evaluation": evaluation,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
 
     def _record_decision_forecasts(
         self,
@@ -442,9 +481,7 @@ class ControlPlaneService:
         cutoff = now.isoformat()
         market_data = result.get("market_data") or {}
         data_version = str(
-            market_data.get("latest_trade_date")
-            or result.get("date")
-            or now.date().isoformat()
+            market_data.get("latest_trade_date") or result.get("date") or now.date().isoformat()
         )
         model_version = ".".join(
             part
@@ -544,7 +581,9 @@ class ControlPlaneService:
             base_query += " LIMIT ?"
             params = (scope_limit,)
         rows = self.store.fetch_all(base_query, params)
-        latest_values = [str(row["latest_trade_date"]) for row in rows if row.get("latest_trade_date")]
+        latest_values = [
+            str(row["latest_trade_date"]) for row in rows if row.get("latest_trade_date")
+        ]
         latest_value = max(latest_values) if latest_values else None
         total_symbol_count = len(symbols) if symbols else len(rows)
         latest_symbol_count = sum(
@@ -671,6 +710,24 @@ class ControlPlaneService:
         }
 
     @staticmethod
+    def _compact_forecast_feedback(result: dict[str, Any]) -> dict[str, Any]:
+        labels = result.get("labels") or {}
+        evaluation = result.get("evaluation") or {}
+        return {
+            "status": result.get("status"),
+            "eligible_count": labels.get("eligible_count", 0),
+            "labelled_count": labels.get("labelled_count", 0),
+            "pending_count": labels.get("pending_count", 0),
+            "ready_horizons": [
+                item.get("horizon_days")
+                for item in evaluation.get("horizons") or []
+                if item.get("status") == "ready"
+            ],
+            "horizons": evaluation.get("horizons") or [],
+            "review_only": True,
+        }
+
+    @staticmethod
     def _compact_selection(result: dict[str, Any]) -> dict[str, Any]:
         summary = result.get("summary") or {}
         candidates = list(result.get("daily_candidate_snapshot") or [])
@@ -708,6 +765,7 @@ class ControlPlaneService:
             "empty",
             "stale",
             "insufficient_samples",
+            "insufficient_data",
             "needs_outcomes",
             "not_ready",
         }:
@@ -782,6 +840,9 @@ class ControlPlaneService:
         from app.agent_control.training_feedback import TrainingFeedbackModule
 
         return TrainingFeedbackModule(store=self.store)
+
+    def _default_forecast_feedback(self) -> ForecastFeedback:
+        return ForecastFeedback(self.store)
 
     def _default_selection(self) -> Any:
         from app.candidates.selection_v2 import StrategySelectionV2Service
