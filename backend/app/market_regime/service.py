@@ -49,12 +49,29 @@ class MarketRegimeService:
             try:
                 rows = conn.execute(
                     """
+                    WITH source_ranked AS (
+                        SELECT symbol, asset_class, bar_time, close, source, available_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY symbol, bar_time
+                                   ORDER BY datetime(available_at) DESC, source ASC
+                               ) AS source_rank
+                        FROM global_market_bars
+                        WHERE quality_status = 'ready'
+                          AND datetime(bar_time) <= datetime(?)
+                          AND datetime(available_at) <= datetime(?)
+                    ), period_ranked AS (
+                        SELECT symbol, asset_class, bar_time, close, source, available_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY symbol
+                                   ORDER BY datetime(bar_time) DESC
+                               ) AS period_rank
+                        FROM source_ranked
+                        WHERE source_rank = 1
+                    )
                     SELECT symbol, asset_class, bar_time, close, source, available_at
-                    FROM global_market_bars
-                    WHERE quality_status = 'ready'
-                      AND datetime(bar_time) <= datetime(?)
-                      AND datetime(available_at) <= datetime(?)
-                    ORDER BY symbol ASC, datetime(bar_time) DESC, datetime(available_at) DESC
+                    FROM period_ranked
+                    WHERE period_rank <= 6
+                    ORDER BY symbol ASC, datetime(bar_time) DESC
                     """,
                     (cutoff, cutoff),
                 ).fetchall()

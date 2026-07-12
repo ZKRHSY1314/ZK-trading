@@ -120,8 +120,13 @@ class MarketIntelligenceService:
         as_of: str,
     ) -> list[SectorThesis]:
         by_sector: dict[str, list[tuple[EventFact, dict[str, Any]]]] = {}
+        sector_clusters: dict[str, set[str]] = {}
         for fact, item in accepted:
             for sector in self._sectors_for(item, fact):
+                clusters = sector_clusters.setdefault(sector, set())
+                if fact.cluster_id in clusters:
+                    continue
+                clusters.add(fact.cluster_id)
                 by_sector.setdefault(sector, []).append((fact, item))
 
         market_by_sector: dict[str, list[dict[str, Any]]] = {}
@@ -142,7 +147,7 @@ class MarketIntelligenceService:
                 f"{sector}|{as_of}|{'|'.join(event_ids)}".encode("utf-8")
             ).hexdigest()[:20]
             rationale = [
-                f"{len(facts)} point-in-time event fact(s) map to {sector}",
+                f"{len(facts)} independent point-in-time event cluster(s) map to {sector}",
             ]
             if relevant_market:
                 rationale.append(

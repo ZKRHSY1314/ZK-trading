@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
+import pytest
+
 from app.api import public_opinion_routes
 from app.market_regime.service import MarketRegimeService
 from app.market_intelligence.models import EventFact
@@ -155,6 +157,69 @@ def test_cross_market_features_exclude_bars_not_available_at_as_of(test_db):
     ]
 
 
+def test_cross_market_features_deduplicate_sources_per_market_period(test_db):
+    _reset_global_market_bars(test_db)
+    with test_db.connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO global_market_bars(
+                symbol, asset_class, bar_time, close, source, available_at, quality_status
+            ) VALUES (?, 'commodity', ?, ?, ?, ?, 'ready')
+            """,
+            [
+                ("GOLD", "2026-01-01T21:00:00+00:00", 100, "source-a", "2026-01-01T21:01:00+00:00"),
+                ("GOLD", "2026-01-01T21:00:00+00:00", 101, "source-b", "2026-01-01T21:02:00+00:00"),
+                ("GOLD", "2026-01-02T21:00:00+00:00", 103, "source-a", "2026-01-02T21:01:00+00:00"),
+            ],
+        )
+
+    result = MarketRegimeService(store=test_db).get_cross_market_features(
+        "2026-01-02T23:00:00+00:00"
+    )
+
+    feature = result["features"][0]
+    assert feature["bar_count"] == 2
+    assert feature["return_1d"] == pytest.approx(103 / 101 - 1)
+
+
+def test_sector_thesis_counts_one_independent_event_cluster_once(test_db):
+    now = "2026-01-02T10:00:00+00:00"
+    base = {
+        "cluster_id": "cluster-chip-policy",
+        "type": "policy",
+        "entities": ["semiconductors"],
+        "geography": ["CN"],
+        "status": "new",
+        "direction": "positive",
+        "magnitude": 0.6,
+        "published_at": now,
+        "first_seen_at": now,
+        "retrieved_at": now,
+        "available_at": now,
+        "revision": 1,
+        "source_tier": "primary_media",
+        "sector_hints": ["semiconductors"],
+    }
+    single = MarketIntelligenceService(store=test_db).build_snapshot(
+        [{**base, "event_id": "evt-chip-a", "evidence_urls": ["https://a.example"]}],
+        as_of=now,
+    )
+    duplicated = MarketIntelligenceService(store=test_db).build_snapshot(
+        [
+            {**base, "event_id": "evt-chip-a", "evidence_urls": ["https://a.example"]},
+            {**base, "event_id": "evt-chip-b", "evidence_urls": ["https://b.example"]},
+        ],
+        as_of=now,
+    )
+
+    assert duplicated["sector_theses"][0]["confidence"] == single["sector_theses"][0]["confidence"]
+    assert duplicated["sector_theses"][0]["event_ids"] == ["evt-chip-a"]
+    assert (
+        "1 independent point-in-time event cluster"
+        in duplicated["sector_theses"][0]["rationale"][0]
+    )
+
+
 def test_event_and_cross_market_context_produce_review_only_sector_thesis(test_db):
     _reset_global_market_bars(test_db)
     with test_db.connect() as conn:
@@ -292,7 +357,7 @@ def test_public_opinion_ingest_derives_event_fact_and_oil_sector_thesis(test_db)
     )
     rows = test_db.fetch_all(
         """
-        SELECT scope, subject, horizon_days
+        SELECT scope, subject, horizon_days, probability, features_json
         FROM forecast_decisions
         WHERE decision_id = ? AND subject = 'oil_gas'
         """,
@@ -301,6 +366,11 @@ def test_public_opinion_ingest_derives_event_fact_and_oil_sector_thesis(test_db)
     assert {row["scope"] for row in rows} == {"sector"}
     assert {row["subject"] for row in rows} == {"oil_gas"}
     assert {row["horizon_days"] for row in rows} == {1, 3, 5, 10, 20}
+    for row in rows:
+        features = json.loads(row["features_json"])
+        assert row["probability"] == pytest.approx(thesis["confidence"])
+        assert features["probability_semantics"] == "directional_thesis_success"
+        assert features["probability_horizon_days"] == row["horizon_days"]
 
 
 def test_codex_schema_and_api_preserve_structured_event_fact(client, monkeypatch):
