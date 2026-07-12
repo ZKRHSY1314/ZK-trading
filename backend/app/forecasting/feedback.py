@@ -35,7 +35,7 @@ def _round(value: float | None) -> float | None:
 
 
 class ForecastFeedback:
-    """Mature stock forecasts and evaluate immutable decision snapshots."""
+    """Mature stock and sector forecasts and evaluate immutable decisions."""
 
     def __init__(self, store: SQLiteStore) -> None:
         self.store = store
@@ -49,67 +49,143 @@ class ForecastFeedback:
         limit: int = 1000,
     ) -> dict[str, Any]:
         cutoff = _datetime(as_of)
-        rows = self.store.fetch_all(
-            """
-            SELECT d.*
+        normalized_cutoff = cutoff.isoformat().replace("+00:00", "Z")
+        safe_limit = max(1, min(int(limit), 10_000))
+        scan_limit = min(10_000, max(100, safe_limit * 10))
+        by_scope: dict[str, dict[str, Any]] = {
+            scope: {
+                "eligible_count": 0,
+                "scanned_count": 0,
+                "labelled": [],
+                "pending": [],
+            }
+            for scope in ("stock", "sector")
+        }
+        # A sector backlog does not consume the stock budget.  Within each
+        # scope, scan beyond the write limit and persist mature labels first so
+        # an old permanently-unready row cannot starve later usable forecasts.
+        for scope, scope_result in by_scope.items():
+            rows, backlog_count, scan_offset = self._pending_label_rows(
+                scope=scope,
+                cutoff=normalized_cutoff,
+                scan_limit=scan_limit,
+                rotation_bucket=int(cutoff.timestamp() // 300),
+            )
+            scope_result["backlog_count"] = backlog_count
+            scope_result["scan_offset"] = scan_offset
+            scope_result["scanned_count"] = len(rows)
+            evaluated = []
+            for row in rows:
+                forecast = self._forecast(row)
+                outcome, reason = self._label(forecast, cutoff)
+                evaluated.append((forecast, outcome, reason))
+            ready = [item for item in evaluated if item[1] is not None]
+            waiting = [item for item in evaluated if item[1] is None]
+            selected = ready[:safe_limit]
+            selected.extend(waiting[: max(0, safe_limit - len(selected))])
+            scope_result["eligible_count"] = len(selected)
+            for forecast, outcome, reason in selected:
+                if outcome is None:
+                    pending_details = reason if isinstance(reason, dict) else {}
+                    scope_result["pending"].append(
+                        {
+                            "decision_id": forecast.decision_id,
+                            "subject": forecast.subject,
+                            "horizon_days": forecast.horizon_days,
+                            "reason": pending_details.get("reason", reason),
+                            **{
+                                key: value
+                                for key, value in pending_details.items()
+                                if key != "reason"
+                            },
+                        }
+                    )
+                    continue
+                persisted = self.ledger.record_outcome(outcome)
+                scope_result["labelled"].append(
+                    {
+                        "decision_id": persisted.decision_id,
+                        "subject": persisted.subject,
+                        "horizon_days": persisted.horizon_days,
+                        "observed_at": persisted.observed_at,
+                    }
+                )
+        for scope_result in by_scope.values():
+            scope_result["labelled_count"] = len(scope_result["labelled"])
+            scope_result["pending_count"] = len(scope_result["pending"])
+        stock_result = by_scope["stock"]
+        return {
+            "status": "completed",
+            "schema_version": "forecast_feedback_labels.v1",
+            "as_of": cutoff.isoformat().replace("+00:00", "Z"),
+            # These legacy fields intentionally remain stock-only.  Callers that
+            # need both scopes use the additive total_* and by_scope fields.
+            "eligible_count": stock_result["eligible_count"],
+            "labelled_count": stock_result["labelled_count"],
+            "pending_count": stock_result["pending_count"],
+            "labelled": stock_result["labelled"],
+            "pending": stock_result["pending"],
+            "total_eligible_count": sum(
+                result["eligible_count"] for result in by_scope.values()
+            ),
+            "total_labelled_count": sum(
+                result["labelled_count"] for result in by_scope.values()
+            ),
+            "total_pending_count": sum(
+                result["pending_count"] for result in by_scope.values()
+            ),
+            "by_scope": by_scope,
+            "horizon_days": sorted(FORECAST_HORIZONS),
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+    def _pending_label_rows(
+        self,
+        *,
+        scope: str,
+        cutoff: str,
+        scan_limit: int,
+        rotation_bucket: int,
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        filters = """
             FROM forecast_decisions d
             LEFT JOIN forecast_outcomes o
               ON o.decision_id = d.decision_id
              AND o.scope = d.scope
              AND o.subject = d.subject
              AND o.horizon_days = d.horizon_days
-            WHERE d.scope = 'stock'
+            WHERE d.scope = ?
               AND d.review_only = 1
               AND o.id IS NULL
               AND d.decision_cutoff <= ?
               AND d.available_at <= ?
-            ORDER BY d.decision_cutoff, d.decision_id, d.rank IS NULL, d.rank, d.subject
-            LIMIT ?
-            """,
-            (
-                cutoff.isoformat().replace("+00:00", "Z"),
-                cutoff.isoformat().replace("+00:00", "Z"),
-                max(1, min(int(limit), 10_000)),
-            ),
+        """
+        count_row = self.store.fetch_one(
+            f"SELECT COUNT(*) AS count {filters}",
+            (scope, cutoff, cutoff),
         )
-        labelled: list[dict[str, Any]] = []
-        pending: list[dict[str, Any]] = []
-        for row in rows:
-            forecast = self._forecast(row)
-            outcome, reason = self._label(forecast, cutoff)
-            if outcome is None:
-                pending.append(
-                    {
-                        "decision_id": forecast.decision_id,
-                        "subject": forecast.subject,
-                        "horizon_days": forecast.horizon_days,
-                        "reason": reason,
-                    }
-                )
-                continue
-            persisted = self.ledger.record_outcome(outcome)
-            labelled.append(
-                {
-                    "decision_id": persisted.decision_id,
-                    "subject": persisted.subject,
-                    "horizon_days": persisted.horizon_days,
-                    "observed_at": persisted.observed_at,
-                }
+        backlog_count = int((count_row or {}).get("count") or 0)
+        if backlog_count == 0:
+            return [], 0, 0
+        offset = (rotation_bucket * scan_limit) % backlog_count
+        order = """
+            ORDER BY d.decision_cutoff, d.decision_id,
+                     d.rank IS NULL, d.rank, d.subject, d.id
+        """
+
+        def fetch(*, limit: int, query_offset: int) -> list[dict[str, Any]]:
+            return self.store.fetch_all(
+                f"SELECT d.* {filters} {order} LIMIT ? OFFSET ?",
+                (scope, cutoff, cutoff, limit, query_offset),
             )
-        return {
-            "status": "completed",
-            "schema_version": "forecast_feedback_labels.v1",
-            "as_of": cutoff.isoformat().replace("+00:00", "Z"),
-            "eligible_count": len(rows),
-            "labelled_count": len(labelled),
-            "pending_count": len(pending),
-            "labelled": labelled,
-            "pending": pending,
-            "horizon_days": sorted(FORECAST_HORIZONS),
-            "review_only": True,
-            "simulation_only": True,
-            "live_trading_enabled": False,
-        }
+
+        rows = fetch(limit=scan_limit, query_offset=offset)
+        wrap_limit = min(offset, max(0, scan_limit - len(rows)))
+        if wrap_limit:
+            rows.extend(fetch(limit=wrap_limit, query_offset=0))
+        return rows, backlog_count, offset
 
     def evaluate(
         self,
@@ -123,19 +199,34 @@ class ForecastFeedback:
         safe_k = max(1, min(int(k), 100))
         safe_min_samples = max(1, int(min_samples))
         safe_min_folds = max(1, int(min_folds))
-        horizons = [
-            self._evaluate_horizon(
-                cutoff,
-                horizon,
-                k=safe_k,
-                min_samples=safe_min_samples,
-                min_folds=safe_min_folds,
-            )
-            for horizon in sorted(FORECAST_HORIZONS)
-        ]
+        by_scope: dict[str, dict[str, Any]] = {}
+        for scope in ("stock", "sector"):
+            scope_horizons = [
+                self._evaluate_horizon(
+                    cutoff,
+                    horizon,
+                    scope=scope,
+                    k=safe_k,
+                    min_samples=safe_min_samples,
+                    min_folds=safe_min_folds,
+                )
+                for horizon in sorted(FORECAST_HORIZONS)
+            ]
+            by_scope[scope] = {
+                "status": (
+                    "ready"
+                    if any(row["status"] == "ready" for row in scope_horizons)
+                    else "insufficient_data"
+                ),
+                "target": self._evaluation_target(scope),
+                "horizons": scope_horizons,
+            }
+        # Preserve the original stock-facing surface while adding independently
+        # aggregated sector metrics under by_scope.
+        horizons = by_scope["stock"]["horizons"]
         return {
             "status": "ready"
-            if any(row["status"] == "ready" for row in horizons)
+            if any(result["status"] == "ready" for result in by_scope.values())
             else "insufficient_data",
             "schema_version": "forecast_feedback_evaluation.v1",
             "as_of": cutoff.isoformat().replace("+00:00", "Z"),
@@ -143,12 +234,24 @@ class ForecastFeedback:
             "k": safe_k,
             "target": "benchmark_neutral_return>0",
             "horizons": horizons,
+            "by_scope": by_scope,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
         }
 
     def _label(
+        self,
+        forecast: ForecastDecision,
+        as_of: datetime,
+    ) -> tuple[ForecastOutcome | None, str | dict[str, Any] | None]:
+        if forecast.scope == "sector":
+            return self._label_sector(forecast, as_of)
+        if forecast.scope != "stock":
+            return None, "unsupported_feedback_scope"
+        return self._label_stock(forecast, as_of)
+
+    def _label_stock(
         self,
         forecast: ForecastDecision,
         as_of: datetime,
@@ -264,6 +367,270 @@ class ForecastFeedback:
         )
         return outcome, None
 
+    def _label_sector(
+        self,
+        forecast: ForecastDecision,
+        as_of: datetime,
+    ) -> tuple[ForecastOutcome | None, str | dict[str, Any] | None]:
+        decision_cutoff = _datetime(forecast.decision_cutoff)
+        decision_date = decision_cutoff.astimezone(_CHINA_TZ).date().isoformat()
+        as_of_date = as_of.astimezone(_CHINA_TZ).date().isoformat()
+        memberships = self._sector_members(
+            forecast.subject,
+            decision_cutoff=decision_cutoff,
+            decision_date=decision_date,
+        )
+        required_complete_members = max(2, min(5, len(memberships)))
+        minimum_coverage = 0.6
+        if len(memberships) < 2:
+            return None, self._sector_pending(
+                "sector_point_in_time_members_below_2",
+                eligible_count=len(memberships),
+                complete_count=0,
+                required_count=required_complete_members,
+                minimum_coverage=minimum_coverage,
+            )
+
+        stock_windows: list[dict[str, Any]] = []
+        for membership in memberships:
+            bars = self._bars_after(
+                str(membership["symbol"]),
+                decision_date=decision_date,
+                as_of_date=as_of_date,
+                limit=forecast.horizon_days,
+            )
+            if len(bars) < forecast.horizon_days:
+                continue
+            entry = bars[0]
+            exit_row = bars[forecast.horizon_days - 1]
+            observed_at = self._session_close(str(exit_row["trade_date"]))
+            if observed_at > as_of:
+                continue
+            stock_windows.append(
+                {
+                    "membership": membership,
+                    "entry": entry,
+                    "exit": exit_row,
+                    "observed_at": observed_at,
+                    "continuous_return": self._return(
+                        float(entry["open"]),
+                        float(exit_row["close"]),
+                    ),
+                }
+            )
+        stock_coverage = len(stock_windows) / len(memberships)
+        if len(stock_windows) < required_complete_members:
+            reason = (
+                "sector_complete_members_below_2"
+                if required_complete_members == 2
+                else "sector_complete_members_below_required"
+            )
+            return None, self._sector_pending(
+                reason,
+                eligible_count=len(memberships),
+                complete_count=len(stock_windows),
+                required_count=required_complete_members,
+                minimum_coverage=minimum_coverage,
+            )
+        if stock_coverage < minimum_coverage:
+            return None, self._sector_pending(
+                "sector_member_coverage_below_threshold",
+                eligible_count=len(memberships),
+                complete_count=len(stock_windows),
+                required_count=required_complete_members,
+                minimum_coverage=minimum_coverage,
+            )
+
+        benchmark_symbol = None
+        complete_members: list[dict[str, Any]] = []
+        best_benchmark_symbol = None
+        best_aligned_members: list[dict[str, Any]] = []
+        for symbol in _BENCHMARK_PRIORITY:
+            aligned_members = []
+            for member in stock_windows:
+                benchmark = self._aligned_window(
+                    symbol,
+                    entry_date=str(member["entry"]["trade_date"]),
+                    exit_date=str(member["exit"]["trade_date"]),
+                )
+                if benchmark is None:
+                    continue
+                aligned_members.append(
+                    {
+                        **member,
+                        "benchmark": benchmark,
+                        "benchmark_return": self._return(
+                            benchmark["entry_price"],
+                            benchmark["exit_price"],
+                        ),
+                    }
+                )
+            if len(aligned_members) > len(best_aligned_members):
+                best_benchmark_symbol = symbol
+                best_aligned_members = aligned_members
+            aligned_coverage = len(aligned_members) / len(memberships)
+            if (
+                len(aligned_members) >= required_complete_members
+                and aligned_coverage >= minimum_coverage
+            ):
+                benchmark_symbol = symbol
+                complete_members = aligned_members
+                break
+        if benchmark_symbol is None:
+            return None, {
+                **self._sector_pending(
+                    "sector_benchmark_coverage_below_threshold",
+                    eligible_count=len(memberships),
+                    complete_count=len(best_aligned_members),
+                    required_count=required_complete_members,
+                    minimum_coverage=minimum_coverage,
+                ),
+                "benchmark_symbol": best_benchmark_symbol,
+            }
+
+        continuous_return = sum(
+            float(member["continuous_return"]) for member in complete_members
+        ) / len(complete_members)
+        benchmark_return = sum(
+            float(member["benchmark_return"]) for member in complete_members
+        ) / len(complete_members)
+        observed_at = max(member["observed_at"] for member in complete_members)
+        member_evidence = [
+            {
+                "symbol": str(member["membership"]["symbol"]),
+                "membership": {
+                    "effective_from": member["membership"]["effective_from"],
+                    "effective_to": member["membership"]["effective_to"],
+                    "available_at": member["membership"]["available_at"],
+                    "source": member["membership"]["source"],
+                    "confidence": float(member["membership"]["confidence"]),
+                },
+                "entry": {
+                    "trade_date": str(member["entry"]["trade_date"]),
+                    "price_field": "open",
+                    "price": float(member["entry"]["open"]),
+                },
+                "exit": {
+                    "trade_date": str(member["exit"]["trade_date"]),
+                    "price_field": "close",
+                    "price": float(member["exit"]["close"]),
+                },
+                "continuous_return": float(member["continuous_return"]),
+                "benchmark_return": float(member["benchmark_return"]),
+                "benchmark_entry": member["benchmark"]["entry"],
+                "benchmark_exit": member["benchmark"]["exit"],
+                "stock_source": str(member["entry"]["source"]),
+                "benchmark_source": str(member["benchmark"]["source"]),
+            }
+            for member in complete_members
+        ]
+        evidence = {
+            "label_policy": "sector_members_next_session_open_to_hth_session_close",
+            "decision_cutoff": forecast.decision_cutoff,
+            "decision_date": decision_date,
+            "horizon_days": forecast.horizon_days,
+            "membership_source": "sector_membership_history",
+            "membership_point_in_time_policy": (
+                "available_at<=decision_cutoff; effective_from<=decision_date; "
+                "effective_to_is_null_or>=decision_date"
+            ),
+            "aggregation": "equal_weight_complete_members",
+            "benchmark_aggregation": "equal_weight_member_aligned_windows",
+            "minimum_complete_members": required_complete_members,
+            "minimum_coverage": minimum_coverage,
+            "eligible_member_count": len(memberships),
+            "complete_member_count": len(complete_members),
+            "coverage": len(complete_members) / len(memberships),
+            "benchmark_symbol": benchmark_symbol,
+            "benchmark_return_source": "market_index_same_member_windows",
+            "sector_return_semantics": "observed_equal_weight_member_return",
+            "forecast_direction": str(forecast.features.get("direction") or "neutral"),
+            "probability_semantics": forecast.features.get("probability_semantics"),
+            "probability_horizon_days": forecast.features.get(
+                "probability_horizon_days"
+            ),
+            "members": member_evidence,
+        }
+        latest_exit_date = max(
+            str(member["exit"]["trade_date"]) for member in complete_members
+        )
+        outcome = ForecastOutcome(
+            decision_id=forecast.decision_id,
+            scope="sector",
+            subject=forecast.subject,
+            horizon_days=forecast.horizon_days,
+            observed_at=observed_at,
+            continuous_return=continuous_return,
+            benchmark_return=benchmark_return,
+            sector_return=continuous_return,
+            data_version=(
+                "daily_bar_cache:sector_equal_weight:"
+                f"{latest_exit_date}:{benchmark_symbol}:{len(complete_members)}"
+            ),
+            evidence=evidence,
+            review_only=True,
+        )
+        return outcome, None
+
+    @staticmethod
+    def _sector_pending(
+        reason: str,
+        *,
+        eligible_count: int,
+        complete_count: int,
+        required_count: int,
+        minimum_coverage: float,
+    ) -> dict[str, Any]:
+        coverage = complete_count / eligible_count if eligible_count else 0.0
+        return {
+            "reason": reason,
+            "eligible_member_count": eligible_count,
+            "complete_member_count": complete_count,
+            "required_complete_member_count": required_count,
+            "coverage": coverage,
+            "minimum_coverage": minimum_coverage,
+        }
+
+    def _sector_members(
+        self,
+        sector: str,
+        *,
+        decision_cutoff: datetime,
+        decision_date: str,
+    ) -> list[dict[str, Any]]:
+        rows = self.store.fetch_all(
+            """
+            SELECT id, upper(symbol) AS symbol, sector, effective_from, effective_to,
+                   source, available_at, confidence
+            FROM sector_membership_history
+            WHERE lower(sector) = lower(?)
+              AND date(effective_from) <= date(?)
+              AND (effective_to IS NULL OR date(effective_to) >= date(?))
+              AND datetime(available_at) <= datetime(?)
+            ORDER BY upper(symbol), confidence DESC, effective_from DESC, id DESC
+            """,
+            (
+                sector.strip(),
+                decision_date,
+                decision_date,
+                decision_cutoff.isoformat().replace("+00:00", "Z"),
+            ),
+        )
+        # Multiple providers can describe the same company.  The outcome basket
+        # is company-equal-weighted, so select the strongest point-in-time row.
+        unique: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            unique.setdefault(str(row["symbol"]), row)
+        return list(unique.values())
+
+    @staticmethod
+    def _session_close(trade_date: str) -> datetime:
+        return datetime.combine(
+            datetime.fromisoformat(trade_date).date(),
+            time(hour=15),
+            tzinfo=_CHINA_TZ,
+        ).astimezone(timezone.utc)
+
     def _bars_after(
         self,
         symbol: str,
@@ -334,6 +701,7 @@ class ForecastFeedback:
         as_of: datetime,
         horizon_days: int,
         *,
+        scope: str,
         k: int,
         min_samples: int,
         min_folds: int,
@@ -343,6 +711,7 @@ class ForecastFeedback:
             """
             SELECT
                 d.decision_id, d.subject, d.rank, d.score, d.probability,
+                d.features_json,
                 o.id AS outcome_id,
                 o.continuous_return,
                 o.benchmark_neutral_return,
@@ -354,14 +723,14 @@ class ForecastFeedback:
              AND o.subject = d.subject
              AND o.horizon_days = d.horizon_days
              AND o.observed_at <= ?
-            WHERE d.scope = 'stock'
+            WHERE d.scope = ?
               AND d.review_only = 1
               AND d.horizon_days = ?
               AND d.decision_cutoff <= ?
               AND d.available_at <= ?
             ORDER BY d.decision_id, d.rank IS NULL, d.rank, d.subject
             """,
-            (cutoff, horizon_days, cutoff, cutoff),
+            (cutoff, scope, horizon_days, cutoff, cutoff),
         )
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in rows:
@@ -372,13 +741,23 @@ class ForecastFeedback:
         for decision_id, fold_rows in sorted(grouped.items()):
             matured = [row for row in fold_rows if row.get("outcome_id") is not None]
             all_matured.extend(matured)
-            top = fold_rows[:k]
+            metric_forecasts = [
+                row for row in fold_rows if self._metric_eligible(row, scope=scope)
+            ]
+            metric_matured = [
+                row for row in matured if self._metric_eligible(row, scope=scope)
+            ]
+            top = metric_forecasts[:k]
             precision = None
             if len(top) == k and all(row.get("outcome_id") is not None for row in top):
-                precision = sum(1 for row in top if float(row["benchmark_neutral_return"]) > 0) / k
+                precision = sum(
+                    1
+                    for row in top
+                    if float(self._evaluation_return(row, scope=scope)) > 0
+                ) / k
             predictor_actual = [
-                (self._rank_predictor(row), float(row["benchmark_neutral_return"]))
-                for row in matured
+                (self._rank_predictor(row), self._evaluation_return(row, scope=scope))
+                for row in metric_matured
                 if self._rank_predictor(row) is not None
             ]
             rank_ic = (
@@ -389,18 +768,41 @@ class ForecastFeedback:
                 if len(predictor_actual) >= 2
                 else None
             )
-            probability_rows = [row for row in matured if row.get("probability") is not None]
-            brier = self._brier(probability_rows)
+            probability_pairs = [
+                pair
+                for row in metric_matured
+                if (pair := self._probability_target(row, scope=scope, horizon_days=horizon_days))
+                is not None
+            ]
+            provided_probability_count = sum(
+                1 for row in metric_matured if row.get("probability") is not None
+            )
+            uncalibrated_probability_count = (
+                provided_probability_count - len(probability_pairs)
+            )
+            brier = self._brier(probability_pairs)
             by_decision.append(
                 {
                     "decision_id": decision_id,
                     "forecast_count": len(fold_rows),
                     "sample_count": len(matured),
                     "coverage": _round(len(matured) / len(fold_rows)) if fold_rows else 0.0,
+                    "directional_forecast_count": len(metric_forecasts),
+                    "directional_sample_count": len(metric_matured),
+                    "directional_coverage": (
+                        _round(len(metric_matured) / len(metric_forecasts))
+                        if metric_forecasts
+                        else 0.0
+                    ),
                     "precision_at_k": _round(precision),
                     "spearman_rank_ic": _round(rank_ic),
                     "brier_score": _round(brier),
-                    "probability_sample_count": len(probability_rows),
+                    "probability_sample_count": len(probability_pairs),
+                    "uncalibrated_probability_count": uncalibrated_probability_count,
+                    "probability_calibration_status": self._probability_status(
+                        len(probability_pairs),
+                        uncalibrated_probability_count,
+                    ),
                 }
             )
 
@@ -412,19 +814,49 @@ class ForecastFeedback:
             for row in by_decision
             if row["spearman_rank_ic"] is not None
         ]
-        probability_rows = [row for row in all_matured if row.get("probability") is not None]
+        all_metric_matured = [
+            row for row in all_matured if self._metric_eligible(row, scope=scope)
+        ]
+        probability_pairs = [
+            pair
+            for row in all_metric_matured
+            if (pair := self._probability_target(row, scope=scope, horizon_days=horizon_days))
+            is not None
+        ]
+        provided_probability_count = sum(
+            1 for row in all_metric_matured if row.get("probability") is not None
+        )
+        uncalibrated_probability_count = provided_probability_count - len(probability_pairs)
         sample_count = len(all_matured)
         forecast_count = len(rows)
-        fold_count = sum(1 for row in by_decision if row["sample_count"] > 0)
+        directional_forecast_count = sum(
+            1 for row in rows if self._metric_eligible(row, scope=scope)
+        )
+        directional_sample_count = len(all_metric_matured)
+        fold_count = sum(1 for row in by_decision if row["directional_sample_count"] > 0)
+        precision_at_k = (
+            sum(precision_values) / len(precision_values) if precision_values else None
+        )
+        spearman_rank_ic = (
+            sum(rank_ic_values) / len(rank_ic_values) if rank_ic_values else None
+        )
+        brier_score = self._brier(probability_pairs)
         insufficient_reasons = []
-        if sample_count < min_samples:
-            insufficient_reasons.append(f"sample_count_below_{min_samples}")
+        if directional_sample_count < min_samples:
+            reason_prefix = "directional_sample_count" if scope == "sector" else "sample_count"
+            insufficient_reasons.append(f"{reason_prefix}_below_{min_samples}")
         if fold_count < min_folds:
             insufficient_reasons.append(f"fold_count_below_{min_folds}")
+        if all(
+            metric is None
+            for metric in (precision_at_k, spearman_rank_ic, brier_score)
+        ):
+            insufficient_reasons.append("no_available_evaluation_metric")
         return {
             "status": "insufficient_data" if insufficient_reasons else "ready",
+            "scope": scope,
             "horizon_days": horizon_days,
-            "target": "benchmark_neutral_return>0",
+            "target": self._evaluation_target(scope),
             "aggregation": "unweighted_mean_across_decision_id_folds",
             "rank_predictor": "negative_rank_then_score",
             "k": k,
@@ -432,16 +864,29 @@ class ForecastFeedback:
             "sample_count": sample_count,
             "fold_count": fold_count,
             "coverage": _round(sample_count / forecast_count) if forecast_count else 0.0,
-            "precision_at_k": _round(
-                sum(precision_values) / len(precision_values) if precision_values else None
+            "directional_forecast_count": directional_forecast_count,
+            "directional_sample_count": directional_sample_count,
+            "directional_coverage": (
+                _round(directional_sample_count / directional_forecast_count)
+                if directional_forecast_count
+                else 0.0
             ),
+            "precision_at_k": _round(precision_at_k),
             "precision_fold_count": len(precision_values),
-            "spearman_rank_ic": _round(
-                sum(rank_ic_values) / len(rank_ic_values) if rank_ic_values else None
-            ),
+            "spearman_rank_ic": _round(spearman_rank_ic),
             "rank_ic_fold_count": len(rank_ic_values),
-            "brier_score": _round(self._brier(probability_rows)),
-            "probability_sample_count": len(probability_rows),
+            "brier_score": _round(brier_score),
+            "probability_sample_count": len(probability_pairs),
+            "uncalibrated_probability_count": uncalibrated_probability_count,
+            "probability_calibration_status": self._probability_status(
+                len(probability_pairs),
+                uncalibrated_probability_count,
+            ),
+            "probability_semantics": (
+                "directional_thesis_success"
+                if scope == "sector"
+                else "benchmark_outperformance"
+            ),
             "by_decision": by_decision,
             "insufficient_reasons": insufficient_reasons,
             "review_only": True,
@@ -492,17 +937,91 @@ class ForecastFeedback:
         return None
 
     @staticmethod
-    def _brier(rows: list[dict[str, Any]]) -> float | None:
-        if not rows:
+    def _evaluation_target(scope: str) -> str:
+        if scope == "sector":
+            return "direction_signed_benchmark_neutral_return>0"
+        return "benchmark_neutral_return>0"
+
+    @staticmethod
+    def _features(row: dict[str, Any]) -> dict[str, Any]:
+        value = row.get("features_json")
+        if isinstance(value, dict):
+            return value
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(str(value))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @classmethod
+    def _metric_eligible(cls, row: dict[str, Any], *, scope: str) -> bool:
+        if scope != "sector":
+            return True
+        return str(cls._features(row).get("direction") or "").lower() in {
+            "positive",
+            "negative",
+        }
+
+    @classmethod
+    def _evaluation_return(cls, row: dict[str, Any], *, scope: str) -> float:
+        value = float(row["benchmark_neutral_return"])
+        if scope != "sector":
+            return value
+        direction = str(cls._features(row).get("direction") or "").lower()
+        if direction == "positive":
+            return value
+        if direction == "negative":
+            return -value
+        raise ValueError("non-directional sector forecast is not metric eligible")
+
+    @classmethod
+    def _probability_target(
+        cls,
+        row: dict[str, Any],
+        *,
+        scope: str,
+        horizon_days: int,
+    ) -> tuple[float, float] | None:
+        probability = row.get("probability")
+        if probability is None:
+            return None
+        features = cls._features(row)
+        expected_semantics = (
+            "directional_thesis_success"
+            if scope == "sector"
+            else "benchmark_outperformance"
+        )
+        if str(features.get("probability_semantics") or "") != expected_semantics:
+            return None
+        try:
+            configured_horizon = int(features.get("probability_horizon_days"))
+        except (TypeError, ValueError):
+            return None
+        if configured_horizon != horizon_days:
+            return None
+        actual_return = cls._evaluation_return(row, scope=scope)
+        return float(probability), 1.0 if actual_return > 0 else 0.0
+
+    @staticmethod
+    def _probability_status(calibrated_count: int, uncalibrated_count: int) -> str:
+        if calibrated_count and uncalibrated_count:
+            return "partially_calibrated"
+        if calibrated_count:
+            return "calibrated"
+        if uncalibrated_count:
+            return "uncalibrated"
+        return "unavailable"
+
+    @staticmethod
+    def _brier(probability_targets: list[tuple[float, float]]) -> float | None:
+        if not probability_targets:
             return None
         return sum(
-            (
-                float(row["probability"])
-                - (1.0 if float(row["benchmark_neutral_return"]) > 0 else 0.0)
-            )
-            ** 2
-            for row in rows
-        ) / len(rows)
+            (probability - target) ** 2
+            for probability, target in probability_targets
+        ) / len(probability_targets)
 
     @classmethod
     def _spearman(cls, left: list[float], right: list[float]) -> float | None:

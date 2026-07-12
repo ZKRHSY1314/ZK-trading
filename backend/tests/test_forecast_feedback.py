@@ -209,6 +209,10 @@ def test_evaluate_groups_decisions_and_reports_ranking_probability_and_coverage(
                 rank=rank,
                 score=100.0 - rank,
                 probability=probability,
+                features={
+                    "probability_semantics": "benchmark_outperformance",
+                    "probability_horizon_days": 5,
+                },
             )
         )
         ledger.record_outcome(

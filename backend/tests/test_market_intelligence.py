@@ -373,6 +373,58 @@ def test_public_opinion_ingest_derives_event_fact_and_oil_sector_thesis(test_db)
         assert features["probability_horizon_days"] == row["horizon_days"]
 
 
+def test_negative_sector_thesis_probability_means_probability_of_directional_success(test_db):
+    now = datetime.now(timezone.utc).isoformat()
+    result = CodexPublicOpinionService(store=test_db, sources=[]).ingest_evidence(
+        [
+            {
+                "event_id": "evt-oil-demand-shock",
+                "cluster_id": "cluster-oil-demand-shock",
+                "type": "demand_contraction",
+                "entities": ["Brent crude"],
+                "geography": ["Global", "CN"],
+                "status": "ongoing",
+                "direction": "negative",
+                "magnitude": 0.8,
+                "published_at": now,
+                "published_at_status": "known",
+                "first_seen_at": now,
+                "retrieved_at": now,
+                "available_at": now,
+                "revision": 1,
+                "source_tier": "primary_media",
+                "evidence_urls": ["https://example.com/oil-demand"],
+                "url": "https://example.com/oil-demand",
+                "source_name": "Fixture News",
+                "source_id": "fixture_news_negative",
+                "category": "sector",
+                "title": "Demand contraction weighs on crude oil",
+                "summary": "A demand shock is negative for oil producers.",
+                "sector_hints": ["oil_gas"],
+                "claims": ["demand contraction", "oil price pressure"],
+            }
+        ],
+        persist=True,
+        requested_by="pytest_market_intelligence_negative",
+    )
+
+    thesis = next(row for row in result["sector_theses"] if row["sector"] == "oil_gas")
+    assert thesis["direction"] == "negative"
+    row = test_db.fetch_one(
+        """
+        SELECT probability, features_json
+        FROM forecast_decisions
+        WHERE decision_id = ? AND subject = 'oil_gas' AND horizon_days = 5
+        """,
+        (result["forecast_ledger"]["decision_id"],),
+    )
+    features = json.loads(row["features_json"])
+    assert row["probability"] == pytest.approx(thesis["confidence"])
+    assert features["direction"] == "negative"
+    assert features["probability_semantics"] == "directional_thesis_success"
+    assert features["probability_horizon_days"] == 5
+
+
 def test_codex_schema_and_api_preserve_structured_event_fact(client, monkeypatch):
     schema_path = Path(__file__).resolve().parents[1] / "configs" / "codex_market_pulse.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))

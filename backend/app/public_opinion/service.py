@@ -383,7 +383,20 @@ class CodexPublicOpinionService:
                 if event_id in facts
             ]
             confidence = max(0.0, min(1.0, float(thesis.get("confidence") or 0.0)))
+            direction = str(thesis.get("direction") or "neutral").strip().lower()
+            is_directional = direction in {"positive", "negative"}
+            probability = confidence if is_directional else None
+            probability_semantics = (
+                "directional_thesis_success"
+                if is_directional
+                else "non_directional_thesis_confidence"
+            )
             for horizon in sorted(FORECAST_HORIZONS):
+                forecast_features = {
+                    **thesis,
+                    "probability_semantics": probability_semantics,
+                    "probability_horizon_days": horizon,
+                }
                 ledger.record_forecast(
                     ForecastDecision(
                         decision_id=decision_id,
@@ -394,14 +407,14 @@ class CodexPublicOpinionService:
                         horizon_days=horizon,
                         rank=rank,
                         score=round(confidence * 100.0, 4),
-                        probability=confidence,
+                        probability=probability,
                         model_version="market_intelligence_snapshot.v1",
                         prompt_version="codex_market_pulse.v2",
                         data_version=str(
                             (intelligence.get("cross_market_context") or {}).get("as_of")
                             or cutoff
                         ),
-                        features=thesis,
+                        features=forecast_features,
                         evidence=event_evidence,
                         reasons=[str(item) for item in thesis.get("rationale") or []],
                         status="pending_outcome",
