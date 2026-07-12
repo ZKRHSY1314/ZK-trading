@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 30
     env:
       ENABLE_LIVE_TRADING: "false"
-      DATABASE_PATH: ":memory:"
+      DATABASE_PATH: "${{ runner.temp }}/zk-trading-ci.sqlite3"
       PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v7
@@ -34,6 +34,23 @@ jobs:
       - name: Ruff
         working-directory: backend
         run: python -m ruff check app tests
+      - name: Parse PowerShell entrypoints
+        shell: pwsh
+        run: |
+          $errors = @()
+          Get-ChildItem -LiteralPath scripts -Filter *.ps1 | ForEach-Object {
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$null,
+              [ref]$parseErrors
+            ) | Out-Null
+            if ($parseErrors) { $errors += $parseErrors }
+          }
+          if ($errors.Count -gt 0) {
+            $errors | Format-List
+            exit 1
+          }
       - name: Pytest
         working-directory: backend
         run: python -m pytest -q
