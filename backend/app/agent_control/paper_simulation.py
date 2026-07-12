@@ -352,7 +352,6 @@ class PaperSimulationService:
         )
 
         actions: list[dict[str, Any]] = []
-        skipped_count = 0
         observe_count = 0
         simulated_entry_count = 0
         simulated_exit_count = 0

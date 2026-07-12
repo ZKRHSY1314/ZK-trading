@@ -2,8 +2,6 @@ from app.ai.review_worker import AIReviewWorker
 from app.market_regime.service import MarketRegimeService
 from app.monitoring.service import MonitoringService
 from app.risk.portfolio import PortfolioRiskService
-from app.storage.sqlite_store import SQLiteStore
-from app.config import settings
 
 
 def test_market_regime_refresh_and_portfolio_state(test_db):

@@ -7342,11 +7342,6 @@ class OffhourResearchLoopService:
         if not isinstance(groups, list) or not isinstance(items, list):
             return self._phase_confidence_walk_forward_skipped("invalid_phase_similarity_payload")
 
-        group_by_key = {
-            str(group.get("key")): group
-            for group in groups
-            if isinstance(group, dict) and group.get("key")
-        }
         target_groups = [
             dict(group)
             for group in groups

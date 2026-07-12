@@ -38,6 +38,14 @@ from app.models import (
     ApprovalInput,
     CalibrationReviewInput,
 )
+from app.monitoring.service import MonitoringService
+from app.operations.readiness import OperationReadinessService
+from app.public_opinion.service import CodexPublicOpinionService
+from app.rules.engine import RuleEngine
+from app.rules.loader import load_rule_config
+from app.simulation.broker import SimulatedBroker
+from app.simulation.planner import SimulationPlanner
+from app.storage.sqlite_store import SQLiteStore
 
 
 class Dataset2TrainingReadinessService:
@@ -55,15 +63,6 @@ class Dataset2TrainingReadinessService:
 
         return _Dataset2TrainingReadinessService(*args, **kwargs)
 
-
-from app.monitoring.service import MonitoringService
-from app.operations.readiness import OperationReadinessService
-from app.public_opinion.service import CodexPublicOpinionService
-from app.rules.engine import RuleEngine
-from app.rules.loader import load_rule_config
-from app.simulation.broker import SimulatedBroker
-from app.simulation.planner import SimulationPlanner
-from app.storage.sqlite_store import SQLiteStore
 
 router = APIRouter(prefix="/api")
 
@@ -1797,7 +1796,7 @@ def automation_record_event(run_id: int, event: AutomationEventInput) -> dict:
             event.payload,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/automation/runs/{run_id}/finish")
@@ -1809,7 +1808,7 @@ def automation_finish_external_run(run_id: int, finish: AutomationFinishInput) -
             finish.summary,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/knowledge/summary")
@@ -4666,7 +4665,7 @@ def experience_code_evolution_detail(record_id: int) -> dict:
     try:
         return CodeEvolutionService().get_record(record_id)
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/experience/code-evolution/{record_id}/validation")
@@ -4705,7 +4704,7 @@ def reject_code_evolution_record(record_id: int, input_data: CodeEvolutionReview
             note=input_data.note,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/learning/reports/latest", response_model=LearningReport)
@@ -5204,7 +5203,7 @@ def screen_monitoring_provider_config_proposal_approve(
             note=payload.note,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/screen-monitoring/provider-config-proposals/{proposal_id}/reject")
@@ -5223,7 +5222,7 @@ def screen_monitoring_provider_config_proposal_reject(
             note=payload.note,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/screen-monitoring/sessions")
@@ -5289,7 +5288,7 @@ def screen_monitoring_artifact_review_approve(
             note=payload.note,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/screen-monitoring/artifact-reviews/{review_id}/reject")
@@ -5308,7 +5307,7 @@ def screen_monitoring_artifact_review_reject(
             note=payload.note,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/screen-monitoring/observations/mock")
@@ -6363,7 +6362,7 @@ def explain_code_evolution_with_model(record_id: int) -> dict:
     try:
         return AIModelGatewayService().explain_code_evolution(record_id)
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/ai/model/audit-logs")
@@ -6394,7 +6393,7 @@ def validate_ai_proposal(proposal_id: int) -> dict:
     try:
         return AIReviewWorker().validate_proposal(proposal_id)
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/ai/review/proposals/{proposal_id}/approve-for-simulation")
@@ -6426,4 +6425,4 @@ def reject_ai_proposal(
     try:
         return AIReviewWorker().reject(proposal_id, reviewed_by=reviewed_by, note=note)
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

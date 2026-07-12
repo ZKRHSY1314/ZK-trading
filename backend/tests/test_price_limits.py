@@ -1,4 +1,3 @@
-import pytest
 from app.data.price_limits import infer_board_type, limit_up_threshold
 
 def test_infer_board_type():

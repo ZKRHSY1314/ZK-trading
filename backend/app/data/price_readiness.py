@@ -53,7 +53,6 @@ class PriceReadinessService:
         code = normalize_a_share_code(symbol)
         
         history_points = 0
-        error_msg = None
         
         try:
             # Check history size using local cache directly

@@ -1,4 +1,3 @@
-import pytest
 from app.data.snapshot_builder import MarketSnapshotBuilder, MarketDataError
 
 def test_data_fallback_when_provider_fails(mock_provider):

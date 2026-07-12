@@ -58,7 +58,6 @@ class MonitoringService:
         alerts = [alert for event in events for alert in event.get("alerts", [])]
         risk_blocked_reasons = self._risk_blocked_reasons_from_events(events)
         quality_gates = self._quality_gates(events)
-        quality_gates_count = len(quality_gates)
         quality_events_count = len(
             [item for item in quality_gates if str(item.get("quality_grade") or "").lower() != "good"]
         )

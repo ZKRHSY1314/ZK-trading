@@ -1,4 +1,3 @@
-import pytest
 from app.models import MarketSnapshot
 from app.strategies.dengzhan import DengZhanSignals
 
