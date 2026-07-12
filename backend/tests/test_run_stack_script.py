@@ -42,6 +42,8 @@ def test_stop_stack_requires_exact_process_identity():
     assert "shutdownDeadline" in source
     assert "Get-DescendantProcessIds" in source
     assert "remaining_descendant_pids" in source
+    assert '"stale_metadata_removed"' in source
+    assert "foreach ($rootPid in $validatedRoots)" in source
     assert "Remove-Item -LiteralPath $PidFile" in source
 
 

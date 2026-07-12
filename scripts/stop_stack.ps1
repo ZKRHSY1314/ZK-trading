@@ -159,7 +159,7 @@ do {
 $shutdownDeadline = [DateTime]::UtcNow.AddSeconds(3)
 do {
     $remaining = @(
-        foreach ($rootPid in $rootPids) {
+        foreach ($rootPid in $validatedRoots) {
             Get-Process -Id $rootPid -ErrorAction SilentlyContinue
         }
     )
@@ -176,7 +176,7 @@ $remaining = @(
         }
     ) | Sort-Object Id -Unique
 )
-if ($remaining.Count -eq 0 -and $skipped.Count -eq 0 -and $missing.Count -eq 0) {
+if ($remaining.Count -eq 0) {
     $resolvedLogs = (Resolve-Path -LiteralPath $LogsRoot).Path
     if ($resolvedLogs -ne [IO.Path]::GetDirectoryName($PidFile)) {
         throw "PID file escaped the expected logs directory."
@@ -185,9 +185,13 @@ if ($remaining.Count -eq 0 -and $skipped.Count -eq 0 -and $missing.Count -eq 0) 
 }
 
 $result = [ordered]@{
-    status = if (
-        $remaining.Count -eq 0 -and $skipped.Count -eq 0 -and $missing.Count -eq 0
-    ) { "stopped" } else { "attention" }
+    status = if ($remaining.Count -ne 0) {
+        "attention"
+    } elseif ($skipped.Count -gt 0 -or $missing.Count -gt 0) {
+        "stale_metadata_removed"
+    } else {
+        "stopped"
+    }
     project_root = $ProjectRoot
     stopped_pids = @($stopped)
     remaining_pids = @($remaining | ForEach-Object Id)
@@ -196,6 +200,6 @@ $result = [ordered]@{
     missing = @($missing)
 }
 $result | ConvertTo-Json -Depth 4
-if ($result.status -ne "stopped") {
+if ($result.status -eq "attention") {
     exit 1
 }
