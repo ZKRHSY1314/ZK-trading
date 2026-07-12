@@ -101,7 +101,7 @@ class DailyBarCacheService:
 
                 existing_bars = self.get_bars(symbol, limit=days)
                 if existing_bars:
-                    attempts.append({"source": "local_cache", "status": "success"})
+                    attempts.append({"source": "local_cache", "status": "degraded_cached"})
                     with self.store.connect() as conn:
                         conn.execute(
                             "DELETE FROM daily_bar_cache WHERE symbol = ? AND trade_date = 'ERROR'",
@@ -109,10 +109,12 @@ class DailyBarCacheService:
                         )
                     return {
                         "symbol": symbol,
-                        "status": "success",
+                        "status": "degraded_cached",
                         "bars_saved": 0,
                         "source": existing_bars[0]["source"] + "_cached",
-                        "attempts": attempts
+                        "latest_trade_date": existing_bars[0].get("trade_date"),
+                        "error": "remote_refresh_failed_existing_cache_preserved",
+                        "attempts": attempts,
                     }
 
                 error_msg = f"AKShare failed: {str(e1)}; Sina failed: {str(e2)}"

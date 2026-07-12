@@ -6,6 +6,7 @@ import pandas as pd
 
 from app.config import settings
 from app.data.universe_backfill import UniverseBackfillService
+from app.data.daily_bar_cache import DailyBarCacheService
 from app.storage.sqlite_store import SQLiteStore
 from scripts.backfill_market_universe import DEFAULT_CHECKPOINT_PATH, main
 
@@ -384,6 +385,37 @@ def test_apply_writes_atomic_batch_checkpoint_for_process_resume(tmp_path) -> No
     assert payload["processed"] == 3
     assert payload["status"] == result["status"]
     assert result["checkpoint"]["granularity"] == "batch"
+
+
+def test_existing_cache_is_not_reported_as_success_when_remote_refresh_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    store = SQLiteStore(tmp_path / "degraded-cache.sqlite3")
+    store.init()
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO daily_bar_cache(
+                symbol, trade_date, open, high, low, close, source, quality_status
+            ) VALUES ('SH600000', '2026-07-01', 10, 10.2, 9.8, 10.1, 'old', 'ready')
+            """
+        )
+    service = DailyBarCacheService(store=store)
+
+    def fail(*_: object, **__: object):
+        raise RuntimeError("remote unavailable")
+
+    monkeypatch.setattr(service.builder.provider, "get_daily_bars", fail)
+    monkeypatch.setattr(service, "_load_sina_daily_bars", fail)
+
+    result = service.refresh_symbols(["SH600000"], days=30)
+
+    item = result["results"][0]
+    assert item["status"] == "degraded_cached"
+    assert item["bars_saved"] == 0
+    assert item["latest_trade_date"] == "2026-07-01"
+    assert item["error"] == "remote_refresh_failed_existing_cache_preserved"
 
 
 def test_batch_failure_is_isolated_to_each_symbol_and_does_not_abort_the_run(tmp_path) -> None:
