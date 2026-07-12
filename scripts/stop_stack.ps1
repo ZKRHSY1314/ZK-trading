@@ -52,6 +52,7 @@ $components = @(
     @{ name = "backend"; data = $metadata.backend },
     @{ name = "frontend"; data = $metadata.frontend },
     @{ name = "control_worker"; data = $metadata.control_worker },
+    @{ name = "reference_data_worker"; data = $metadata.reference_data_worker },
     @{ name = "codex_market_pulse"; data = $metadata.codex_market_pulse }
 ) | Where-Object { $null -ne $_.data.pid }
 $rootPids = @($components | ForEach-Object { [int]$_.data.pid } | Select-Object -Unique)

@@ -15,11 +15,13 @@ $LogsRoot = Join-Path $ProjectRoot "logs"
 $DatabasePath = Join-Path $ProjectRoot "trading_local.sqlite3"
 $Python = Join-Path $BackendRoot ".venv\Scripts\python.exe"
 $WorkerScript = Join-Path $BackendRoot "scripts\control_plane_loop.py"
+$ReferenceWorkerScript = Join-Path $BackendRoot "scripts\reference_data_loop.py"
 $CodexPulseScript = Join-Path $BackendRoot "scripts\codex_market_pulse.py"
 $ViteCommand = Join-Path $FrontendRoot "node_modules\.bin\vite.cmd"
 $ViteEntry = Join-Path $FrontendRoot "node_modules\vite\bin\vite.js"
 $PidFile = Join-Path $LogsRoot "run_stack.pids.json"
 $HeartbeatFile = Join-Path $BackendRoot "logs\control_plane_heartbeat.json"
+$ReferenceHeartbeatFile = Join-Path $BackendRoot "logs\reference_data_heartbeat.json"
 $ApiBase = "http://127.0.0.1:$BackendPort"
 $FrontendBase = "http://127.0.0.1:$FrontendPort"
 
@@ -201,6 +203,7 @@ function Test-TrackedProcessIdentity {
 Assert-FileExists -LiteralPath $DatabasePath -Label "Repository-root database"
 Assert-FileExists -LiteralPath $Python -Label "Backend Python runtime"
 Assert-FileExists -LiteralPath $WorkerScript -Label "Control-plane worker"
+Assert-FileExists -LiteralPath $ReferenceWorkerScript -Label "Reference-data worker"
 if ($EnableCodexSearch) {
     Assert-FileExists -LiteralPath $CodexPulseScript -Label "Codex market-pulse worker"
 }
@@ -239,6 +242,7 @@ if (Test-Path -LiteralPath $PidFile -PathType Leaf) {
             $previous.backend,
             $previous.frontend,
             $previous.control_worker,
+            $previous.reference_data_worker,
             $previous.codex_market_pulse
         )) {
             if ($null -ne $component.pid -and (Test-TrackedProcessIdentity -Metadata $component)) {
@@ -324,6 +328,32 @@ try {
     $workerHeartbeat = Wait-WorkerHeartbeat -LiteralPath $HeartbeatFile -ExpectedPid $worker.Id `
         -TimeoutSeconds $StartupTimeoutSeconds
 
+    $referenceArgs = @(
+        "-X", "utf8", $ReferenceWorkerScript,
+        "--interval-seconds", "14400",
+        "--max-cycles", "0",
+        "--board-limit", "50",
+        "--disclosure-limit", "500",
+        "--global-days", "30",
+        "--rate-limit-seconds", "0.2",
+        "--cycle-timeout-seconds", "900",
+        "--skip-sox"
+    )
+    $referenceWorker = Start-Process -FilePath $Python -ArgumentList $referenceArgs `
+        -WorkingDirectory $BackendRoot `
+        -RedirectStandardOutput (Join-Path $LogsRoot "reference-data-worker.out.log") `
+        -RedirectStandardError (Join-Path $LogsRoot "reference-data-worker.err.log") `
+        -WindowStyle Hidden -PassThru
+    $startedProcesses.Add($referenceWorker)
+    Start-Sleep -Milliseconds 500
+    if ($referenceWorker.HasExited) {
+        throw "Reference-data worker exited during startup with code $($referenceWorker.ExitCode)."
+    }
+    $referenceHeartbeat = Wait-WorkerHeartbeat `
+        -LiteralPath $ReferenceHeartbeatFile `
+        -ExpectedPid $referenceWorker.Id `
+        -TimeoutSeconds $StartupTimeoutSeconds
+
     $codexPulse = $null
     $codexPulseHeartbeat = $null
     if ($EnableCodexSearch) {
@@ -359,6 +389,13 @@ try {
     $workerMetadata["interval_seconds"] = 900
     $workerMetadata["heartbeat_path"] = $HeartbeatFile
     $workerMetadata["runtime_pid"] = [int]$workerHeartbeat.pid
+    $referenceMetadata = Get-StartedProcessMetadata `
+        -Process $referenceWorker `
+        -CommandMarker $ReferenceWorkerScript
+    $referenceMetadata["interval_seconds"] = 14400
+    $referenceMetadata["heartbeat_path"] = $ReferenceHeartbeatFile
+    $referenceMetadata["runtime_pid"] = [int]$referenceHeartbeat.pid
+    $referenceMetadata["review_only"] = $true
     $codexMetadata = [ordered]@{ enabled = $EnableCodexSearch }
     if ($null -ne $codexPulse) {
         $codexMetadata = Get-StartedProcessMetadata -Process $codexPulse -CommandMarker $CodexPulseScript
@@ -377,6 +414,7 @@ try {
         backend = $backendMetadata
         frontend = $frontendMetadata
         control_worker = $workerMetadata
+        reference_data_worker = $referenceMetadata
         codex_market_pulse = $codexMetadata
     }
     $metadata | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $PidFile -Encoding UTF8

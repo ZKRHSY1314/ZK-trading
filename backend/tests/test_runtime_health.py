@@ -1,3 +1,6 @@
+from datetime import datetime, timedelta, timezone
+import json
+
 from fastapi.testclient import TestClient
 
 from app.config import settings
@@ -29,6 +32,7 @@ def test_readyz_reports_read_only_database_snapshot(client, test_db):
     assert payload["database"]["schema_ready"] is True
     assert payload["database"]["missing_required_tables"] == []
     assert "control_plane" in payload["workers"]
+    assert "reference_data" in payload["workers"]
     assert isinstance(payload["attention"], list)
     assert test_db.db_path.stat().st_mtime_ns == modified_before
 
@@ -80,3 +84,47 @@ def test_readiness_does_not_call_an_empty_market_pulse_healthy(tmp_path, test_db
 
     assert snapshot["workers"]["codex_market_pulse"]["status"] == "degraded"
     assert "codex_market_pulse_heartbeat_degraded" in snapshot["attention"]
+
+
+def test_reference_data_heartbeat_uses_a_five_hour_stale_window(tmp_path, test_db):
+    heartbeat = tmp_path / "reference-worker.json"
+    completed_at = datetime.now(timezone.utc) - timedelta(hours=4, minutes=30)
+    heartbeat.write_text(
+        json.dumps(
+            {
+                "pid": 789,
+                "cycle": 3,
+                "status": "completed",
+                "completed_at": completed_at.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    healthy = readiness_snapshot(
+        test_db.db_path,
+        heartbeat_paths={"reference_data": heartbeat},
+    )
+
+    assert healthy["workers"]["reference_data"]["status"] == "healthy"
+    assert healthy["workers"]["reference_data"]["pid"] == 789
+
+    stale_at = datetime.now(timezone.utc) - timedelta(hours=5, minutes=1)
+    heartbeat.write_text(
+        json.dumps(
+            {
+                "pid": 789,
+                "cycle": 3,
+                "status": "completed",
+                "completed_at": stale_at.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    stale = readiness_snapshot(
+        test_db.db_path,
+        heartbeat_paths={"reference_data": heartbeat},
+    )
+
+    assert stale["workers"]["reference_data"]["status"] == "stale"
+    assert "reference_data_heartbeat_stale" in stale["attention"]

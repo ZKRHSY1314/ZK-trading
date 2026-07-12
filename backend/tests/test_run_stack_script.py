@@ -22,12 +22,21 @@ def test_run_stack_starts_guarded_hidden_processes():
     assert "Test-TrackedProcessIdentity" in source
     assert "Test-RootOrDescendantProcess" in source
     assert '$workerMetadata["runtime_pid"]' in source
+    assert "reference_data_loop.py" in source
+    assert "reference_data_heartbeat.json" in source
+    assert "$referenceWorker" in source
+    assert '$referenceMetadata["runtime_pid"]' in source
+    assert '"--board-limit", "50"' in source
+    assert '"--disclosure-limit", "500"' in source
+    assert '"--global-days", "30"' in source
+    assert '"--cycle-timeout-seconds", "900"' in source
+    assert '"--skip-sox"' in source
     assert "executable_path" in source
     assert "command_line" in source
     assert "created_at" in source
     assert '"--interval-seconds", "14400"' in source
-    assert source.count("Start-Process") >= 4
-    assert source.count("-WindowStyle Hidden") >= 4
+    assert source.count("Start-Process") >= 5
+    assert source.count("-WindowStyle Hidden") >= 5
     assert "run_stack.pids.json" in source
 
 
@@ -45,6 +54,7 @@ def test_stop_stack_requires_exact_process_identity():
     assert '"stale_metadata_removed"' in source
     assert "foreach ($rootPid in $validatedRoots)" in source
     assert "Remove-Item -LiteralPath $PidFile" in source
+    assert 'name = "reference_data_worker"' in source
 
 
 def test_ensure_stack_is_idempotent_and_refuses_unsafe_backend():
@@ -58,9 +68,12 @@ def test_ensure_stack_is_idempotent_and_refuses_unsafe_backend():
     assert "run_stack.ps1" in source
     assert "Test-TrackedProcessIdentity" in source
     assert "$metadata.control_worker" in source
+    assert "$metadata.reference_data_worker" in source
     assert "$metadata.codex_market_pulse" in source
     assert '$controlHeartbeat.status -notin @("missing", "invalid", "stale")' in source
     assert "$EnableCodexSearch" in source
+    assert "$ready.workers.reference_data" in source
+    assert "reference_data_worker_healthy" in source
     assert "Stack startup returned without reaching healthy review-only state" in source
 
 

@@ -27,6 +27,15 @@ _DEFAULT_HEARTBEATS = {
     / "backend"
     / "logs"
     / "codex_market_pulse_heartbeat.json",
+    "reference_data": PROJECT_ROOT
+    / "backend"
+    / "logs"
+    / "reference_data_heartbeat.json",
+}
+_HEARTBEAT_STALE_AFTER_SECONDS = {
+    "control_plane": 1800,
+    "codex_market_pulse": 18000,
+    "reference_data": 18000,
 }
 
 
@@ -97,7 +106,7 @@ def readiness_snapshot(
     workers = {
         name: _heartbeat_snapshot(
             path,
-            stale_after_seconds=1800 if name == "control_plane" else 18000,
+            stale_after_seconds=_HEARTBEAT_STALE_AFTER_SECONDS.get(name, 18000),
         )
         for name, path in (heartbeat_paths or _DEFAULT_HEARTBEATS).items()
     }

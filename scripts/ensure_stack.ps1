@@ -57,10 +57,15 @@ function Get-HealthyStack {
         }
         $metadata = Get-Content -Raw -Encoding UTF8 -LiteralPath $PidFile | ConvertFrom-Json
         $controlHeartbeat = $ready.workers.control_plane
+        $referenceHeartbeat = $ready.workers.reference_data
         $codexHeartbeat = $ready.workers.codex_market_pulse
         $controlHealthy = (
             (Test-TrackedProcessIdentity -Metadata $metadata.control_worker) -and
             $controlHeartbeat.status -notin @("missing", "invalid", "stale")
+        )
+        $referenceHealthy = (
+            (Test-TrackedProcessIdentity -Metadata $metadata.reference_data_worker) -and
+            $referenceHeartbeat.status -notin @("missing", "invalid", "stale")
         )
         $codexHealthy = (
             -not $EnableCodexSearch -or
@@ -74,6 +79,7 @@ function Get-HealthyStack {
             $frontend.StatusCode -ge 200 -and
             $frontend.StatusCode -lt 400 -and
             $controlHealthy -and
+            $referenceHealthy -and
             $codexHealthy
         ) {
             return [ordered]@{
@@ -82,6 +88,7 @@ function Get-HealthyStack {
                 ready = $ready
                 frontend_status = $frontend.StatusCode
                 control_worker_healthy = $controlHealthy
+                reference_data_worker_healthy = $referenceHealthy
                 codex_market_pulse_healthy = $codexHealthy
             }
         }
