@@ -143,7 +143,15 @@ def _heartbeat_snapshot(path: Path, *, stale_after_seconds: int = 18000) -> dict
     last_status = str(payload.get("status") or "unknown").strip().lower()
     if age_seconds > stale_after_seconds:
         runtime_status = "stale"
-    elif last_status in {"failed", "blocked", "partial", "degraded", "error"}:
+    elif last_status in {
+        "failed",
+        "blocked",
+        "partial",
+        "degraded",
+        "error",
+        "empty",
+        "insufficient_data",
+    }:
         runtime_status = "degraded"
     else:
         runtime_status = "healthy"

@@ -64,3 +64,19 @@ def test_readiness_reports_worker_heartbeat_without_mutating_it(tmp_path, test_d
     assert "control_plane_heartbeat_degraded" in snapshot["attention"]
     assert snapshot["workers"]["control_plane"]["pid"] == 123
     assert heartbeat.stat().st_mtime_ns == modified_before
+
+
+def test_readiness_does_not_call_an_empty_market_pulse_healthy(tmp_path, test_db):
+    heartbeat = tmp_path / "codex-worker.json"
+    heartbeat.write_text(
+        '{"pid":456,"cycle":2,"status":"empty","completed_at":"2099-01-01T00:00:00+00:00"}',
+        encoding="utf-8",
+    )
+
+    snapshot = readiness_snapshot(
+        test_db.db_path,
+        heartbeat_paths={"codex_market_pulse": heartbeat},
+    )
+
+    assert snapshot["workers"]["codex_market_pulse"]["status"] == "degraded"
+    assert "codex_market_pulse_heartbeat_degraded" in snapshot["attention"]
