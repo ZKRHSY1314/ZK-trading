@@ -26,6 +26,12 @@ $ExpectedArguments = @(
     "-File", ('"{0}"' -f $EnsureScript),
     "-EnableCodexSearch:$CodexFlag"
 ) -join " "
+$AllowedArguments = @(
+    $ExpectedArguments,
+    ($ExpectedArguments -replace [regex]::Escape($CodexFlag), (
+        if ($EnableCodexSearch) { '$false' } else { '$true' }
+    ))
+)
 $ExpectedDescription = "Keeps the local ZK-trading review-only stack healthy; never enables live trading."
 
 function Test-TaskDefinition {
@@ -41,7 +47,7 @@ function Test-TaskDefinition {
         executable = $null -ne $action -and (
             [IO.Path]::GetFullPath([string]$action.Execute)
         ).Equals([IO.Path]::GetFullPath($PowerShell), [StringComparison]::OrdinalIgnoreCase)
-        arguments = $null -ne $action -and [string]$action.Arguments -eq $ExpectedArguments
+        arguments = $null -ne $action -and [string]$action.Arguments -in $AllowedArguments
         working_directory = $null -ne $action -and (
             [IO.Path]::GetFullPath([string]$action.WorkingDirectory)
         ).Equals([IO.Path]::GetFullPath($ProjectRoot), [StringComparison]::OrdinalIgnoreCase)

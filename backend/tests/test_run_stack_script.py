@@ -76,6 +76,7 @@ def test_control_plane_task_runs_hidden_review_only_health_ensure():
     assert "-MultipleInstances IgnoreNew" in source
     assert "never enables live trading" in source
     assert "Test-TaskDefinition" in source
+    assert "$AllowedArguments" in source
     assert "task_definition_mismatch" in source
     assert "Refusing to run mismatched scheduled task" in source
     assert "Refusing to remove mismatched scheduled task" in source
