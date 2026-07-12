@@ -12,6 +12,7 @@ from app.forecasting.ledger import (
     ForecastLedger,
     ForecastOutcome,
 )
+from app.market_intelligence import SectorExposureResolver
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -41,6 +42,7 @@ class ForecastFeedback:
         self.store = store
         self.store.init()
         self.ledger = ForecastLedger(store)
+        self.sector_exposure = SectorExposureResolver(store)
 
     def label_due(
         self,
@@ -504,6 +506,11 @@ class ForecastFeedback:
                     "available_at": member["membership"]["available_at"],
                     "source": member["membership"]["source"],
                     "confidence": float(member["membership"]["confidence"]),
+                    "membership_mode": member["membership"].get(
+                        "membership_mode", "legacy_interval"
+                    ),
+                    "snapshot_id": member["membership"].get("snapshot_id"),
+                    "member_hash": member["membership"].get("member_hash"),
                 },
                 "entry": {
                     "trade_date": str(member["entry"]["trade_date"]),
@@ -529,10 +536,10 @@ class ForecastFeedback:
             "decision_cutoff": forecast.decision_cutoff,
             "decision_date": decision_date,
             "horizon_days": forecast.horizon_days,
-            "membership_source": "sector_membership_history",
+            "membership_source": "sector_exposure_resolver",
             "membership_point_in_time_policy": (
-                "available_at<=decision_cutoff; effective_from<=decision_date; "
-                "effective_to_is_null_or>=decision_date"
+                "legacy intervals union latest immutable snapshot per source and sector; "
+                "available_at_or_observed_at<=decision_cutoff; effective_on_decision_date"
             ),
             "aggregation": "equal_weight_complete_members",
             "benchmark_aggregation": "equal_weight_member_aligned_windows",
@@ -598,24 +605,7 @@ class ForecastFeedback:
         decision_cutoff: datetime,
         decision_date: str,
     ) -> list[dict[str, Any]]:
-        rows = self.store.fetch_all(
-            """
-            SELECT id, upper(symbol) AS symbol, sector, effective_from, effective_to,
-                   source, available_at, confidence
-            FROM sector_membership_history
-            WHERE lower(sector) = lower(?)
-              AND date(effective_from) <= date(?)
-              AND (effective_to IS NULL OR date(effective_to) >= date(?))
-              AND datetime(available_at) <= datetime(?)
-            ORDER BY upper(symbol), confidence DESC, effective_from DESC, id DESC
-            """,
-            (
-                sector.strip(),
-                decision_date,
-                decision_date,
-                decision_cutoff.isoformat().replace("+00:00", "Z"),
-            ),
-        )
+        rows = self.sector_exposure.symbols_for(sector, as_of=decision_cutoff)
         # Multiple providers can describe the same company.  The outcome basket
         # is company-equal-weighted, so select the strongest point-in-time row.
         unique: dict[str, dict[str, Any]] = {}

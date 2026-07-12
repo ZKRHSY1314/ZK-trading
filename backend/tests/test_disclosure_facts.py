@@ -74,6 +74,21 @@ def test_existing_raw_hash_cannot_hide_changed_extracted_facts(tmp_path):
         )
 
 
+def test_record_many_rolls_back_the_entire_disclosure_batch_on_conflict(tmp_path):
+    ledger = _ledger(tmp_path)
+    first = _fact(fact_id="batch-fact", raw_hash="b" * 64)
+    conflicting = _fact(
+        fact_id="batch-fact",
+        raw_hash="c" * 64,
+        metrics={"profit_change_pct_low": -10.0},
+    )
+
+    with pytest.raises(DisclosureConflictError, match="immutable revision"):
+        ledger.record_many([first, conflicting])
+
+    assert ledger.as_of("2026-07-11T00:00:00+08:00") == []
+
+
 def test_changed_fact_must_use_the_next_revision_number(tmp_path):
     ledger = _ledger(tmp_path)
     ledger.record(_fact())

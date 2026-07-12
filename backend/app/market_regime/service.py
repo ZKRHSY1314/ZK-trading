@@ -51,27 +51,41 @@ class MarketRegimeService:
                     """
                     WITH source_ranked AS (
                         SELECT symbol, asset_class, bar_time, close, source, available_at,
+                               quality_status,
                                ROW_NUMBER() OVER (
                                    PARTITION BY symbol, bar_time
-                                   ORDER BY datetime(available_at) DESC, source ASC
+                                   ORDER BY julianday(available_at) DESC, rowid DESC
                                ) AS source_rank
                         FROM global_market_bars
-                        WHERE quality_status = 'ready'
-                          AND datetime(bar_time) <= datetime(?)
-                          AND datetime(available_at) <= datetime(?)
-                    ), period_ranked AS (
-                        SELECT symbol, asset_class, bar_time, close, source, available_at,
+                        WHERE julianday(bar_time) <= julianday(?)
+                          AND julianday(available_at) <= julianday(?)
+                    ), latest_symbol_bar AS (
+                        SELECT symbol, quality_status,
                                ROW_NUMBER() OVER (
                                    PARTITION BY symbol
-                                   ORDER BY datetime(bar_time) DESC
-                               ) AS period_rank
+                                   ORDER BY julianday(bar_time) DESC
+                               ) AS latest_rank
                         FROM source_ranked
                         WHERE source_rank = 1
+                    ), period_ranked AS (
+                        SELECT ranked.symbol, ranked.asset_class, ranked.bar_time,
+                               ranked.close, ranked.source, ranked.available_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY ranked.symbol
+                                   ORDER BY julianday(ranked.bar_time) DESC
+                               ) AS period_rank
+                        FROM source_ranked AS ranked
+                        JOIN latest_symbol_bar AS latest
+                          ON latest.symbol = ranked.symbol
+                         AND latest.latest_rank = 1
+                        WHERE ranked.source_rank = 1
+                          AND ranked.quality_status = 'ready'
+                          AND latest.quality_status = 'ready'
                     )
                     SELECT symbol, asset_class, bar_time, close, source, available_at
                     FROM period_ranked
                     WHERE period_rank <= 6
-                    ORDER BY symbol ASC, datetime(bar_time) DESC
+                    ORDER BY symbol ASC, julianday(bar_time) DESC
                     """,
                     (cutoff, cutoff),
                 ).fetchall()

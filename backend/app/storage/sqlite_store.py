@@ -1417,6 +1417,57 @@ CREATE INDEX IF NOT EXISTS idx_sector_membership_symbol_effective
     ON sector_membership_history(symbol, effective_from, effective_to);
 CREATE INDEX IF NOT EXISTS idx_sector_membership_sector_available
     ON sector_membership_history(sector, available_at);
+
+CREATE TABLE IF NOT EXISTS sector_membership_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    sector TEXT NOT NULL,
+    member_hash TEXT NOT NULL,
+    member_count INTEGER NOT NULL CHECK(member_count > 0),
+    observed_at TEXT NOT NULL,
+    effective_date TEXT NOT NULL,
+    confidence REAL NOT NULL CHECK(confidence >= 0.0 AND confidence <= 1.0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source, sector, observed_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sector_membership_snapshots_asof
+    ON sector_membership_snapshots(source, sector, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sector_membership_snapshots_sector_asof
+    ON sector_membership_snapshots(sector, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS sector_membership_snapshot_members (
+    snapshot_id INTEGER NOT NULL REFERENCES sector_membership_snapshots(id),
+    symbol TEXT NOT NULL,
+    PRIMARY KEY(snapshot_id, symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sector_membership_snapshot_members_symbol
+    ON sector_membership_snapshot_members(symbol, snapshot_id);
+
+CREATE TRIGGER IF NOT EXISTS sector_membership_snapshots_no_update
+BEFORE UPDATE ON sector_membership_snapshots
+BEGIN
+    SELECT RAISE(ABORT, 'sector membership snapshots are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sector_membership_snapshots_no_delete
+BEFORE DELETE ON sector_membership_snapshots
+BEGIN
+    SELECT RAISE(ABORT, 'sector membership snapshots are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sector_membership_snapshot_members_no_update
+BEFORE UPDATE ON sector_membership_snapshot_members
+BEGIN
+    SELECT RAISE(ABORT, 'sector membership snapshot members are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sector_membership_snapshot_members_no_delete
+BEFORE DELETE ON sector_membership_snapshot_members
+BEGIN
+    SELECT RAISE(ABORT, 'sector membership snapshot members are append-only');
+END;
 """
 
 

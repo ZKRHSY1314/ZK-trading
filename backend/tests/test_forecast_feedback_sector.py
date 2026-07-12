@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from app.forecasting import ForecastDecision, ForecastFeedback, ForecastLedger, ForecastOutcome
+from app.market_intelligence import SectorExposureResolver
+from app.market_intelligence.exposure import membership_hash
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -170,7 +172,7 @@ def test_sector_label_uses_only_point_in_time_members_and_equal_weight_returns(t
     assert outcome.sector_return == pytest.approx(0.15)
     assert outcome.evidence["aggregation"] == "equal_weight_complete_members"
     assert outcome.evidence["benchmark_aggregation"] == "equal_weight_member_aligned_windows"
-    assert outcome.evidence["membership_source"] == "sector_membership_history"
+    assert outcome.evidence["membership_source"] == "sector_exposure_resolver"
     assert outcome.evidence["eligible_member_count"] == 2
     assert outcome.evidence["complete_member_count"] == 2
     assert outcome.evidence["coverage"] == pytest.approx(1.0)
@@ -181,6 +183,45 @@ def test_sector_label_uses_only_point_in_time_members_and_equal_weight_returns(t
     ]
     assert outcome.evidence["members"][0]["benchmark_entry"]["trade_date"] == "2026-07-13"
     assert outcome.evidence["members"][0]["benchmark_exit"]["trade_date"] == "2026-07-15"
+
+
+def test_sector_feedback_members_use_latest_snapshot_at_exact_decision_cutoff(tmp_path):
+    store = _store(tmp_path)
+    resolver = SectorExposureResolver(store)
+    first_symbols = ["SH600001", "SZ000002"]
+    resolver.record_snapshot(
+        source="fixture-board",
+        sector="semiconductors",
+        symbols=first_symbols,
+        member_hash=membership_hash(first_symbols),
+        observed_at="2026-07-10T05:00:00Z",
+        effective_date="2026-07-10",
+        confidence=0.9,
+    )
+    resolver.record_snapshot(
+        source="fixture-board",
+        sector="semiconductors",
+        symbols=["SH600001"],
+        member_hash=membership_hash(["SH600001"]),
+        observed_at="2026-07-10T06:00:00Z",
+        effective_date="2026-07-10",
+        confidence=0.9,
+    )
+    feedback = ForecastFeedback(store)
+
+    before = feedback._sector_members(
+        "semiconductors",
+        decision_cutoff=datetime.fromisoformat("2026-07-10T05:59:59+00:00"),
+        decision_date="2026-07-10",
+    )
+    at_revision = feedback._sector_members(
+        "semiconductors",
+        decision_cutoff=datetime.fromisoformat("2026-07-10T06:00:00+00:00"),
+        decision_date="2026-07-10",
+    )
+
+    assert [row["symbol"] for row in before] == ["SH600001", "SZ000002"]
+    assert [row["symbol"] for row in at_revision] == ["SH600001"]
 
 
 def test_sector_label_stays_pending_until_two_members_have_complete_windows(tmp_path):

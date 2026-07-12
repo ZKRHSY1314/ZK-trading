@@ -110,72 +110,88 @@ class DisclosureLedger:
         self.store.init()
 
     def record(self, fact: DisclosureFact) -> DisclosureFact:
+        return self.record_many([fact])[0]
+
+    def record_many(self, facts: list[DisclosureFact]) -> list[DisclosureFact]:
+        """Record a disclosure batch atomically, preserving immutable revisions."""
+        if not facts:
+            return []
+        persisted: list[DisclosureFact] = []
         with self.store.connect() as conn:
-            identity_row = conn.execute(
-                "SELECT * FROM disclosure_facts WHERE fact_id = ? AND revision = ?",
-                (fact.fact_id, fact.revision),
-            ).fetchone()
-            if identity_row is not None:
-                persisted = self._from_row(dict(identity_row))
-                if persisted != fact:
-                    raise DisclosureConflictError(
-                        "immutable revision cannot be rewritten; use the next revision"
-                    )
-                return persisted
+            for fact in facts:
+                persisted.append(self._record_with_connection(conn, fact))
+        return persisted
 
-            hash_row = conn.execute(
-                "SELECT * FROM disclosure_facts WHERE fact_id = ? AND raw_hash = ?",
-                (fact.fact_id, fact.raw_hash),
-            ).fetchone()
-            if hash_row is not None:
-                persisted = self._from_row(dict(hash_row))
-                if replace(fact, revision=persisted.revision) != persisted:
-                    raise DisclosureConflictError(
-                        "raw_hash already exists with a different extracted fact payload"
-                    )
-                return persisted
+    def _record_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        fact: DisclosureFact,
+    ) -> DisclosureFact:
+        identity_row = conn.execute(
+            "SELECT * FROM disclosure_facts WHERE fact_id = ? AND revision = ?",
+            (fact.fact_id, fact.revision),
+        ).fetchone()
+        if identity_row is not None:
+            persisted = self._from_row(dict(identity_row))
+            if persisted != fact:
+                raise DisclosureConflictError(
+                    "immutable revision cannot be rewritten; use the next revision"
+                )
+            return persisted
 
-            latest_row = conn.execute(
+        hash_row = conn.execute(
+            "SELECT * FROM disclosure_facts WHERE fact_id = ? AND raw_hash = ?",
+            (fact.fact_id, fact.raw_hash),
+        ).fetchone()
+        if hash_row is not None:
+            persisted = self._from_row(dict(hash_row))
+            if replace(fact, revision=persisted.revision) != persisted:
+                raise DisclosureConflictError(
+                    "raw_hash already exists with a different extracted fact payload"
+                )
+            return persisted
+
+        latest_row = conn.execute(
+            """
+            SELECT * FROM disclosure_facts
+            WHERE fact_id = ?
+            ORDER BY revision DESC
+            LIMIT 1
+            """,
+            (fact.fact_id,),
+        ).fetchone()
+        if latest_row is not None and (
+            latest_row["symbol"], latest_row["fact_type"], latest_row["period_end"]
+        ) != (fact.symbol, fact.fact_type, fact.period_end):
+            raise DisclosureConflictError(
+                "fact identity cannot change across revisions: symbol, fact_type, and period_end "
+                "must remain stable"
+            )
+        if latest_row is not None and fact.available_at < latest_row["available_at"]:
+            raise DisclosureConflictError(
+                "revision available_at cannot move backwards in point-in-time history"
+            )
+        expected_revision = 1 if latest_row is None else int(latest_row["revision"]) + 1
+        if fact.revision != expected_revision:
+            raise DisclosureConflictError(
+                f"changed disclosure payload must use the next revision; "
+                f"next revision is {expected_revision}"
+            )
+
+        try:
+            conn.execute(
                 """
-                SELECT * FROM disclosure_facts
-                WHERE fact_id = ?
-                ORDER BY revision DESC
-                LIMIT 1
+                INSERT INTO disclosure_facts(
+                    fact_id, symbol, fact_type, period_end, published_at,
+                    first_seen_at, retrieved_at, available_at, source_tier,
+                    source_url, raw_hash, revision, metrics_json, evidence_json,
+                    review_only
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 """,
-                (fact.fact_id,),
-            ).fetchone()
-            if latest_row is not None and (
-                latest_row["symbol"], latest_row["fact_type"], latest_row["period_end"]
-            ) != (fact.symbol, fact.fact_type, fact.period_end):
-                raise DisclosureConflictError(
-                    "fact identity cannot change across revisions: symbol, fact_type, and period_end "
-                    "must remain stable"
-                )
-            if latest_row is not None and fact.available_at < latest_row["available_at"]:
-                raise DisclosureConflictError(
-                    "revision available_at cannot move backwards in point-in-time history"
-                )
-            expected_revision = 1 if latest_row is None else int(latest_row["revision"]) + 1
-            if fact.revision != expected_revision:
-                raise DisclosureConflictError(
-                    f"changed disclosure payload must use the next revision; "
-                    f"next revision is {expected_revision}"
-                )
-
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO disclosure_facts(
-                        fact_id, symbol, fact_type, period_end, published_at,
-                        first_seen_at, retrieved_at, available_at, source_tier,
-                        source_url, raw_hash, revision, metrics_json, evidence_json,
-                        review_only
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-                    """,
-                    self._values(fact),
-                )
-            except sqlite3.IntegrityError as exc:
-                raise DisclosureConflictError("disclosure revision conflicts with history") from exc
+                self._values(fact),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise DisclosureConflictError("disclosure revision conflicts with history") from exc
         return fact
 
     def as_of(
