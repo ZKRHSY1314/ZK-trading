@@ -101,6 +101,38 @@ class SectorExposureResolver:
         )
         return [{**row, "review_only": True} for row in rows]
 
+    def sectors_for_many(
+        self,
+        symbols: list[str],
+        *,
+        as_of: str | datetime,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Resolve a selection universe with one point-in-time query."""
+        normalized = sorted({str(symbol).strip().upper() for symbol in symbols if symbol})
+        resolved = {symbol: [] for symbol in normalized}
+        if not normalized:
+            return resolved
+        cutoff = _cutoff(as_of).isoformat()
+        placeholders = ",".join("?" for _ in normalized)
+        rows = self.store.fetch_all(
+            f"""
+            SELECT symbol, sector, effective_from, effective_to,
+                   source, available_at, confidence
+            FROM sector_membership_history
+            WHERE symbol IN ({placeholders})
+              AND date(effective_from) <= date(?)
+              AND (effective_to IS NULL OR date(effective_to) >= date(?))
+              AND datetime(available_at) <= datetime(?)
+            ORDER BY symbol ASC, confidence DESC, sector ASC, effective_from DESC
+            """,
+            (*normalized, cutoff, cutoff, cutoff),
+        )
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if symbol in resolved:
+                resolved[symbol].append({**row, "review_only": True})
+        return resolved
+
     def symbols_for(self, sector: str, *, as_of: str | datetime) -> list[dict[str, Any]]:
         cutoff = _cutoff(as_of).isoformat()
         rows = self.store.fetch_all(

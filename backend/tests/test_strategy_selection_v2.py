@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from collections import Counter
+from datetime import date, datetime, timedelta
 import json
+from zoneinfo import ZoneInfo
+
+import pytest
 
 from app.candidates.selection_v2 import StrategySelectionV2Service
 from app.forecasting import ForecastDecision, ForecastLedger
@@ -23,6 +27,9 @@ def _reset(store) -> None:
             "public_opinion_runs",
             "public_opinion_items",
             "public_opinion_sector_signals",
+            "forecast_outcomes",
+            "forecast_decisions",
+            "sector_membership_history",
         ]:
             conn.execute(f"DELETE FROM {table}")
 
@@ -130,10 +137,16 @@ def _item(result: dict, symbol: str) -> dict:
 def test_strategy_selection_v2_soft_scores_and_plan_buckets(test_db):
     _reset(test_db)
 
-    _insert_profile(test_db, "SZ300001", "高位强势", 31, pct_change=4.0, pb=4.2, market_cap_billion=120)
-    _insert_bars(test_db, "SZ300001", [10 + i * 0.1 for i in range(210)] + [31], last_volume_ratio=1.5)
+    _insert_profile(
+        test_db, "SZ300001", "高位强势", 31, pct_change=4.0, pb=4.2, market_cap_billion=120
+    )
+    _insert_bars(
+        test_db, "SZ300001", [10 + i * 0.1 for i in range(210)] + [31], last_volume_ratio=1.5
+    )
 
-    _insert_profile(test_db, "SZ300002", "高位出货", 30.5, pct_change=1.0, pb=4.8, market_cap_billion=90)
+    _insert_profile(
+        test_db, "SZ300002", "高位出货", 30.5, pct_change=1.0, pb=4.8, market_cap_billion=90
+    )
     _insert_bars(
         test_db,
         "SZ300002",
@@ -142,17 +155,41 @@ def test_strategy_selection_v2_soft_scores_and_plan_buckets(test_db):
         upper_shadow_last=True,
     )
 
-    _insert_profile(test_db, "SZ300003", "低位弱势", 10, pct_change=-1.5, pb=2.6, market_cap_billion=80)
+    _insert_profile(
+        test_db, "SZ300003", "低位弱势", 10, pct_change=-1.5, pb=2.6, market_cap_billion=80
+    )
     _insert_bars(test_db, "SZ300003", [24 - i * 0.06 for i in range(211)], last_volume_ratio=0.6)
 
-    _insert_profile(test_db, "SZ300004", "高PB强势", 12, pct_change=10.1, pb=8.5, market_cap_billion=70, limit_up_count=1)
-    _insert_bars(test_db, "SZ300004", [18 - i * 0.04 for i in range(210)] + [12], last_volume_ratio=1.8)
+    _insert_profile(
+        test_db,
+        "SZ300004",
+        "高PB强势",
+        12,
+        pct_change=10.1,
+        pb=8.5,
+        market_cap_billion=70,
+        limit_up_count=1,
+    )
+    _insert_bars(
+        test_db, "SZ300004", [18 - i * 0.04 for i in range(210)] + [12], last_volume_ratio=1.8
+    )
 
-    _insert_profile(test_db, "SH600005", "大盘核心", 22, pct_change=4.8, pb=3.1, market_cap_billion=1500)
-    _insert_bars(test_db, "SH600005", [14 + i * 0.04 for i in range(210)] + [22], last_volume_ratio=1.2)
+    _insert_profile(
+        test_db, "SH600005", "大盘核心", 22, pct_change=4.8, pb=3.1, market_cap_billion=1500
+    )
+    _insert_bars(
+        test_db, "SH600005", [14 + i * 0.04 for i in range(210)] + [22], last_volume_ratio=1.2
+    )
 
-    _insert_profile(test_db, "SZ300006", "A杀修复", 22, pct_change=9.8, pb=3.0, market_cap_billion=80)
-    _insert_bars(test_db, "SZ300006", [52 - i * 0.15 for i in range(200)] + [20, 21, 22], last_volume_ratio=1.6)
+    _insert_profile(
+        test_db, "SZ300006", "A杀修复", 22, pct_change=9.8, pb=3.0, market_cap_billion=80
+    )
+    _insert_bars(
+        test_db,
+        "SZ300006",
+        [52 - i * 0.15 for i in range(200)] + [20, 21, 22],
+        last_volume_ratio=1.6,
+    )
 
     _insert_profile(
         test_db,
@@ -165,17 +202,27 @@ def test_strategy_selection_v2_soft_scores_and_plan_buckets(test_db):
         operation_cost_line=13,
         sell_target=26,
     )
-    _insert_bars(test_db, "SZ300007", [12.6 + (i % 4) * 0.05 for i in range(211)], last_volume_ratio=1.0)
+    _insert_bars(
+        test_db, "SZ300007", [12.6 + (i % 4) * 0.05 for i in range(211)], last_volume_ratio=1.0
+    )
 
-    _insert_profile(test_db, "SZ300008", "*ST风险", 5, pct_change=1.0, pb=1.2, market_cap_billion=20)
+    _insert_profile(
+        test_db, "SZ300008", "*ST风险", 5, pct_change=1.0, pb=1.2, market_cap_billion=20
+    )
     _insert_bars(test_db, "SZ300008", [5 + i * 0.01 for i in range(60)], last_volume_ratio=1.0)
 
-    _insert_profile(test_db, "SZ300009", "数据缺失", 9, pct_change=3.0, pb=3.0, market_cap_billion=50)
+    _insert_profile(
+        test_db, "SZ300009", "数据缺失", 9, pct_change=3.0, pb=3.0, market_cap_billion=50
+    )
 
     result = StrategySelectionV2Service(store=test_db).run(mode="balanced", limit=50)
 
     high_strong = _item(result, "SZ300001")
-    assert high_strong["plan_type"] in {"WAIT_PULLBACK_PLAN", "WATCH_ONLY_PLAN", "WAIT_BREAKOUT_PLAN"}
+    assert high_strong["plan_type"] in {
+        "WAIT_PULLBACK_PLAN",
+        "WATCH_ONLY_PLAN",
+        "WAIT_BREAKOUT_PLAN",
+    }
     assert high_strong["plan_type"] != "REJECT_HARD"
 
     distribution = _item(result, "SZ300002")
@@ -226,6 +273,10 @@ def test_strategy_selection_v2_soft_scores_and_plan_buckets(test_db):
     assert result["filter_diagnostics"]["after_hard_filter_count"] >= 1
     assert result["safety"]["simulate_only"] is True
     assert result["safety"]["allow_live_order"] is False
+    assert result["safety"]["execution_allowed"] is False
+    assert result["safety"]["review_only"] is True
+    assert result["execution_allowed"] is False
+    assert result["review_only"] is True
     for candidate in result["daily_candidate_snapshot"]:
         assert candidate["simulate_only"] is True
         assert candidate["allow_live_order"] is False
@@ -234,7 +285,9 @@ def test_strategy_selection_v2_soft_scores_and_plan_buckets(test_db):
 
 def test_strategy_selection_v2_strict_zero_still_outputs_diagnostics(test_db):
     _reset(test_db)
-    _insert_profile(test_db, "SZ301001", "弱势观察", 10, pct_change=-2.0, pb=3.0, market_cap_billion=60)
+    _insert_profile(
+        test_db, "SZ301001", "弱势观察", 10, pct_change=-2.0, pb=3.0, market_cap_billion=60
+    )
     _insert_bars(test_db, "SZ301001", [18 - i * 0.04 for i in range(80)], last_volume_ratio=0.7)
 
     result = StrategySelectionV2Service(store=test_db).run(mode="strict", limit=20)
@@ -248,8 +301,12 @@ def test_strategy_selection_v2_strict_zero_still_outputs_diagnostics(test_db):
 
 def test_strategy_selection_v2_api_smoke(client, test_db):
     _reset(test_db)
-    _insert_profile(test_db, "SZ301002", "接口候选", 11, pct_change=8.0, pb=4.0, market_cap_billion=80)
-    _insert_bars(test_db, "SZ301002", [14 - i * 0.02 for i in range(90)] + [11], last_volume_ratio=1.5)
+    _insert_profile(
+        test_db, "SZ301002", "接口候选", 11, pct_change=8.0, pb=4.0, market_cap_billion=80
+    )
+    _insert_bars(
+        test_db, "SZ301002", [14 - i * 0.02 for i in range(90)] + [11], last_volume_ratio=1.5
+    )
 
     response = client.get("/api/candidates/selection-v2/summary?mode=balanced&limit=20")
 
@@ -265,7 +322,9 @@ def test_strategy_selection_v2_api_smoke(client, test_db):
 def test_strategy_selection_v2_uses_potential_items_and_filters_unit_test_only_profiles(test_db):
     _reset(test_db)
     _insert_profile(test_db, "SZ300007", "unit-test-only", 13.1, score=99)
-    _insert_bars(test_db, "SZ300007", [12.6 + (i % 4) * 0.05 for i in range(211)], last_volume_ratio=1.0)
+    _insert_bars(
+        test_db, "SZ300007", [12.6 + (i % 4) * 0.05 for i in range(211)], last_volume_ratio=1.0
+    )
     with test_db.connect() as conn:
         conn.execute(
             """
@@ -341,7 +400,9 @@ def test_strategy_selection_v2_uses_public_opinion_sector_tailwind(test_db):
         pb=4.0,
         market_cap_billion=90,
     )
-    _insert_bars(test_db, "SZ301099", [12 + i * 0.02 for i in range(210)] + [18], last_volume_ratio=1.6)
+    _insert_bars(
+        test_db, "SZ301099", [12 + i * 0.02 for i in range(210)] + [18], last_volume_ratio=1.6
+    )
 
     with test_db.connect() as conn:
         cursor = conn.execute(
@@ -405,7 +466,9 @@ def test_strategy_selection_v2_does_not_give_global_news_bonus_without_candidate
         pb=4.0,
         market_cap_billion=90,
     )
-    _insert_bars(test_db, "SZ301100", [12 + i * 0.02 for i in range(210)] + [18], last_volume_ratio=1.6)
+    _insert_bars(
+        test_db, "SZ301100", [12 + i * 0.02 for i in range(210)] + [18], last_volume_ratio=1.6
+    )
 
     baseline = StrategySelectionV2Service(store=test_db).run(mode="balanced", limit=20)
     baseline_item = _item(baseline, "SZ301100")
@@ -436,8 +499,14 @@ def test_strategy_selection_v2_does_not_give_global_news_bonus_without_candidate
     news_item = _item(with_news, "SZ301100")
 
     assert news_item["features"]["public_opinion_tailwind"]["matched"] is False
-    assert news_item["features"]["public_opinion_tailwind"]["score_effect"] == "none_without_candidate_sector_match"
-    assert news_item["score_components"]["market_sector"] == baseline_item["score_components"]["market_sector"]
+    assert (
+        news_item["features"]["public_opinion_tailwind"]["score_effect"]
+        == "none_without_candidate_sector_match"
+    )
+    assert (
+        news_item["score_components"]["market_sector"]
+        == baseline_item["score_components"]["market_sector"]
+    )
 
 
 def test_strategy_selection_v2_ascii_keyword_requires_token_boundary(test_db):
@@ -575,9 +644,9 @@ def test_strategy_selection_v2_as_of_date_excludes_all_future_evidence(test_db):
             """
         )
         for trade_date, close in (
-            ('2026-01-01', 10.0),
-            ('2026-01-02', 11.0),
-            ('2026-01-03', 99.0),
+            ("2026-01-01", 10.0),
+            ("2026-01-02", 11.0),
+            ("2026-01-03", 99.0),
         ):
             conn.execute(
                 """
@@ -589,8 +658,8 @@ def test_strategy_selection_v2_as_of_date_excludes_all_future_evidence(test_db):
                 (trade_date, close, close * 1.01, close * 0.99, close),
             )
         for event_ts, price, dedupe_key in (
-            ('2026-01-02T10:00:00+08:00', 12.0, 'as-of-past'),
-            ('2026-01-03T10:00:00+08:00', 100.0, 'as-of-future'),
+            ("2026-01-02T10:00:00+08:00", 12.0, "as-of-past"),
+            ("2026-01-03T10:00:00+08:00", 100.0, "as-of-future"),
         ):
             conn.execute(
                 """
@@ -667,11 +736,15 @@ def test_strategy_selection_v2_as_of_date_excludes_all_future_evidence(test_db):
     item = _item(result, "SH600888")
     assert symbols == {"SH600888"}
     assert item["name"] == "past-ai-candidate"
-    assert item["features"]["bars_count"] == 2
+    assert item["features"]["bars_count"] == 0
     assert item["features"]["price"] == 12.0
     assert item["features"]["latest_realtime"]["event_ts"].startswith("2026-01-02")
     assert result["public_opinion_context"]["run_id"] == past_run_id
     assert result["public_opinion_context"]["top_sectors"][0]["sector"] == "ai_compute"
+    assert result["point_in_time"]["status"] == "degraded"
+    assert result["point_in_time"]["strict_replay"] is False
+    assert "daily_bar_cache" in result["point_in_time"]["degraded_sources"]
+    assert "daily_bar_cache" in result["point_in_time"]["excluded_sources"]
 
 
 def test_sector_forecast_matches_candidate_through_point_in_time_membership(test_db):
@@ -726,3 +799,251 @@ def test_sector_forecast_matches_candidate_through_point_in_time_membership(test
     assert tailwind["sector_forecast"] is True
     assert tailwind["matched_via"] == "sector_membership_history"
     assert tailwind["sector"] == "semiconductors"
+
+
+def test_timestamp_cutoff_blocks_same_day_future_sector_and_realtime_evidence(test_db):
+    _reset(test_db)
+    with test_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO candidate_scores(
+                symbol, name, total_score, source, reasons_json,
+                components_json, raw_json, created_at
+            ) VALUES (
+                'SH600321', 'semiconductor-fixture', 70, 'pytest', '[]', '{}', '{}',
+                '2026-01-02T08:00:00+08:00'
+            )
+            """
+        )
+        for event_ts, received_ts, price, key in (
+            (
+                "2026-01-02T09:00:00+08:00",
+                "2026-01-02T09:01:00+08:00",
+                10.0,
+                "pit-before-cutoff",
+            ),
+            (
+                "2026-01-02T09:30:00+08:00",
+                "2026-01-02T10:30:00+08:00",
+                99.0,
+                "pit-received-after-cutoff",
+            ),
+            (
+                "2026-01-02T11:00:00+08:00",
+                "2026-01-02T11:01:00+08:00",
+                100.0,
+                "pit-event-after-cutoff",
+            ),
+        ):
+            conn.execute(
+                """
+                INSERT INTO realtime_market_events(
+                    symbol, name, price, source, provider_status, event_ts,
+                    received_ts, quality_status, payload_json, dedupe_key
+                ) VALUES (
+                    'SH600321', 'semiconductor-fixture', ?, 'pytest', 'ok', ?, ?,
+                    'realtime_ok', '{}', ?
+                )
+                """,
+                (price, event_ts, received_ts, key),
+            )
+
+    exposure = SectorExposureResolver(test_db)
+    exposure.record(
+        SectorMembership(
+            symbol="SH600321",
+            sector="semiconductors",
+            effective_from="2026-01-01",
+            effective_to=None,
+            source="pytest",
+            available_at="2026-01-02T08:00:00+08:00",
+            confidence=0.95,
+        )
+    )
+    ledger = ForecastLedger(test_db)
+    for decision_id, cutoff, probability in (
+        ("sector-before-cutoff", "2026-01-02T09:00:00+08:00", 0.61),
+        ("sector-after-cutoff", "2026-01-02T11:00:00+08:00", 0.99),
+    ):
+        ledger.record_forecast(
+            ForecastDecision(
+                decision_id=decision_id,
+                scope="sector",
+                subject="semiconductors",
+                decision_cutoff=cutoff,
+                available_at=cutoff,
+                horizon_days=5,
+                rank=1,
+                score=probability * 100,
+                probability=probability,
+                model_version="pytest",
+                prompt_version="pytest",
+                data_version="2026-01-02",
+                features={
+                    "sector": "semiconductors",
+                    "direction": "positive",
+                    "confidence": probability,
+                    "horizon": "1-4w",
+                },
+                evidence=[],
+                reasons=["pytest"],
+                status="pending_outcome",
+            )
+        )
+
+    result = StrategySelectionV2Service(store=test_db).run(
+        mode="balanced",
+        limit=20,
+        as_of=datetime(2026, 1, 2, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    item = _item(result, "SH600321")
+    assert result["as_of"] == "2026-01-02T10:00:00+08:00"
+    assert item["features"]["price"] == 10.0
+    assert item["features"]["latest_realtime"]["event_ts"] == "2026-01-02T09:00:00+08:00"
+    forecast = result["public_opinion_context"]["sector_forecasts"][0]
+    assert forecast["forecast_decision_id"] == "sector-before-cutoff"
+    assert forecast["forecast_confidence"] == 0.61
+
+
+def test_historical_replay_uses_lifecycle_events_and_reports_mutable_sources(test_db):
+    _reset(test_db)
+    with test_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO candidate_lifecycle(
+                symbol, name, state, score, source, raw_json, updated_at
+            ) VALUES (
+                'SH600901', 'future-current-name', 'focus_watch', 99,
+                'pytest-current', '{}', '2026-01-03T09:00:00+08:00'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO candidate_lifecycle_events(
+                symbol, name, from_state, to_state, event_type,
+                source, payload_json, created_at
+            ) VALUES (
+                'SH600901', 'historical-event-name', NULL, 'pending_review',
+                'discovered', 'pytest-event', '{"score":55,"rating":"review"}',
+                '2026-01-02T09:00:00+08:00'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO candidate_lifecycle(
+                symbol, name, state, score, source, raw_json, updated_at
+            ) VALUES (
+                'SZ300902', 'current-only-row', 'pending_review', 88,
+                'pytest-current', '{}', '2026-01-02T09:00:00+08:00'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_bar_cache(
+                symbol, trade_date, open, high, low, close, source, quality_status
+            ) VALUES (
+                'SH600901', '2026-01-02', 9.8, 10.2, 9.7, 10,
+                'mutable-cache', 'ready'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO realtime_market_events(
+                symbol, name, price, source, provider_status, event_ts,
+                received_ts, quality_status, payload_json, dedupe_key
+            ) VALUES (
+                'SH600901', 'historical-event-name', 10, 'pytest', 'ok',
+                '2026-01-02T09:30:00+08:00', '2026-01-02T09:31:00+08:00',
+                'realtime_ok', '{}', 'historical-lifecycle-price'
+            )
+            """
+        )
+
+    service = StrategySelectionV2Service(store=test_db)
+    cutoff = datetime(2026, 1, 2, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    result = service.run(mode="balanced", limit=20, as_of=cutoff)
+    symbols = {
+        item["symbol"]
+        for item in result["daily_candidate_snapshot"] + result["data_gap_candidates"]
+    }
+
+    item = _item(result, "SH600901")
+    assert symbols == {"SH600901"}
+    assert item["name"] == "historical-event-name"
+    assert "candidate_lifecycle_events" in item["evidence_sources"]
+    assert item["features"]["bars_count"] == 0
+    assert result["point_in_time"]["status"] == "degraded"
+    assert set(result["point_in_time"]["excluded_sources"]) == {
+        "candidate_lifecycle",
+        "daily_bar_cache",
+    }
+    assert service.candidate_universe(limit=20, as_of=cutoff) == ["SH600901"]
+
+
+def test_as_of_requires_timezone_aware_timestamp(test_db):
+    service = StrategySelectionV2Service(store=test_db)
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        service.run(as_of=datetime(2026, 1, 2, 10, 0))
+
+
+def test_selection_bulk_prefetch_query_count_is_constant_per_source(test_db, monkeypatch):
+    _reset(test_db)
+    for index in range(8):
+        symbol = f"SH6009{index:02d}"
+        _insert_profile(test_db, symbol, f"bulk-{index}", 10.0 + index, score=80 - index)
+        _insert_bars(
+            test_db,
+            symbol,
+            [9.0 + index * 0.1 + day * 0.01 for day in range(30)],
+        )
+
+    original_fetch_all = test_db.fetch_all
+    original_fetch_one = test_db.fetch_one
+    query_calls: list[str] = []
+
+    def record_query(sql: str) -> None:
+        normalized = " ".join(sql.lower().split())
+        for source in (
+            "daily_bar_cache",
+            "realtime_market_events",
+            "sector_membership_history",
+        ):
+            if f"from {source}" in normalized:
+                query_calls.append(source)
+                break
+
+    def counted_fetch_all(sql: str, params: tuple = ()) -> list[dict]:
+        record_query(sql)
+        return original_fetch_all(sql, params)
+
+    def counted_fetch_one(sql: str, params: tuple = ()) -> dict | None:
+        record_query(sql)
+        return original_fetch_one(sql, params)
+
+    monkeypatch.setattr(test_db, "fetch_all", counted_fetch_all)
+    monkeypatch.setattr(test_db, "fetch_one", counted_fetch_one)
+    service = StrategySelectionV2Service(store=test_db)
+
+    def run_counts(limit: int) -> Counter[str]:
+        query_calls.clear()
+        result = service.run(mode="balanced", limit=limit)
+        assert result["summary"]["candidate_count"] == limit
+        return Counter(query_calls)
+
+    one_candidate = run_counts(1)
+    eight_candidates = run_counts(8)
+
+    assert one_candidate == eight_candidates
+    assert eight_candidates == Counter(
+        {
+            "daily_bar_cache": 1,
+            "realtime_market_events": 1,
+            "sector_membership_history": 1,
+        }
+    )
