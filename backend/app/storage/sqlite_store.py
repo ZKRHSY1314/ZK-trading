@@ -1290,6 +1290,8 @@ CREATE INDEX IF NOT EXISTS idx_forecast_decisions_subject
     ON forecast_decisions(scope, subject, horizon_days, decision_cutoff DESC);
 CREATE INDEX IF NOT EXISTS idx_forecast_decisions_available
     ON forecast_decisions(available_at, decision_cutoff);
+CREATE INDEX IF NOT EXISTS idx_forecast_decisions_evaluation
+    ON forecast_decisions(scope, horizon_days, decision_cutoff, decision_id);
 
 CREATE TABLE IF NOT EXISTS forecast_outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
