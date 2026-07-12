@@ -26,11 +26,10 @@ $ExpectedArguments = @(
     "-File", ('"{0}"' -f $EnsureScript),
     "-EnableCodexSearch:$CodexFlag"
 ) -join " "
+$AlternativeCodexFlag = if ($EnableCodexSearch) { '$false' } else { '$true' }
 $AllowedArguments = @(
     $ExpectedArguments,
-    ($ExpectedArguments -replace [regex]::Escape($CodexFlag), (
-        if ($EnableCodexSearch) { '$false' } else { '$true' }
-    ))
+    ($ExpectedArguments -replace [regex]::Escape($CodexFlag), $AlternativeCodexFlag)
 )
 $ExpectedDescription = "Keeps the local ZK-trading review-only stack healthy; never enables live trading."
 
