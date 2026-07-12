@@ -3,10 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from app.config import settings
 from app.data.universe_backfill import UniverseBackfillService
+
+
+DEFAULT_CHECKPOINT_PATH = (
+    Path(__file__).resolve().parents[1] / "logs" / "universe_backfill_checkpoint.json"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +51,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional maximum symbols for this invocation.",
     )
+    parser.add_argument(
+        "--checkpoint-path",
+        default=str(DEFAULT_CHECKPOINT_PATH),
+        help="Atomic batch checkpoint path; written only with --apply.",
+    )
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        action="store_true",
+        help="Resume after the last processed symbol in --checkpoint-path.",
+    )
     return parser
 
 
@@ -56,13 +72,23 @@ def main(
     args = build_parser().parse_args(argv)
     runner = service or UniverseBackfillService()
     try:
+        resume_after = args.resume_after
+        if args.resume_from_checkpoint:
+            if resume_after:
+                raise ValueError("use either --resume-after or --resume-from-checkpoint")
+            checkpoint = Path(args.checkpoint_path)
+            payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+            resume_after = payload.get("last_processed_symbol")
+            if not resume_after:
+                raise ValueError("checkpoint has no last_processed_symbol")
         result = runner.run(
             apply=args.apply,
             days=args.days,
             batch_size=args.batch_size,
             rate_limit_seconds=args.rate_limit_seconds,
-            resume_after=args.resume_after,
+            resume_after=resume_after,
             limit=args.limit,
+            checkpoint_path=args.checkpoint_path,
         )
     except Exception as exc:
         result = {
@@ -79,7 +105,12 @@ def main(
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result.get("status") not in {"error"} else 1
+    status = str(result.get("status") or "error")
+    if status == "error":
+        return 1
+    if status in {"blocked", "partial", "degraded", "empty"}:
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

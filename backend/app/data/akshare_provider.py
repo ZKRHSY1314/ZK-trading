@@ -4,14 +4,13 @@ import pandas as pd
 
 
 class MarketDataProvider(Protocol):
-    def get_a_share_spot(self) -> pd.DataFrame:
-        ...
+    def get_a_share_spot(self) -> pd.DataFrame: ...
 
-    def get_minute_bars(self, symbol: str, period: str = "1") -> pd.DataFrame:
-        ...
+    def get_a_share_code_name(self) -> pd.DataFrame: ...
 
-    def get_daily_bars(self, symbol: str, adjust: str = "qfq") -> pd.DataFrame:
-        ...
+    def get_minute_bars(self, symbol: str, period: str = "1") -> pd.DataFrame: ...
+
+    def get_daily_bars(self, symbol: str, adjust: str = "qfq") -> pd.DataFrame: ...
 
 
 class AkshareProvider:
@@ -19,6 +18,12 @@ class AkshareProvider:
         import akshare as ak
 
         return ak.stock_zh_a_spot_em()
+
+    def get_a_share_code_name(self) -> pd.DataFrame:
+        """Return the independent Sina-backed A-share code/name universe."""
+        import akshare as ak
+
+        return ak.stock_info_a_code_name()
 
     def get_minute_bars(self, symbol: str, period: str = "1") -> pd.DataFrame:
         import akshare as ak

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import re
 import time
 from dataclasses import dataclass
@@ -24,6 +26,16 @@ class UniverseBackfillPlan:
     universe_count: int
     universe_symbols: tuple[str, ...]
     resume_after: str | None = None
+    discovery_source: str = "unknown"
+    discovery_status: str = "error"
+    discovery_complete: bool = False
+    discovery_attempts: tuple[dict[str, Any], ...] = ()
+
+
+class UniverseDiscoveryError(RuntimeError):
+    def __init__(self, message: str, attempts: list[dict[str, Any]]) -> None:
+        super().__init__(message)
+        self.attempts = attempts
 
 
 class UniverseBackfillService:
@@ -48,8 +60,8 @@ class UniverseBackfillService:
         resume_after: str | None = None,
         limit: int | None = None,
     ) -> UniverseBackfillPlan:
-        spot = self.provider.get_a_share_spot()
-        universe = tuple(sorted(self._extract_symbols(spot)))
+        universe_set, discovery = self._discover_symbols()
+        universe = tuple(sorted(universe_set))
         normalized_resume = None
         if resume_after:
             normalized_resume = self._normalize_symbol(resume_after)
@@ -69,6 +81,10 @@ class UniverseBackfillService:
             universe_count=len(universe),
             universe_symbols=universe,
             resume_after=normalized_resume,
+            discovery_source=discovery["source"],
+            discovery_status=discovery["status"],
+            discovery_complete=bool(discovery["complete"]),
+            discovery_attempts=tuple(discovery["attempts"]),
         )
 
     def run(
@@ -80,6 +96,7 @@ class UniverseBackfillService:
         rate_limit_seconds: float = 0.5,
         resume_after: str | None = None,
         limit: int | None = None,
+        checkpoint_path: str | Path | None = None,
     ) -> dict[str, Any]:
         if apply and settings.enable_live_trading:
             return {
@@ -94,13 +111,21 @@ class UniverseBackfillService:
                 "error": 0,
                 "last_processed_symbol": None,
                 "errors": [{"stage": "safety", "error": "live_trading_enabled"}],
+                "discovery": {
+                    "source": None,
+                    "status": "skipped_safety_block",
+                    "complete": False,
+                    "attempts": [],
+                },
                 "coverage": self._coverage(()),
                 "reference_data": self._reference_data_plan(apply=True),
+                "checkpoint": self._checkpoint_summary(checkpoint_path),
                 "safety": self._safety(apply=True),
             }
         try:
             plan = self.plan(resume_after=resume_after, limit=limit)
         except Exception as exc:
+            discovery_attempts = exc.attempts if isinstance(exc, UniverseDiscoveryError) else []
             return {
                 "status": "error",
                 "mode": "apply" if apply else "dry_run",
@@ -113,15 +138,32 @@ class UniverseBackfillService:
                 "error": 0,
                 "last_processed_symbol": None,
                 "errors": [{"stage": "universe_discovery", "error": str(exc)}],
+                "discovery": {
+                    "source": None,
+                    "status": "error",
+                    "complete": False,
+                    "attempts": discovery_attempts,
+                },
                 "coverage": self._coverage(()),
                 "reference_data": self._reference_data_plan(apply=apply),
+                "checkpoint": self._checkpoint_summary(checkpoint_path),
                 "safety": self._safety(apply=apply),
             }
         days = max(1, min(int(days), 500))
         batch_size = max(1, min(int(batch_size), 200))
         rate_limit_seconds = max(0.0, float(rate_limit_seconds))
         result: dict[str, Any] = {
-            "status": "planned" if not apply else "completed",
+            "status": (
+                "planned"
+                if not apply and plan.discovery_complete
+                else "degraded"
+                if not apply
+                else "empty"
+                if not plan.symbols
+                else "completed"
+                if plan.discovery_complete
+                else "partial"
+            ),
             "mode": "apply" if apply else "dry_run",
             "observed_at": plan.observed_at,
             "universe_count": plan.universe_count,
@@ -132,8 +174,15 @@ class UniverseBackfillService:
             "error": 0,
             "last_processed_symbol": None,
             "errors": [],
+            "discovery": {
+                "source": plan.discovery_source,
+                "status": plan.discovery_status,
+                "complete": plan.discovery_complete,
+                "attempts": list(plan.discovery_attempts),
+            },
             "coverage": self._coverage(plan.universe_symbols),
             "reference_data": self._reference_data_plan(apply=apply),
+            "checkpoint": self._checkpoint_summary(checkpoint_path),
             "safety": self._safety(apply=apply),
         }
         if not apply:
@@ -164,6 +213,12 @@ class UniverseBackfillService:
                             "error": (item or {}).get("error", "refresh result missing"),
                         }
                     )
+            self._write_checkpoint(
+                checkpoint_path,
+                status="running",
+                result=result,
+                plan=plan,
+            )
             if index < len(batches) - 1 and rate_limit_seconds:
                 self.sleep_fn(rate_limit_seconds)
 
@@ -171,10 +226,130 @@ class UniverseBackfillService:
             result["status"] = "partial" if result["success"] else "error"
         reference_data = self._refresh_reference_data(days=days)
         result["reference_data"] = reference_data
-        if reference_data["status"] in {"partial", "error"} and result["status"] == "completed":
+        if reference_data["status"] != "completed" and result["status"] == "completed":
             result["status"] = "partial"
         result["coverage"] = self._coverage(plan.universe_symbols)
+        self._write_checkpoint(
+            checkpoint_path,
+            status=str(result["status"]),
+            result=result,
+            plan=plan,
+        )
+        result["checkpoint"] = self._checkpoint_summary(checkpoint_path)
         return result
+
+    @staticmethod
+    def _checkpoint_summary(path: str | Path | None) -> dict[str, Any]:
+        return {
+            "enabled": path is not None,
+            "path": str(Path(path).resolve()) if path is not None else None,
+            "granularity": "batch",
+        }
+
+    def _write_checkpoint(
+        self,
+        path: str | Path | None,
+        *,
+        status: str,
+        result: dict[str, Any],
+        plan: UniverseBackfillPlan,
+    ) -> None:
+        if path is None:
+            return
+        target = Path(path).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": "universe_backfill_checkpoint.v1",
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "status": status,
+            "last_processed_symbol": result.get("last_processed_symbol"),
+            "processed": result.get("processed", 0),
+            "success": result.get("success", 0),
+            "error": result.get("error", 0),
+            "planned": result.get("planned", 0),
+            "universe_count": result.get("universe_count", 0),
+            "discovery_source": plan.discovery_source,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(target)
+
+    def _discover_symbols(self) -> tuple[set[str], dict[str, Any]]:
+        attempts: list[dict[str, Any]] = []
+        external_sources = (
+            ("akshare.stock_zh_a_spot_em", getattr(self.provider, "get_a_share_spot", None)),
+            (
+                "akshare.stock_info_a_code_name",
+                getattr(self.provider, "get_a_share_code_name", None),
+            ),
+        )
+        for source, loader in external_sources:
+            if not callable(loader):
+                attempts.append({"source": source, "status": "unsupported", "count": 0})
+                continue
+            try:
+                symbols = self._extract_symbols(loader())
+            except Exception as exc:
+                attempts.append(
+                    {"source": source, "status": "error", "count": 0, "error": str(exc)}
+                )
+                continue
+            if symbols:
+                attempts.append({"source": source, "status": "success", "count": len(symbols)})
+                return symbols, {
+                    "source": source,
+                    "status": "complete_external",
+                    "complete": True,
+                    "attempts": attempts,
+                }
+            attempts.append({"source": source, "status": "empty", "count": 0})
+
+        local_symbols = self._local_known_symbols()
+        if local_symbols:
+            attempts.append(
+                {
+                    "source": "local_known_symbols",
+                    "status": "success_partial",
+                    "count": len(local_symbols),
+                }
+            )
+            return local_symbols, {
+                "source": "local_known_symbols",
+                "status": "degraded_local_partial",
+                "complete": False,
+                "attempts": attempts,
+            }
+        attempts.append({"source": "local_known_symbols", "status": "empty", "count": 0})
+        errors = [f"{item['source']}: {item.get('error') or item['status']}" for item in attempts]
+        raise UniverseDiscoveryError("; ".join(errors), attempts)
+
+    def _local_known_symbols(self) -> set[str]:
+        store = getattr(self.cache_service, "store", None)
+        if store is None or not hasattr(store, "fetch_all"):
+            return set()
+        try:
+            rows = store.fetch_all(
+                """
+                SELECT symbol FROM daily_bar_cache WHERE symbol IS NOT NULL
+                UNION
+                SELECT symbol FROM stock_profiles WHERE symbol IS NOT NULL
+                UNION
+                SELECT symbol FROM candidate_lifecycle WHERE symbol IS NOT NULL
+                """
+            )
+        except Exception:
+            return set()
+        return {
+            symbol
+            for symbol in (self._normalize_symbol(row.get("symbol")) for row in rows)
+            if symbol is not None
+        }
 
     def _reference_data_plan(self, *, apply: bool) -> dict[str, Any]:
         supported = callable(getattr(self.cache_service, "refresh_benchmark_bars", None))

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 
 from app.config import settings
 from app.data.universe_backfill import UniverseBackfillService
 from app.storage.sqlite_store import SQLiteStore
-from scripts.backfill_market_universe import main
+from scripts.backfill_market_universe import DEFAULT_CHECKPOINT_PATH, main
 
 
 class _Provider:
@@ -14,6 +16,17 @@ class _Provider:
 
     def get_a_share_spot(self) -> pd.DataFrame:
         return pd.DataFrame({"代码": self.codes})
+
+
+class _FallbackProvider:
+    def __init__(self, codes: list[object]) -> None:
+        self.codes = codes
+
+    def get_a_share_spot(self) -> pd.DataFrame:
+        raise RuntimeError("primary spot unavailable")
+
+    def get_a_share_code_name(self) -> pd.DataFrame:
+        return pd.DataFrame({"code": self.codes, "name": ["fixture"] * len(self.codes)})
 
 
 class _NoWriteCache:
@@ -116,6 +129,85 @@ def test_plan_normalizes_and_filters_the_shanghai_shenzhen_a_share_universe() ->
 
     assert plan.universe_count == 4
     assert plan.symbols == ("SH600000", "SH688001", "SZ000001", "SZ300750")
+    assert plan.discovery_status == "complete_external"
+    assert plan.discovery_complete is True
+
+
+def test_discovery_falls_back_to_independent_external_code_list(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "external-fallback.sqlite3")
+    store.init()
+
+    result = UniverseBackfillService(
+        provider=_FallbackProvider(["000001", "600000", "430047"]),
+        cache_service=_RecordingCache(store),
+    ).run()
+
+    assert result["status"] == "planned"
+    assert result["universe_count"] == 2
+    assert result["discovery"]["source"] == "akshare.stock_info_a_code_name"
+    assert result["discovery"]["status"] == "complete_external"
+    assert result["discovery"]["complete"] is True
+    assert [item["status"] for item in result["discovery"]["attempts"]] == [
+        "error",
+        "success",
+    ]
+
+
+def test_local_known_symbols_are_explicitly_degraded_not_full_market(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "local-fallback.sqlite3")
+    store.init()
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO daily_bar_cache(symbol, trade_date, close, source, quality_status)
+            VALUES ('SH600000', '2026-07-10', 10, 'fixture', 'ready')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO stock_profiles(symbol, name, dataset_name, source_file, raw_json)
+            VALUES ('SZ000001', 'fixture', 'fixture', 'fixture', '{}')
+            """
+        )
+
+    class _UnavailableProvider:
+        def get_a_share_spot(self) -> pd.DataFrame:
+            raise RuntimeError("primary unavailable")
+
+        def get_a_share_code_name(self) -> pd.DataFrame:
+            raise RuntimeError("fallback unavailable")
+
+    result = UniverseBackfillService(
+        provider=_UnavailableProvider(),
+        cache_service=_RecordingCache(store),
+    ).run()
+
+    assert result["status"] == "degraded"
+    assert result["planned"] == 2
+    assert result["discovery"] == {
+        "source": "local_known_symbols",
+        "status": "degraded_local_partial",
+        "complete": False,
+        "attempts": [
+            {
+                "source": "akshare.stock_zh_a_spot_em",
+                "status": "error",
+                "count": 0,
+                "error": "primary unavailable",
+            },
+            {
+                "source": "akshare.stock_info_a_code_name",
+                "status": "error",
+                "count": 0,
+                "error": "fallback unavailable",
+            },
+            {
+                "source": "local_known_symbols",
+                "status": "success_partial",
+                "count": 2,
+            },
+        ],
+    }
 
 
 def test_run_is_a_read_only_dry_run_until_apply_is_explicit(tmp_path) -> None:
@@ -246,6 +338,8 @@ def test_apply_refreshes_in_bounded_batches_and_reports_symbol_results(tmp_path)
     assert result["success"] == 204
     assert result["error"] == 1
     assert result["last_processed_symbol"] == "SH600204"
+    assert result["status"] == "partial"
+    assert result["reference_data"]["status"] == "unsupported"
 
 
 def test_resume_after_and_limit_create_a_deterministic_continuation(tmp_path) -> None:
@@ -267,6 +361,29 @@ def test_resume_after_and_limit_create_a_deterministic_continuation(tmp_path) ->
     assert result["processed"] == 2
     assert cache.calls == [(["SH600002", "SH600003"], 500)]
     assert result["last_processed_symbol"] == "SH600003"
+
+
+def test_apply_writes_atomic_batch_checkpoint_for_process_resume(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "checkpoint.sqlite3")
+    store.init()
+    checkpoint = tmp_path / "logs" / "backfill.json"
+
+    result = UniverseBackfillService(
+        provider=_Provider(["600000", "600001", "600002"]),
+        cache_service=_ResultCache(store),
+    ).run(
+        apply=True,
+        batch_size=2,
+        rate_limit_seconds=0,
+        checkpoint_path=checkpoint,
+    )
+
+    payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "universe_backfill_checkpoint.v1"
+    assert payload["last_processed_symbol"] == "SH600002"
+    assert payload["processed"] == 3
+    assert payload["status"] == result["status"]
+    assert result["checkpoint"]["granularity"] == "batch"
 
 
 def test_batch_failure_is_isolated_to_each_symbol_and_does_not_abort_the_run(tmp_path) -> None:
@@ -336,7 +453,11 @@ def test_cli_defaults_to_dry_run_and_requires_an_explicit_apply_flag(capsys) -> 
 
         def run(self, **kwargs: object) -> dict[str, object]:
             self.kwargs = kwargs
-            return {"mode": "apply" if kwargs["apply"] else "dry_run", "planned": 3}
+            return {
+                "status": "completed" if kwargs["apply"] else "planned",
+                "mode": "apply" if kwargs["apply"] else "dry_run",
+                "planned": 3,
+            }
 
     runner = _Runner()
 
@@ -353,8 +474,48 @@ def test_cli_defaults_to_dry_run_and_requires_an_explicit_apply_flag(capsys) -> 
         "rate_limit_seconds": 0.2,
         "resume_after": None,
         "limit": None,
+        "checkpoint_path": str(DEFAULT_CHECKPOINT_PATH),
     }
     assert '"mode": "dry_run"' in capsys.readouterr().out
+
+
+def test_cli_returns_nonzero_for_partial_or_blocked_business_status() -> None:
+    class _Runner:
+        def __init__(self, status: str) -> None:
+            self.status = status
+
+        def run(self, **_: object) -> dict[str, object]:
+            return {"status": self.status, "mode": "apply"}
+
+    assert main(["--apply"], service=_Runner("partial")) == 2
+    assert main(["--apply"], service=_Runner("blocked")) == 2
+    assert main(["--apply"], service=_Runner("error")) == 1
+
+
+def test_cli_can_resume_from_persisted_checkpoint(tmp_path) -> None:
+    checkpoint = tmp_path / "resume.json"
+    checkpoint.write_text(
+        '{"last_processed_symbol":"SH600123"}',
+        encoding="utf-8",
+    )
+
+    class _Runner:
+        def __init__(self) -> None:
+            self.kwargs: dict[str, object] = {}
+
+        def run(self, **kwargs: object) -> dict[str, object]:
+            self.kwargs = kwargs
+            return {"status": "planned", "mode": "dry_run"}
+
+    runner = _Runner()
+    exit_code = main(
+        ["--resume-from-checkpoint", "--checkpoint-path", str(checkpoint)],
+        service=runner,
+    )
+
+    assert exit_code == 0
+    assert runner.kwargs["resume_after"] == "SH600123"
+    assert runner.kwargs["checkpoint_path"] == str(checkpoint)
 
 
 def test_universe_discovery_failure_returns_the_same_safe_summary_shape() -> None:
@@ -374,8 +535,14 @@ def test_universe_discovery_failure_returns_the_same_safe_summary_shape() -> Non
     assert result["processed"] == 0
     assert result["success"] == 0
     assert result["error"] == 0
-    assert result["errors"] == [
-        {"stage": "universe_discovery", "error": "spot provider unavailable"}
+    assert result["errors"][0]["stage"] == "universe_discovery"
+    assert "spot provider unavailable" in result["errors"][0]["error"]
+    assert result["discovery"]["status"] == "error"
+    assert result["discovery"]["complete"] is False
+    assert [item["status"] for item in result["discovery"]["attempts"]] == [
+        "error",
+        "unsupported",
+        "empty",
     ]
     assert result["safety"]["writes_enabled"] is False
 
