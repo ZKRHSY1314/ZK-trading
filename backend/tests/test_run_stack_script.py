@@ -107,7 +107,7 @@ def test_github_ci_enforces_tests_build_and_live_disabled():
     assert "actions/checkout@v7" in source
     assert "actions/setup-python@v6" in source
     assert 'ENABLE_LIVE_TRADING: "false"' in source
-    assert "runner.temp" in source
+    assert "$env:RUNNER_TEMP" in source
     assert 'DATABASE_PATH: ":memory:"' not in source
     assert "python -m pytest -q" in source
     assert "python -m ruff check app tests" in source

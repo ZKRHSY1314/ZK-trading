@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import sqlite3
 from typing import Any
 
@@ -28,6 +28,26 @@ GLOBAL_MARKET_BARS_REQUIREMENT = {
 }
 
 
+_UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _utc_epoch_microseconds(value: object) -> int | None:
+    """Convert ISO timestamps without SQLite's millisecond rounding."""
+
+    try:
+        parsed = parse_utc(value, field="timestamp")
+    except ValueError:
+        return None
+    if parsed is None:
+        return None
+    delta = parsed - _UNIX_EPOCH
+    return (
+        delta.days * 86_400_000_000
+        + delta.seconds * 1_000_000
+        + delta.microseconds
+    )
+
+
 class MarketRegimeService:
     def __init__(self, store: SQLiteStore | None = None):
         self.store = store or SQLiteStore(settings.database_path)
@@ -39,7 +59,15 @@ class MarketRegimeService:
         parsed_as_of = parse_utc(as_of, field="as_of")
         assert parsed_as_of is not None
         cutoff = iso_utc(parsed_as_of) or str(as_of)
+        cutoff_epoch_us = _utc_epoch_microseconds(parsed_as_of)
+        assert cutoff_epoch_us is not None
         with self.store.connect() as conn:
+            conn.create_function(
+                "utc_epoch_us",
+                1,
+                _utc_epoch_microseconds,
+                deterministic=True,
+            )
             exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
                 (GLOBAL_MARKET_BARS_REQUIREMENT["table"],),
@@ -54,16 +82,16 @@ class MarketRegimeService:
                                quality_status,
                                ROW_NUMBER() OVER (
                                    PARTITION BY symbol, bar_time
-                                   ORDER BY julianday(available_at) DESC, rowid DESC
+                                   ORDER BY utc_epoch_us(available_at) DESC, rowid DESC
                                ) AS source_rank
                         FROM global_market_bars
-                        WHERE julianday(bar_time) <= julianday(?)
-                          AND julianday(available_at) <= julianday(?)
+                        WHERE utc_epoch_us(bar_time) <= ?
+                          AND utc_epoch_us(available_at) <= ?
                     ), latest_symbol_bar AS (
                         SELECT symbol, quality_status,
                                ROW_NUMBER() OVER (
                                    PARTITION BY symbol
-                                   ORDER BY julianday(bar_time) DESC
+                                   ORDER BY utc_epoch_us(bar_time) DESC
                                ) AS latest_rank
                         FROM source_ranked
                         WHERE source_rank = 1
@@ -85,9 +113,9 @@ class MarketRegimeService:
                     SELECT symbol, asset_class, bar_time, close, source, available_at
                     FROM period_ranked
                     WHERE period_rank <= 6
-                    ORDER BY symbol ASC, julianday(bar_time) DESC
+                    ORDER BY symbol ASC, utc_epoch_us(bar_time) DESC
                     """,
-                    (cutoff, cutoff),
+                    (cutoff_epoch_us, cutoff_epoch_us),
                 ).fetchall()
             except sqlite3.OperationalError:
                 return self._missing_cross_market(cutoff, "global_market_bars_schema_invalid")
