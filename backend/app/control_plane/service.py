@@ -12,6 +12,7 @@ from app.config import settings
 from app.data.trading_calendar import trading_session_age
 from app.forecasting import (
     FORECAST_HORIZONS,
+    ForecastCalibrationService,
     ForecastDecision,
     ForecastFeedback,
     ForecastLedger,
@@ -88,6 +89,7 @@ class ControlPlaneService:
                 "public_opinion_runs",
                 "forecast_decisions",
                 "forecast_outcomes",
+                "forecast_evaluations",
             )
         }
         latest_automation = self._latest_row(
@@ -434,7 +436,7 @@ class ControlPlaneService:
             **self._selection_factory().run(
                 mode="balanced",
                 limit=limit,
-                as_of_date=now.astimezone(SHANGHAI).date().isoformat(),
+                as_of=now.astimezone(SHANGHAI),
             ),
             "market_data": market_data,
         }
@@ -444,10 +446,15 @@ class ControlPlaneService:
         feedback = self._forecast_feedback_factory()
         labels = feedback.label_due(now, limit=max(100, limit * len(FORECAST_HORIZONS)))
         evaluation = feedback.evaluate(now, k=min(5, limit))
+        calibration = ForecastCalibrationService(self.store).persist(
+            evaluation,
+            created_by="control_plane_forecast_feedback",
+        )
         return {
             "status": evaluation.get("status") or labels.get("status") or "completed",
             "labels": labels,
             "evaluation": evaluation,
+            "calibration": calibration,
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": False,
@@ -505,13 +512,9 @@ class ControlPlaneService:
                 evidence = [{"kind": "selection_evidence", "payload": raw_evidence}]
             else:
                 evidence = []
-            structure = (candidate.get("features") or {}).get("structure_signal") or {}
-            probability = structure.get("pre_markup_probability")
-            if probability is not None:
-                try:
-                    probability = max(0.0, min(1.0, float(probability)))
-                except (TypeError, ValueError):
-                    probability = None
+            candidate_features = self._json_safe(candidate.get("features") or {})
+            candidate_features["probability_semantics"] = "unavailable_uncalibrated_structure_score"
+            candidate_features["probability_horizon_days"] = None
             score = candidate.get("final_score")
             try:
                 score = float(score) if score is not None else None
@@ -529,11 +532,11 @@ class ControlPlaneService:
                         horizon_days=horizon,
                         rank=rank,
                         score=score,
-                        probability=probability,
+                        probability=None,
                         model_version=model_version,
                         prompt_version=prompt_version,
                         data_version=data_version,
-                        features=self._json_safe(candidate.get("features") or {}),
+                        features=candidate_features,
                         evidence=self._json_safe(evidence),
                         reasons=reasons,
                         status="pending_outcome",
@@ -713,6 +716,39 @@ class ControlPlaneService:
     def _compact_forecast_feedback(result: dict[str, Any]) -> dict[str, Any]:
         labels = result.get("labels") or {}
         evaluation = result.get("evaluation") or {}
+        calibration = result.get("calibration") or {}
+        label_scopes = labels.get("by_scope") or {}
+        evaluation_scopes = evaluation.get("by_scope") or {}
+
+        def compact_horizons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            return [
+                {
+                    "horizon_days": item.get("horizon_days"),
+                    "status": item.get("status"),
+                    "sample_count": item.get("sample_count", 0),
+                    "fold_count": item.get("fold_count", 0),
+                    "coverage": item.get("coverage", 0.0),
+                    "precision_at_k": item.get("precision_at_k"),
+                    "spearman_rank_ic": item.get("spearman_rank_ic"),
+                    "brier_score": item.get("brier_score"),
+                    "probability_calibration_status": item.get("probability_calibration_status"),
+                    "insufficient_reasons": item.get("insufficient_reasons") or [],
+                }
+                for item in rows
+                if isinstance(item, dict)
+            ]
+
+        by_scope = {}
+        for scope in ("stock", "sector"):
+            scope_labels = label_scopes.get(scope) or {}
+            scope_evaluation = evaluation_scopes.get(scope) or {}
+            by_scope[scope] = {
+                "status": scope_evaluation.get("status"),
+                "eligible_count": scope_labels.get("eligible_count", 0),
+                "labelled_count": scope_labels.get("labelled_count", 0),
+                "pending_count": scope_labels.get("pending_count", 0),
+                "horizons": compact_horizons(scope_evaluation.get("horizons") or []),
+            }
         return {
             "status": result.get("status"),
             "eligible_count": labels.get("eligible_count", 0),
@@ -723,7 +759,12 @@ class ControlPlaneService:
                 for item in evaluation.get("horizons") or []
                 if item.get("status") == "ready"
             ],
-            "horizons": evaluation.get("horizons") or [],
+            "horizons": compact_horizons(evaluation.get("horizons") or []),
+            "by_scope": by_scope,
+            "evaluation_snapshot_count": calibration.get("evaluation_snapshot_count", 0),
+            "new_evaluation_snapshot_count": calibration.get("new_evaluation_snapshot_count", 0),
+            "calibration_proposal_count": calibration.get("proposal_count", 0),
+            "calibration_proposal_ids": calibration.get("proposal_ids") or [],
             "review_only": True,
         }
 
@@ -770,7 +811,9 @@ class ControlPlaneService:
             "not_ready",
         }:
             return "partial"
-        return "completed"
+        if normalized in {"completed", "complete", "ready", "ok", "success", "recorded"}:
+            return "completed"
+        return "partial"
 
     @staticmethod
     def _rollup_status(steps: list[dict[str, Any]]) -> str:

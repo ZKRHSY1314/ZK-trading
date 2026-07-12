@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -58,7 +59,10 @@ class _ForecastFeedback:
     def evaluate(self, *_: object, **__: object) -> dict:
         return {
             "status": "ready",
+            "as_of": "2026-07-10T02:00:00Z",
+            "review_only": True,
             "horizons": [{"horizon_days": 5, "status": "ready", "sample_count": 20}],
+            "by_scope": {},
         }
 
 
@@ -175,7 +179,8 @@ def test_control_plane_persists_every_ranked_candidate_horizon_in_forecast_ledge
     decision_id = decision["details"]["snapshot_id"]
     rows = test_db.fetch_all(
         """
-        SELECT decision_id, scope, subject, horizon_days, review_only
+        SELECT decision_id, scope, subject, horizon_days, probability,
+               features_json, review_only
         FROM forecast_decisions
         WHERE decision_id = ?
         ORDER BY horizon_days
@@ -186,8 +191,44 @@ def test_control_plane_persists_every_ranked_candidate_horizon_in_forecast_ledge
     assert [row["horizon_days"] for row in rows] == [1, 3, 5, 10, 20]
     assert {row["subject"] for row in rows} == {"SZ000001"}
     assert {row["scope"] for row in rows} == {"stock"}
+    assert all(row["probability"] is None for row in rows)
+    assert all(
+        json.loads(row["features_json"])["probability_semantics"]
+        == "unavailable_uncalibrated_structure_score"
+        for row in rows
+    )
     assert all(row["review_only"] == 1 for row in rows)
     assert decision["details"]["forecast_ledger"]["recorded_count"] == 5
+
+
+def test_control_plane_passes_full_timezone_aware_cutoff_to_selection(test_db):
+    captured: dict[str, object] = {}
+    cutoff = datetime(2026, 7, 10, 10, 17, 23, tzinfo=SHANGHAI)
+
+    class CapturingSelection(_Selection):
+        def run(self, **kwargs: object) -> dict:
+            captured.update(kwargs)
+            return super().run(**kwargs)
+
+    service = ControlPlaneService(
+        store=test_db,
+        public_opinion_factory=_Pulse,
+        feedback_factory=_Feedback,
+        forecast_feedback_factory=_ForecastFeedback,
+        selection_factory=CapturingSelection,
+        agent_control_factory=_AgentControl,
+        market_data_factory=lambda _now, _limit: {
+            "status": "fresh",
+            "latest_trade_date": "2026-07-10",
+            "decision_allowed": True,
+        },
+        clock=lambda: cutoff,
+    )
+
+    service.run_once(profile="pulse", limit=20, requested_by="pytest-pit-cutoff")
+
+    assert captured["as_of"] == cutoff
+    assert "as_of_date" not in captured
 
 
 def test_control_plane_full_run_skips_simulation_when_market_data_is_stale(test_db):
@@ -281,6 +322,59 @@ def test_control_plane_source_failure_is_not_reported_completed(test_db):
 
     assert result["status"] == "partial"
     assert result["steps"][0]["status"] == "partial"
+
+
+def test_control_plane_unknown_business_status_fails_closed_to_partial(test_db):
+    result = _service(test_db, pulse_status="unexpected_vendor_state").run_once(
+        profile="pulse",
+        limit=20,
+    )
+
+    assert result["status"] == "partial"
+    assert result["steps"][0]["status"] == "partial"
+
+
+def test_forecast_feedback_compaction_reports_stock_and_sector_without_fold_payloads():
+    compact = ControlPlaneService._compact_forecast_feedback(
+        {
+            "labels": {
+                "eligible_count": 1,
+                "labelled_count": 1,
+                "pending_count": 0,
+                "by_scope": {
+                    "stock": {"eligible_count": 1, "labelled_count": 1},
+                    "sector": {"eligible_count": 2, "labelled_count": 1, "pending_count": 1},
+                },
+            },
+            "evaluation": {
+                "status": "ready",
+                "horizons": [],
+                "by_scope": {
+                    "stock": {"status": "insufficient_data", "horizons": []},
+                    "sector": {
+                        "status": "ready",
+                        "horizons": [
+                            {
+                                "horizon_days": 5,
+                                "status": "ready",
+                                "sample_count": 25,
+                                "fold_count": 4,
+                                "coverage": 0.9,
+                                "precision_at_k": 0.6,
+                                "by_decision": [{"decision_id": "large-fold-payload"}],
+                            }
+                        ],
+                    },
+                },
+            },
+            "calibration": {"proposal_count": 1, "proposal_ids": [7]},
+        }
+    )
+
+    assert compact["by_scope"]["sector"]["labelled_count"] == 1
+    assert compact["by_scope"]["sector"]["horizons"][0]["precision_at_k"] == 0.6
+    assert "by_decision" not in compact["by_scope"]["sector"]["horizons"][0]
+    assert compact["calibration_proposal_ids"] == [7]
 
 
 def test_control_plane_requires_broad_latest_bar_coverage(tmp_path):
