@@ -1321,6 +1321,27 @@ CREATE INDEX IF NOT EXISTS idx_forecast_outcomes_matured
 CREATE INDEX IF NOT EXISTS idx_forecast_outcomes_subject
     ON forecast_outcomes(scope, subject, horizon_days, observed_at);
 
+CREATE TABLE IF NOT EXISTS forecast_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evaluation_id TEXT NOT NULL UNIQUE,
+    as_of TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK(scope IN ('sector', 'stock')),
+    horizon_days INTEGER NOT NULL CHECK(horizon_days IN (1, 3, 5, 10, 20)),
+    status TEXT NOT NULL,
+    sample_count INTEGER NOT NULL,
+    fold_count INTEGER NOT NULL,
+    coverage REAL NOT NULL,
+    precision_at_k REAL,
+    spearman_rank_ic REAL,
+    brier_score REAL,
+    metrics_json TEXT NOT NULL,
+    review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_evaluations_scope_horizon
+    ON forecast_evaluations(scope, horizon_days, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS disclosure_facts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     fact_id TEXT NOT NULL,
