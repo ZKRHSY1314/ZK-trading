@@ -90,3 +90,69 @@ def test_codex_market_pulse_output_schema_is_closed():
     assert item["additionalProperties"] is False
     assert "url" in item["required"]
     assert "published_at_status" in item["required"]
+
+
+def test_codex_market_pulse_rejects_only_invalid_items_before_batch_ingest(monkeypatch):
+    module = _load_module()
+    submitted = []
+    valid = {
+        "event_id": "evt-valid",
+        "cluster_id": "cluster-valid",
+        "type": "policy",
+        "entities": ["CSRC"],
+        "geography": ["CN"],
+        "status": "new",
+        "direction": "neutral",
+        "magnitude": 0.4,
+        "url": "https://www.csrc.gov.cn/example",
+        "retrieved_at": "2026-07-13T14:00:00+08:00",
+        "first_seen_at": "2026-07-13T14:00:00+08:00",
+        "available_at": "2026-07-13T14:00:00+08:00",
+        "revision": 1,
+        "evidence_urls": ["https://www.csrc.gov.cn/example"],
+        "raw_hash": "a" * 64,
+        "published_at_status": "known",
+        "published_at": "2026-07-13T13:50:00+08:00",
+        "title": "Capital market policy evidence",
+        "summary": "Structured evidence used to verify batch validation.",
+        "source_name": "China Securities Regulatory Commission",
+        "source_id": "csrc",
+        "source_tier": "official",
+        "category": "policy",
+        "sector_hints": ["brokerage_finance"],
+        "claims": ["A policy notice was published."],
+    }
+    invalid = {**valid, "event_id": "evt-invalid", "retrieved_at": "not-a-datetime"}
+
+    def fake_request(method, url, payload=None, timeout=30):
+        if method == "GET":
+            return {"status": "ok", "live_trading_enabled": False}
+        from app.api.public_opinion_routes import CodexEvidenceItemInput
+
+        for item in payload["evidence"]:
+            CodexEvidenceItemInput.model_validate(item)
+        submitted.extend(payload["evidence"])
+        return {
+            "status": "completed",
+            "run_id": 18,
+            "item_count": len(payload["evidence"]),
+            "sector_count": 1,
+            "source_stats": {"succeeded_count": len(payload["evidence"])},
+            "errors": [],
+        }
+
+    monkeypatch.setattr(module, "request_json", fake_request)
+    monkeypatch.setattr(
+        module,
+        "capture_with_codex",
+        lambda **_: {"evidence": [valid, invalid]},
+    )
+
+    result = module.run_once("http://127.0.0.1:8000")
+
+    assert result["status"] == "partial"
+    assert result["captured_count"] == 2
+    assert result["accepted_count"] == 1
+    assert result["rejected_count"] == 1
+    assert result["validation_errors"][0]["index"] == 1
+    assert submitted == [valid]

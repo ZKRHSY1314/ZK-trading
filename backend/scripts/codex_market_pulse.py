@@ -87,29 +87,82 @@ def capture_with_codex(*, timeout_seconds: int = 900, codex_command: str = "code
         output_path.unlink(missing_ok=True)
 
 
+def validate_evidence_items(
+    evidence: list[Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Apply the API contract per item so one malformed fact cannot reject a batch."""
+
+    from app.api.public_opinion_routes import CodexEvidenceItemInput
+    from pydantic import ValidationError
+
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for index, item in enumerate(evidence):
+        try:
+            CodexEvidenceItemInput.model_validate(item)
+        except ValidationError as exc:
+            for detail in exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            ):
+                rejected.append(
+                    {
+                        "index": index,
+                        "location": [str(part) for part in detail.get("loc") or []],
+                        "type": str(detail.get("type") or "validation_error"),
+                        "message": str(detail.get("msg") or "evidence rejected"),
+                    }
+                )
+            continue
+        accepted.append(dict(item))
+    return accepted, rejected
+
+
 def run_once(api_base: str, *, timeout_seconds: int = 900) -> dict[str, Any]:
     health = request_json("GET", f"{api_base}/health")
     if health.get("live_trading_enabled") is not False:
         return {"status": "blocked", "reason": "live_trading_enabled", "health": health}
     capture = capture_with_codex(timeout_seconds=timeout_seconds)
+    captured_evidence = capture["evidence"]
+    accepted_evidence, validation_errors = validate_evidence_items(captured_evidence)
+    if not accepted_evidence:
+        return {
+            "status": "failed",
+            "captured_count": len(captured_evidence),
+            "submitted_count": 0,
+            "accepted_count": 0,
+            "rejected_count": len({error["index"] for error in validation_errors}),
+            "validation_errors": validation_errors,
+            "errors": validation_errors,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
     result = request_json(
         "POST",
         f"{api_base}/api/public-opinion/evidence/ingest",
         {
-            "evidence": capture["evidence"],
+            "evidence": accepted_evidence,
             "persist": True,
             "requested_by": "codex_market_pulse_worker",
         },
         timeout=60,
     )
+    status = str(result.get("status") or "failed")
+    if validation_errors and status not in {"failed", "blocked"}:
+        status = "partial"
     return {
-        "status": result.get("status"),
+        "status": status,
         "run_id": result.get("run_id"),
-        "captured_count": len(capture["evidence"]),
+        "captured_count": len(captured_evidence),
+        "submitted_count": len(accepted_evidence),
         "accepted_count": result.get("item_count", 0),
+        "rejected_count": len({error["index"] for error in validation_errors}),
+        "validation_errors": validation_errors,
         "sector_count": result.get("sector_count", 0),
         "source_stats": result.get("source_stats") or {},
-        "errors": result.get("errors") or [],
+        "errors": [*validation_errors, *(result.get("errors") or [])],
         "review_only": True,
         "simulation_only": True,
         "live_trading_enabled": False,
@@ -172,7 +225,10 @@ def main() -> int:
             "completed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "duration_seconds": round((datetime.now().astimezone() - started).total_seconds(), 2),
             "captured_count": result.get("captured_count", 0),
+            "submitted_count": result.get("submitted_count", 0),
             "accepted_count": result.get("accepted_count", 0),
+            "rejected_count": result.get("rejected_count", 0),
+            "validation_errors": result.get("validation_errors") or [],
             "run_id": result.get("run_id"),
             "error": error,
             "review_only": True,

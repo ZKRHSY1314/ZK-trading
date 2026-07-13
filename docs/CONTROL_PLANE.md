@@ -155,6 +155,8 @@ backend\.venv\Scripts\python.exe -X utf8 backend\scripts\control_plane_loop.py `
 
 `backend/scripts/codex_market_pulse.py` 使用本机已登录的 Codex CLI，以 `--ephemeral --sandbox read-only` 运行网络研究，并受 JSON schema 约束。它只把带 URL、检索时间、发布时间状态和事实摘要的证据提交到 `/api/public-opinion/evidence/ingest`；不向后端保存 OpenAI 凭据，也不允许 Computer Use。
 
+提交批次前，worker 会逐条复用 evidence API 的 Pydantic 契约进行校验。单条证据的时间、长度或枚举不合规时，只拒绝该条并在心跳中记录 `submitted_count`、`rejected_count` 和 `validation_errors`；其余合规证据继续批量提交，整轮降级为 `partial`，不会自动篡改时间、截断事实，也不会因一条坏数据丢弃整个批次。
+
 `scripts/run_stack.ps1` 默认每 4 小时启动一次 Codex 搜索。关闭该可选进程：
 
 ```powershell
