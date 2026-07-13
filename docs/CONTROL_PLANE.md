@@ -155,7 +155,7 @@ backend\.venv\Scripts\python.exe -X utf8 backend\scripts\control_plane_loop.py `
 
 `backend/scripts/codex_market_pulse.py` 使用本机已登录的 Codex CLI，以 `--ephemeral --sandbox read-only` 运行网络研究，并受 JSON schema 约束。它只把带 URL、检索时间、发布时间状态和事实摘要的证据提交到 `/api/public-opinion/evidence/ingest`；不向后端保存 OpenAI 凭据，也不允许 Computer Use。
 
-提交批次前，worker 会逐条复用 evidence API 的 Pydantic 契约进行校验。单条证据的时间、长度或枚举不合规时，只拒绝该条并在心跳中记录 `submitted_count`、`rejected_count` 和 `validation_errors`；其余合规证据继续批量提交，整轮降级为 `partial`，不会自动篡改时间、截断事实，也不会因一条坏数据丢弃整个批次。
+提交批次前，worker 会逐条复用 evidence API 的 Pydantic 契约进行校验。单条证据的时间、长度或枚举不合规时，只拒绝该条并在心跳中记录 `submitted_count`、`rejected_count` 和 `validation_errors`；其余合规证据继续批量提交，整轮降级为 `partial`，不会自动篡改时间、截断事实，也不会因一条坏数据丢弃整个批次。输出 schema 同步约束 URL、标题、摘要和来源名称的后端长度契约，并要求具体文章/公告 URL 与来源域名一致，禁止通用主页和搜索结果页；若整轮为 `failed`、`blocked`，或 `partial` 且没有一条有效证据，下一轮缩短为 15 分钟重试，得到有效证据后恢复 4 小时间隔，`next_interval_seconds` 会写入心跳。
 
 `scripts/run_stack.ps1` 默认每 4 小时启动一次 Codex 搜索。关闭该可选进程：
 
@@ -189,6 +189,14 @@ Invoke-RestMethod http://127.0.0.1:8000/readyz
 ```
 
 第一条必须返回 `False`。Scheduled Task 只提高本地进程可恢复性，不增加 broker、账户或下单权限。
+
+## 运行期查询与闭环观测
+
+Forecast Feedback 的一次 `label_due` 调用会在运行内复用板块成分、股票日线和基准窗口。板块成员日线按最多 800 个 symbol 分批读取，并在 1/3/5/10/20 日 horizon 间复用；缓存不会跨运行或跨 cutoff 共享。这样查询次数由“成员数 × horizon”收敛为有限的批量查询，同时保持原有 point-in-time 结果口径。
+
+Sector Exposure 的 snapshot cutoff 使用规范化 UTC ISO 时间直接比较，保留微秒精度。全市场目录的外部 adapter 不可用时，Universe Backfill 还会从 append-only 板块成分快照和 legacy membership history 恢复本地已知股票池；该回退仍标记为 `degraded_local_partial`，不会冒充完整全市场目录。
+
+前端右栏的 Control Plane Observatory 只轮询 `GET /readyz` 与 `GET /api/control-plane/status`，页面隐藏时暂停、恢复时立即刷新，不会自动触发运行。它展示三个 worker、Market Pulse、Decision Snapshot、Forecast Feedback 和 Training Feedback；当 `forecast_outcomes=0` 时明确提示当前不能评价准确率。只有操作员点击原有控制面按钮时才会调用 `POST /api/control-plane/run-once`，并展示该次运行返回的逐步状态。
 
 ## 验收条件
 

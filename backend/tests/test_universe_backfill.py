@@ -170,6 +170,24 @@ def test_local_known_symbols_are_explicitly_degraded_not_full_market(tmp_path) -
             VALUES ('SZ000001', 'fixture', 'fixture', 'fixture', '{}')
             """
         )
+        snapshot = conn.execute(
+            """
+            INSERT INTO sector_membership_snapshots(
+                source, sector, member_hash, member_count, observed_at,
+                effective_date, confidence
+            ) VALUES (
+                'fixture', 'semiconductor', 'snapshot-hash', 1,
+                '2026-07-10T09:00:00+08:00', '2026-07-10', 0.9
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO sector_membership_snapshot_members(snapshot_id, symbol)
+            VALUES (?, 'SZ300750')
+            """,
+            (snapshot.lastrowid,),
+        )
 
     class _UnavailableProvider:
         def get_a_share_spot(self) -> pd.DataFrame:
@@ -184,7 +202,7 @@ def test_local_known_symbols_are_explicitly_degraded_not_full_market(tmp_path) -
     ).run()
 
     assert result["status"] == "degraded"
-    assert result["planned"] == 2
+    assert result["planned"] == 3
     assert result["discovery"] == {
         "source": "local_known_symbols",
         "status": "degraded_local_partial",
@@ -205,7 +223,7 @@ def test_local_known_symbols_are_explicitly_degraded_not_full_market(tmp_path) -
             {
                 "source": "local_known_symbols",
                 "status": "success_partial",
-                "count": 2,
+                "count": 3,
             },
         ],
     }

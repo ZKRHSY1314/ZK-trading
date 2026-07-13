@@ -17,7 +17,7 @@
 - `magnitude` 为 0 到 1 的事实严重度或变化强度。没有可靠量化依据时保守填写。
 - `published_at` 是来源发布时间；未知时设为 `null` 并令 `published_at_status=unknown`。
 - `first_seen_at` 是本轮研究首次看到该事件的时间，`retrieved_at` 是取回本条证据的时间；`available_at` 不得早于 `retrieved_at`，防止未来数据泄漏。
-- `evidence_urls` 只保留可直接打开的原文或官方页面，主 URL 同时写入 `url`。`raw_hash` 对标题、摘要、claims 和 URL 的稳定原文表示生成摘要；服务端会重新计算权威 SHA-256。
+- `evidence_urls` 只保留可直接打开的原文或官方页面，主 URL 同时写入 `url`。`url` 必须是完整、可直接打开的具体文章或公告地址，并与 `source_name` / `source_id` 的来源域名一致；禁止留空、使用短占位符、网站首页、产品首页或搜索结果页。`raw_hash` 对标题、摘要、claims 和 URL 的稳定原文表示生成摘要；服务端会重新计算权威 SHA-256。
 - 每条写 1 至 3 句事实摘要和可核验 `claims`。市场方向至少尝试两家独立来源交叉验证。
 
 `sector_hints` 只使用与证据直接相关的稳定标识：`ai_compute`、`semiconductors`、`oil_gas`、`gold`、`crypto`、`rates_fx`、`shipping`、`digital_economy`、`brokerage_finance`、`state_owned_reform`、`new_energy`、`low_altitude`、`medicine`、`consumer`、`infrastructure`、`defense`。

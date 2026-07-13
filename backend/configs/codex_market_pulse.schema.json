@@ -84,7 +84,12 @@
             "minimum": 0,
             "maximum": 1
           },
-          "url": {"type": "string"},
+          "url": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 2048,
+            "description": "Direct source URL; never use an empty or placeholder value"
+          },
           "retrieved_at": {"type": "string"},
           "first_seen_at": {"type": "string"},
           "available_at": {
@@ -106,10 +111,10 @@
           },
           "published_at_status": {"type": "string", "enum": ["known", "unknown"]},
           "published_at": {"type": ["string", "null"]},
-          "title": {"type": "string"},
-          "summary": {"type": "string"},
-          "source_name": {"type": "string"},
-          "source_id": {"type": "string"},
+          "title": {"type": "string", "minLength": 6, "maxLength": 160},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+          "source_name": {"type": "string", "minLength": 1, "maxLength": 200},
+          "source_id": {"type": "string", "maxLength": 120},
           "source_tier": {"type": "string", "enum": ["official", "primary_media", "market_media"]},
           "category": {"type": "string", "enum": ["market", "policy", "sector"]},
           "sector_hints": {

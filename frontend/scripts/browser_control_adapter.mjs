@@ -147,6 +147,20 @@ async function main() {
       passed: await page.getByTestId("control-plane-status").isVisible()
     });
     summary.checks.push({
+      name: "control_plane_observability_visible",
+      passed: await page.getByTestId("control-plane-observability").isVisible()
+    });
+    summary.checks.push({
+      name: "control_plane_workers_visible",
+      passed: await page.getByTestId("runtime-worker-control-plane").isVisible()
+        && await page.getByTestId("runtime-worker-codex-market-pulse").isVisible()
+        && await page.getByTestId("runtime-worker-reference-data").isVisible()
+    });
+    summary.checks.push({
+      name: "control_plane_steps_visible",
+      passed: await page.getByTestId("control-plane-last-run-steps").isVisible()
+    });
+    summary.checks.push({
       name: "market_pulse_evidence_link_visible",
       passed: (await page.getByTestId("public-opinion-news").locator("a[href]").count()) > 0
     });

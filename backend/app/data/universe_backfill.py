@@ -341,6 +341,10 @@ class UniverseBackfillService:
                 SELECT symbol FROM stock_profiles WHERE symbol IS NOT NULL
                 UNION
                 SELECT symbol FROM candidate_lifecycle WHERE symbol IS NOT NULL
+                UNION
+                SELECT symbol FROM sector_membership_snapshot_members WHERE symbol IS NOT NULL
+                UNION
+                SELECT symbol FROM sector_membership_history WHERE symbol IS NOT NULL
                 """
             )
         except Exception:

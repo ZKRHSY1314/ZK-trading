@@ -9,7 +9,8 @@ export default defineConfig({
     port: 3000,
     proxy: {
       "/api": apiBase,
-      "/health": apiBase
+      "/health": apiBase,
+      "/readyz": apiBase
     }
   }
 });

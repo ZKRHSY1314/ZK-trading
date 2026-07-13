@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 
+from app.api.ai_model_routes import router as ai_model_router
+from app.api.offhour_research_routes import router as offhour_research_router
 from app.api.public_opinion_routes import router as public_opinion_router
 from app.api.routes import router
 from app.config import settings
@@ -22,6 +24,8 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(router)
 app.include_router(control_plane_router)
 app.include_router(public_opinion_router)
+app.include_router(ai_model_router)
+app.include_router(offhour_research_router)
 
 
 @app.get("/livez")

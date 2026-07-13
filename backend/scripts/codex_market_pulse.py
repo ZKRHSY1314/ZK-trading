@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROMPT_PATH = PROJECT_ROOT / "backend" / "configs" / "codex_market_pulse_prompt.md"
 SCHEMA_PATH = PROJECT_ROOT / "backend" / "configs" / "codex_market_pulse.schema.json"
 HEARTBEAT_PATH = PROJECT_ROOT / "backend" / "logs" / "codex_market_pulse_heartbeat.json"
+MIN_INTERVAL_SECONDS = 900
 
 
 def request_json(method: str, url: str, payload: dict[str, Any] | None = None, timeout: int = 30) -> dict:
@@ -176,6 +177,23 @@ def write_heartbeat(payload: dict[str, Any]) -> None:
     temporary.replace(HEARTBEAT_PATH)
 
 
+def next_interval_seconds(
+    status: str,
+    configured_interval_seconds: int,
+    *,
+    accepted_count: int | None = None,
+) -> int:
+    configured = max(MIN_INTERVAL_SECONDS, int(configured_interval_seconds))
+    no_usable_evidence = (
+        status == "partial"
+        and accepted_count is not None
+        and int(accepted_count) <= 0
+    )
+    if status in {"failed", "blocked"} or no_usable_evidence:
+        return MIN_INTERVAL_SECONDS
+    return configured
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Capture citation-backed A-share evidence with Codex.")
     parser.add_argument("--api-base", default="http://127.0.0.1:8000")
@@ -199,7 +217,7 @@ def main() -> int:
                 "completed_at": started.isoformat(timespec="seconds"),
                 "review_only": True,
                 "live_trading_enabled": False,
-                "interval_seconds": max(900, int(args.interval_seconds)),
+                "interval_seconds": max(MIN_INTERVAL_SECONDS, int(args.interval_seconds)),
             }
         )
         error = None
@@ -216,6 +234,12 @@ def main() -> int:
             result = {}
             final_status = "failed"
             error = str(exc)
+        accepted_count = int(result.get("accepted_count") or 0)
+        next_interval = next_interval_seconds(
+            final_status,
+            args.interval_seconds,
+            accepted_count=accepted_count,
+        )
         heartbeat = {
             "schema_version": "codex_market_pulse_heartbeat.v1",
             "pid": os.getpid(),
@@ -226,19 +250,20 @@ def main() -> int:
             "duration_seconds": round((datetime.now().astimezone() - started).total_seconds(), 2),
             "captured_count": result.get("captured_count", 0),
             "submitted_count": result.get("submitted_count", 0),
-            "accepted_count": result.get("accepted_count", 0),
+            "accepted_count": accepted_count,
             "rejected_count": result.get("rejected_count", 0),
             "validation_errors": result.get("validation_errors") or [],
             "run_id": result.get("run_id"),
             "error": error,
             "review_only": True,
             "live_trading_enabled": False,
-            "interval_seconds": max(900, int(args.interval_seconds)),
+            "interval_seconds": max(MIN_INTERVAL_SECONDS, int(args.interval_seconds)),
+            "next_interval_seconds": next_interval,
         }
         write_heartbeat(heartbeat)
         print(json.dumps(heartbeat, ensure_ascii=False), flush=True)
         if args.max_cycles <= 0 or cycle < args.max_cycles:
-            time.sleep(max(900, int(args.interval_seconds)))
+            time.sleep(next_interval)
     return 0 if final_status not in {"failed", "blocked"} else 1
 
 

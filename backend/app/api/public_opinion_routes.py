@@ -6,10 +6,18 @@ from typing import Literal
 from fastapi import APIRouter
 from pydantic import BaseModel, Field, model_validator
 
+from app.config import settings
 from app.public_opinion.service import CodexPublicOpinionService
 
 
 router = APIRouter(prefix="/api/public-opinion", tags=["public-opinion"])
+
+
+class PublicOpinionRunInput(BaseModel):
+    limit: int = 60
+    persist: bool = True
+    requested_by: str = "codex"
+    source_urls: list[str] = Field(default_factory=list)
 
 
 class CodexEvidenceItemInput(BaseModel):
@@ -52,6 +60,47 @@ class CodexEvidenceIngestInput(BaseModel):
     evidence: list[CodexEvidenceItemInput] = Field(min_length=1, max_length=300)
     persist: bool = True
     requested_by: str = Field(default="codex", min_length=1, max_length=120)
+
+
+@router.get("/capabilities")
+def public_opinion_capabilities() -> dict:
+    return CodexPublicOpinionService().capabilities()
+
+
+@router.post("/run")
+def run_public_opinion_capture(input_data: PublicOpinionRunInput | None = None) -> dict:
+    payload = input_data or PublicOpinionRunInput()
+    return CodexPublicOpinionService().run(
+        limit=payload.limit,
+        persist=payload.persist,
+        requested_by=payload.requested_by,
+        source_urls=payload.source_urls,
+    )
+
+
+@router.get("/runs/latest")
+def latest_public_opinion_run() -> dict:
+    latest = CodexPublicOpinionService().latest_run()
+    if latest is None:
+        return {
+            "status": "empty",
+            "items": [],
+            "sector_signals": [],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+    return latest
+
+
+@router.get("/context/latest")
+def latest_public_opinion_context(limit: int = 8) -> dict:
+    return CodexPublicOpinionService().latest_context(limit=limit)
+
+
+@router.get("/runs")
+def list_public_opinion_runs(limit: int = 20) -> list[dict]:
+    return CodexPublicOpinionService().list_runs(limit=limit)
 
 
 @router.post("/evidence/ingest")

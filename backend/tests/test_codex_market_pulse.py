@@ -90,6 +90,20 @@ def test_codex_market_pulse_output_schema_is_closed():
     assert item["additionalProperties"] is False
     assert "url" in item["required"]
     assert "published_at_status" in item["required"]
+    assert item["properties"]["url"]["minLength"] == 8
+    assert item["properties"]["url"]["maxLength"] == 2048
+    assert item["properties"]["title"]["minLength"] == 6
+    assert item["properties"]["title"]["maxLength"] == 160
+
+
+def test_codex_market_pulse_retries_failed_cycles_before_regular_interval():
+    module = _load_module()
+
+    assert module.next_interval_seconds("failed", 14_400) == 900
+    assert module.next_interval_seconds("blocked", 14_400) == 900
+    assert module.next_interval_seconds("partial", 14_400, accepted_count=0) == 900
+    assert module.next_interval_seconds("partial", 14_400, accepted_count=1) == 14_400
+    assert module.next_interval_seconds("completed", 14_400) == 14_400
 
 
 def test_codex_market_pulse_rejects_only_invalid_items_before_batch_ingest(monkeypatch):

@@ -37,9 +37,7 @@ class SectorMembership:
 
 def membership_hash(symbols: list[str] | tuple[str, ...] | set[str]) -> str:
     """Return a stable hash for a normalized, order-independent member set."""
-    normalized = sorted(
-        {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
-    )
+    normalized = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
     if not normalized:
         raise ValueError("a membership snapshot must contain at least one symbol")
     return hashlib.sha256("\n".join(normalized).encode("utf-8")).hexdigest()
@@ -110,9 +108,9 @@ class SectorExposureResolver:
                    observed_at, effective_date, confidence
             FROM sector_membership_snapshots
             WHERE source = ? AND lower(sector) = lower(?)
-              AND julianday(observed_at) <= julianday(?)
-              AND date(effective_date) <= date(?)
-            ORDER BY julianday(observed_at) DESC, id DESC
+              AND observed_at <= ?
+              AND effective_date <= ?
+            ORDER BY observed_at DESC, id DESC
             LIMIT 1
             """,
             (
@@ -207,7 +205,9 @@ class SectorExposureResolver:
         effective = date.fromisoformat(str(snapshot.get("effective_date") or "")[:10])
         observed = _cutoff(snapshot.get("observed_at"))
         if effective > observed.astimezone(SHANGHAI).date():
-            raise ValueError("snapshot effective_date cannot be after its Shanghai observation date")
+            raise ValueError(
+                "snapshot effective_date cannot be after its Shanghai observation date"
+            )
         confidence = float(snapshot.get("confidence") or 0.0)
         if not 0.0 <= confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
@@ -247,9 +247,7 @@ class SectorExposureResolver:
             as_of=as_of,
             where_sql=f"upper(symbol) IN ({placeholders})",
             where_params=tuple(normalized),
-            order_sql=(
-                "symbol ASC, confidence DESC, sector ASC, effective_from DESC, source ASC"
-            ),
+            order_sql=("symbol ASC, confidence DESC, sector ASC, effective_from DESC, source ASC"),
         )
         for row in rows:
             symbol = str(row.get("symbol") or "").strip().upper()
@@ -282,13 +280,13 @@ class SectorExposureResolver:
             WITH ranked_snapshots AS (
                 SELECT id, source, sector, member_hash, member_count,
                        observed_at, effective_date, confidence,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY source, lower(sector)
-                           ORDER BY julianday(observed_at) DESC, id DESC
-                       ) AS snapshot_rank
+                        ROW_NUMBER() OVER (
+                            PARTITION BY source, lower(sector)
+                            ORDER BY observed_at DESC, id DESC
+                        ) AS snapshot_rank
                 FROM sector_membership_snapshots
-                WHERE julianday(observed_at) <= julianday(?)
-                  AND date(effective_date) <= date(?)
+                WHERE observed_at <= ?
+                  AND effective_date <= ?
             ),
             latest_snapshots AS (
                 SELECT * FROM ranked_snapshots WHERE snapshot_rank = 1
@@ -305,12 +303,12 @@ class SectorExposureResolver:
                        NULL AS snapshot_id,
                        NULL AS member_hash
                 FROM sector_membership_history AS history
-                WHERE date(history.effective_from) <= date(?)
+                WHERE history.effective_from <= ?
                   AND (
                       history.effective_to IS NULL
-                      OR date(history.effective_to) >= date(?)
+                      OR history.effective_to >= ?
                   )
-                  AND julianday(history.available_at) <= julianday(?)
+                  AND history.available_at <= ?
                   AND NOT EXISTS (
                       SELECT 1
                       FROM latest_snapshots AS snapshot

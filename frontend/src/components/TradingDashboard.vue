@@ -238,21 +238,14 @@
         </section>
 
         <section class="right-column">
-          <article class="card sentiment-card">
-            <div class="card-title-row">
-              <h2>市场情绪</h2>
-              <button type="button">更多 &gt;</button>
-            </div>
-            <div class="gauge-wrap">
-              <div class="gauge" title="市场情绪来自模拟数据，仅用于辅助观察">
-                <span>63</span>
-              </div>
-              <div>
-                <strong>偏乐观</strong>
-                <p>题材轮动活跃，风险偏好中等偏上。</p>
-              </div>
-            </div>
-          </article>
+          <ControlPlaneObservabilityCard
+            :readiness="runtimeReadiness"
+            :control-plane="controlPlaneSnapshot"
+            :decision-snapshot="selectionV2"
+            :last-run="lastControlPlaneRun"
+            :loading="observabilityLoading"
+            :error="observabilityError"
+          />
 
           <article class="card plan-card" data-testid="simulation-plan">
             <div class="order-tabs">
@@ -430,6 +423,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
+import {
+  fetchJson,
+  runControlPlaneOnce,
+  type ControlPlaneRunResult,
+  type DecisionSnapshotObservability,
+} from "../api/cockpit";
+import { useCockpitObservability } from "../composables/useCockpitObservability";
+import ControlPlaneObservabilityCard from "./control-plane/ControlPlaneObservabilityCard.vue";
+
 type Stock = {
   name: string;
   code: string;
@@ -483,9 +485,9 @@ type SelectionCandidate = {
   entry_trigger?: string;
 };
 
-type SelectionV2Result = {
+type SelectionV2Result = DecisionSnapshotObservability & {
   status: string;
-  summary: {
+  summary: DecisionSnapshotObservability["summary"] & {
     candidate_count: number;
     strict_buy_plan_count: number;
     wait_pullback_plan_count: number;
@@ -575,13 +577,6 @@ type PublicOpinionRun = {
   completed_at?: string | null;
 };
 
-type ControlPlaneRunResult = {
-  status?: string;
-  run_id?: number | string;
-  next_action?: string;
-  summary?: { status?: string };
-};
-
 const navItems = [
   { label: "大盘", icon: "盘" },
   { label: "沪深", icon: "沪" },
@@ -625,7 +620,25 @@ const publicOpinionLoading = ref(true);
 const publicOpinionCaptureLoading = ref(false);
 const publicOpinionError = ref("");
 const controlPlaneLoading = ref(false);
-const controlPlaneStatus = ref("控制平面待运行");
+const controlPlaneActionMessage = ref("");
+const lastControlPlaneRun = ref<ControlPlaneRunResult | null>(null);
+const {
+  readiness: runtimeReadiness,
+  controlPlane: controlPlaneSnapshot,
+  loading: observabilityLoading,
+  error: observabilityError,
+  refresh: refreshObservability,
+} = useCockpitObservability();
+
+const controlPlaneStatus = computed(() => {
+  if (controlPlaneLoading.value) return "adaptive 运行中";
+  if (controlPlaneActionMessage.value) return controlPlaneActionMessage.value;
+  const snapshot = controlPlaneSnapshot.value;
+  if (!snapshot) return observabilityError.value ? "控制平面离线" : "控制平面待运行";
+  return snapshot.recommended_profile
+    ? `${snapshot.status} · ${snapshot.recommended_profile}`
+    : snapshot.status;
+});
 
 const watchlist = ref<Stock[]>([]);
 
@@ -922,12 +935,6 @@ function buildDepth(side: "buy" | "sell") {
   });
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  if (!response.ok) throw new Error(`${response.status} ${url}`);
-  return response.json() as Promise<T>;
-}
-
 function formatNewsTime(value?: string | null) {
   if (!value) return "时间未知";
   const timestamp = new Date(value).getTime();
@@ -982,29 +989,20 @@ async function capturePublicOpinion() {
   }
 }
 
-async function loadControlPlaneStatus() {
-  try {
-    const result = await fetchJson<ControlPlaneRunResult>("/api/control-plane/status");
-    controlPlaneStatus.value = result.status || result.summary?.status || "控制平面就绪";
-  } catch {
-    controlPlaneStatus.value = "控制平面离线";
-  }
-}
-
 async function runControlPlane() {
   controlPlaneLoading.value = true;
-  controlPlaneStatus.value = "adaptive 运行中";
+  controlPlaneActionMessage.value = "";
   try {
-    const result = await fetchJson<ControlPlaneRunResult>("/api/control-plane/run-once", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profile: "adaptive", requested_by: "frontend_control_plane" })
+    const result = await runControlPlaneOnce({
+      profile: "adaptive",
+      requested_by: "frontend_control_plane",
     });
-    const status = result.status || result.summary?.status || "completed";
-    controlPlaneStatus.value = result.run_id ? `${status} · #${result.run_id}` : status;
-    await Promise.all([loadPublicOpinionData(), loadDashboardData()]);
+    lastControlPlaneRun.value = result;
+    const status = result.status || "completed";
+    controlPlaneActionMessage.value = result.task_id ? `${status} · task #${result.task_id}` : status;
+    await Promise.all([loadPublicOpinionData(), loadDashboardData(), refreshObservability()]);
   } catch (error) {
-    controlPlaneStatus.value = error instanceof Error ? `运行失败：${error.message}` : "运行失败";
+    controlPlaneActionMessage.value = error instanceof Error ? `运行失败：${error.message}` : "运行失败";
   } finally {
     controlPlaneLoading.value = false;
   }
@@ -1098,7 +1096,6 @@ async function loadIndexOverview() {
 onMounted(() => {
   void loadDashboardData();
   void loadPublicOpinionData();
-  void loadControlPlaneStatus();
 });
 </script>
 
@@ -1147,7 +1144,6 @@ button {
 .header-actions,
 .user-chip,
 .flow-content,
-.gauge-wrap,
 .card-title-row,
 .stock-heading,
 .chart-toolbar,
@@ -1186,7 +1182,6 @@ h1 {
 .brand-block span,
 .muted,
 .market-card p,
-.gauge-wrap p,
 .plan-result,
 small,
 em {
@@ -1767,29 +1762,6 @@ em {
   min-height: 8px;
   border-radius: 4px 4px 0 0;
   opacity: 0.55;
-}
-
-.sentiment-card {
-  min-height: 158px;
-}
-
-.gauge-wrap {
-  gap: 16px;
-}
-
-.gauge {
-  display: grid;
-  width: 104px;
-  height: 104px;
-  place-items: center;
-  border-radius: 999px;
-  background: radial-gradient(circle at center, #ffffff 0 55%, transparent 57%), conic-gradient(#10b981 0 34%, #f59e0b 34% 66%, #ef4444 66% 100%);
-}
-
-.gauge span {
-  color: #111827;
-  font-size: 30px;
-  font-weight: 900;
 }
 
 .plan-card {

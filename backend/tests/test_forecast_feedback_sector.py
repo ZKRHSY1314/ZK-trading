@@ -502,10 +502,7 @@ def test_evaluate_reports_stock_and_sector_metrics_separately(tmp_path):
     assert sector_five_day["precision_at_k"] == pytest.approx(1.0)
     assert sector_five_day["spearman_rank_ic"] == pytest.approx(1.0)
     assert sector_five_day["brier_score"] == pytest.approx(0.065)
-    assert (
-        sector_five_day["target"]
-        == "direction_signed_benchmark_neutral_return>0"
-    )
+    assert sector_five_day["target"] == "direction_signed_benchmark_neutral_return>0"
 
 
 def test_sector_backlog_does_not_consume_the_legacy_stock_label_limit(tmp_path):
@@ -650,3 +647,78 @@ def test_evaluate_is_not_ready_when_every_metric_is_unavailable(tmp_path):
     assert one_day["brier_score"] is None
     assert one_day["status"] == "insufficient_data"
     assert "no_available_evaluation_metric" in one_day["insufficient_reasons"]
+
+
+def test_sector_label_due_batches_member_bars_and_reuses_horizon_windows(
+    tmp_path,
+    monkeypatch,
+):
+    store = _store(tmp_path)
+    ledger = ForecastLedger(store)
+    for horizon_days in (1, 3, 5):
+        ledger.record_forecast(
+            _forecast(
+                decision_id="sector-query-budget",
+                horizon_days=horizon_days,
+            )
+        )
+
+    memberships = []
+    for index in range(6):
+        symbol = f"SH6001{index:02d}"
+        memberships.append(
+            (
+                symbol,
+                "semiconductors",
+                "2026-01-01",
+                None,
+                "fixture",
+                "2026-06-01T00:00:00+00:00",
+                0.9,
+            )
+        )
+        _insert_bars(
+            store,
+            symbol,
+            [
+                ("2026-07-13", 10.0, 10.1),
+                ("2026-07-14", 10.1, 10.2),
+                ("2026-07-15", 10.2, 10.3),
+                ("2026-07-16", 10.3, 10.4),
+                ("2026-07-17", 10.4, 10.5),
+            ],
+        )
+    _insert_memberships(store, memberships)
+    _insert_bars(
+        store,
+        "SH000300",
+        [
+            ("2026-07-13", 4000.0, 4005.0),
+            ("2026-07-14", 4005.0, 4010.0),
+            ("2026-07-15", 4010.0, 4015.0),
+            ("2026-07-16", 4015.0, 4020.0),
+            ("2026-07-17", 4020.0, 4025.0),
+        ],
+    )
+
+    original_fetch_all = store.fetch_all
+    daily_bar_queries: list[str] = []
+
+    def counted_fetch_all(sql: str, params: tuple = ()) -> list[dict]:
+        normalized = " ".join(sql.lower().split())
+        if "from daily_bar_cache" in normalized:
+            daily_bar_queries.append(
+                "member_batch" if "row_number() over" in normalized else "benchmark_window"
+            )
+        return original_fetch_all(sql, params)
+
+    monkeypatch.setattr(store, "fetch_all", counted_fetch_all)
+
+    result = ForecastFeedback(store).label_due("2026-07-17T16:00:00+08:00")
+
+    assert result["by_scope"]["sector"]["labelled_count"] == 3
+    # Six members across three horizons previously caused 18 member-bar reads
+    # plus 18 identical benchmark-window reads. The run now performs one member
+    # batch and one benchmark lookup per distinct horizon window.
+    assert daily_bar_queries.count("member_batch") == 1
+    assert daily_bar_queries.count("benchmark_window") == 3

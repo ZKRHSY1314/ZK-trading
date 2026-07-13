@@ -40,7 +40,6 @@ from app.models import (
 )
 from app.monitoring.service import MonitoringService
 from app.operations.readiness import OperationReadinessService
-from app.public_opinion.service import CodexPublicOpinionService
 from app.rules.engine import RuleEngine
 from app.rules.loader import load_rule_config
 from app.simulation.broker import SimulatedBroker
@@ -180,22 +179,6 @@ class Dataset2TrainingRunInput(BaseModel):
     limit: int = 200
     requested_by: str = "operator"
     min_samples: int = 4
-
-
-class OffhourResearchRunInput(BaseModel):
-    limit: int = 100
-    strategy_limit: int = 50
-    history_days: int = 240
-    write_artifact: bool = True
-    refresh_history: bool = False
-    requested_by: str = "codex"
-
-
-class PublicOpinionRunInput(BaseModel):
-    limit: int = 60
-    persist: bool = True
-    requested_by: str = "codex"
-    source_urls: list[str] = Field(default_factory=list)
 
 
 class ScreenFixtureReplayInput(BaseModel):
@@ -5578,115 +5561,6 @@ def dataset2_simple_training_dry_run(input_data: Dataset2SimpleTrainingDryRunInp
     )
 
 
-@router.get("/research/offhour/capabilities")
-def offhour_research_capabilities() -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    return OffhourResearchLoopService().capabilities()
-
-
-@router.post("/research/offhour/run")
-def run_offhour_research(input_data: OffhourResearchRunInput | None = None) -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    payload = input_data or OffhourResearchRunInput()
-    return OffhourResearchLoopService().run(
-        limit=payload.limit,
-        strategy_limit=payload.strategy_limit,
-        history_days=payload.history_days,
-        write_artifact=payload.write_artifact,
-        refresh_history=payload.refresh_history,
-        requested_by=payload.requested_by,
-    )
-
-
-@router.get("/research/offhour/runs/latest")
-def latest_offhour_research_run() -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    latest = OffhourResearchLoopService().latest_run()
-    if latest is None:
-        return {
-            "status": "empty",
-            "review_only": True,
-            "simulation_only": True,
-            "live_trading_enabled": settings.enable_live_trading,
-        }
-    return latest
-
-
-@router.get("/research/offhour/runs/{run_id}")
-def get_offhour_research_run(run_id: int) -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    item = OffhourResearchLoopService().get_run(run_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Offhour research run not found")
-    return item
-
-
-@router.get("/research/offhour/model-candidates/latest")
-def latest_offhour_model_candidate() -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    return OffhourResearchLoopService().latest_model_candidate()
-
-
-@router.get("/research/offhour/simulation-review-plan/latest")
-def latest_offhour_simulation_review_plan(limit: int = 12) -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    return OffhourResearchLoopService().latest_simulation_review_plan(limit=limit)
-
-
-@router.get("/research/offhour/strategy-learning-packet/latest")
-def latest_offhour_strategy_learning_packet(limit: int = 8) -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    return OffhourResearchLoopService().latest_strategy_learning_packet(limit=limit)
-
-
-@router.get("/public-opinion/capabilities")
-def public_opinion_capabilities() -> dict:
-    return CodexPublicOpinionService().capabilities()
-
-
-@router.post("/public-opinion/run")
-def run_public_opinion_capture(input_data: PublicOpinionRunInput | None = None) -> dict:
-    payload = input_data or PublicOpinionRunInput()
-    return CodexPublicOpinionService().run(
-        limit=payload.limit,
-        persist=payload.persist,
-        requested_by=payload.requested_by,
-        source_urls=payload.source_urls,
-    )
-
-
-@router.get("/public-opinion/runs/latest")
-def latest_public_opinion_run() -> dict:
-    latest = CodexPublicOpinionService().latest_run()
-    if latest is None:
-        return {
-            "status": "empty",
-            "items": [],
-            "sector_signals": [],
-            "review_only": True,
-            "simulation_only": True,
-            "live_trading_enabled": settings.enable_live_trading,
-        }
-    return latest
-
-
-@router.get("/public-opinion/context/latest")
-def latest_public_opinion_context(limit: int = 8) -> dict:
-    return CodexPublicOpinionService().latest_context(limit=limit)
-
-
-@router.get("/public-opinion/runs")
-def list_public_opinion_runs(limit: int = 20) -> list[dict]:
-    return CodexPublicOpinionService().list_runs(limit=limit)
-
-
 @router.post("/screen-monitoring/observations/fixture-replay")
 def replay_screen_monitoring_fixture(input_data: ScreenFixtureReplayInput | None = None) -> dict:
     from app.screen_monitoring.service import ScreenMonitoringService
@@ -6346,30 +6220,6 @@ def get_backtest_run(run_id: int) -> dict:
 # ------------------------------------------------------------------
 # AI Review and Proposals
 # ------------------------------------------------------------------
-
-
-@router.get("/ai/model/capabilities")
-def ai_model_capabilities() -> dict:
-    from app.ai.model_service import AIModelGatewayService
-
-    return AIModelGatewayService().capabilities()
-
-
-@router.post("/ai/model/explain-code-evolution/{record_id}")
-def explain_code_evolution_with_model(record_id: int) -> dict:
-    from app.ai.model_service import AIModelGatewayService
-
-    try:
-        return AIModelGatewayService().explain_code_evolution(record_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@router.get("/ai/model/audit-logs")
-def ai_model_audit_logs(operation: str | None = None, limit: int = 50) -> list[dict]:
-    from app.ai.model_service import AIModelGatewayService
-
-    return AIModelGatewayService().audit_logs(operation=operation, limit=limit)
 
 
 @router.post("/ai/review/run")

@@ -2374,6 +2374,41 @@ def test_offhour_research_api_smoke(client, monkeypatch):
             "live_trading_enabled": False,
         },
     )
+    monkeypatch.setattr(
+        OffhourResearchLoopService,
+        "latest_run",
+        lambda self: {
+            "run_id": 99,
+            "status": "completed",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        },
+    )
+    monkeypatch.setattr(
+        OffhourResearchLoopService,
+        "get_run",
+        lambda self, run_id: {
+            "run_id": run_id,
+            "status": "completed",
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+        if run_id == 99
+        else None,
+    )
+    monkeypatch.setattr(
+        OffhourResearchLoopService,
+        "latest_model_candidate",
+        lambda self: {
+            "status": "ready_for_review",
+            "artifact_written": False,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        },
+    )
     response = client.get("/api/research/offhour/capabilities")
     assert response.status_code == 200
     assert response.json()["simulation_only"] is True
@@ -2381,6 +2416,35 @@ def test_offhour_research_api_smoke(client, monkeypatch):
     response = client.post("/api/research/offhour/run", json={"limit": 10, "strategy_limit": 5})
     assert response.status_code == 200
     assert response.json()["run_id"] == 99
+
+    response = client.get("/api/research/offhour/runs/latest")
+    assert response.status_code == 200
+    assert response.json()["run_id"] == 99
+    assert response.json()["review_only"] is True
+
+    monkeypatch.setattr(OffhourResearchLoopService, "latest_run", lambda self: None)
+    response = client.get("/api/research/offhour/runs/latest")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "empty",
+        "review_only": True,
+        "simulation_only": True,
+        "live_trading_enabled": False,
+    }
+
+    response = client.get("/api/research/offhour/runs/99")
+    assert response.status_code == 200
+    assert response.json()["run_id"] == 99
+    assert response.json()["simulation_only"] is True
+
+    response = client.get("/api/research/offhour/runs/404")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Offhour research run not found"
+
+    response = client.get("/api/research/offhour/model-candidates/latest")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready_for_review"
+    assert response.json()["live_trading_enabled"] is False
 
     response = client.get("/api/research/offhour/simulation-review-plan/latest?limit=5")
     assert response.status_code == 200

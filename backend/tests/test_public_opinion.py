@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.api import routes
+from app.api import public_opinion_routes
 from app.public_opinion.service import (
     DEFAULT_SOURCES,
     CodexPublicOpinionService,
@@ -118,7 +118,11 @@ def test_public_opinion_api_smoke(client, monkeypatch):
         def list_runs(self, limit=20):
             return []
 
-    monkeypatch.setattr(routes, "CodexPublicOpinionService", FakePublicOpinionService)
+    monkeypatch.setattr(
+        public_opinion_routes,
+        "CodexPublicOpinionService",
+        FakePublicOpinionService,
+    )
 
     capabilities = client.get("/api/public-opinion/capabilities")
     assert capabilities.status_code == 200
@@ -140,6 +144,25 @@ def test_public_opinion_api_smoke(client, monkeypatch):
     assert payload["simulation_only"] is True
     assert payload["live_trading_enabled"] is False
     assert payload["source_urls"] == ["https://example.test/news"]
+
+    latest = client.get("/api/public-opinion/runs/latest")
+    assert latest.status_code == 200
+    assert latest.json() == {
+        "status": "empty",
+        "items": [],
+        "sector_signals": [],
+        "review_only": True,
+        "simulation_only": True,
+        "live_trading_enabled": False,
+    }
+
+    context = client.get("/api/public-opinion/context/latest?limit=3")
+    assert context.status_code == 200
+    assert context.json() == {"status": "completed", "top_sectors": [], "limit": 3}
+
+    runs = client.get("/api/public-opinion/runs?limit=4")
+    assert runs.status_code == 200
+    assert runs.json() == []
 
 
 def test_public_opinion_run_blocks_when_live_trading_enabled(test_db, monkeypatch):

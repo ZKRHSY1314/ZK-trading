@@ -4,6 +4,7 @@ from pathlib import Path
 def test_high_risk_frontend_labels_are_readable_chinese():
     frontend_root = Path(__file__).resolve().parents[2] / "frontend" / "src"
     source = (frontend_root / "components" / "TradingDashboard.vue").read_text(encoding="utf-8")
+    api_source = (frontend_root / "api" / "cockpit.ts").read_text(encoding="utf-8")
 
     for text in [
         "智投 A股",
@@ -23,9 +24,11 @@ def test_high_risk_frontend_labels_are_readable_chinese():
         'data-testid="control-plane-status"',
         "/api/public-opinion/context/latest?limit=8",
         "/api/public-opinion/runs/latest",
-        "/api/control-plane/run-once",
     ]:
         assert text in source
+
+    assert 'fetchJson<ControlPlaneRunResult>("/api/control-plane/run-once"' in api_source
+    assert 'method: "POST"' in api_source
 
     assert "资金流、板块热图和资讯源等待下一步接入" not in source
 

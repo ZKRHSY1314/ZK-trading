@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta, timezone
 import json
 import math
@@ -18,6 +19,24 @@ from app.storage.sqlite_store import SQLiteStore
 
 _CHINA_TZ = timezone(timedelta(hours=8))
 _BENCHMARK_PRIORITY = ("SH000300", "SH000001")
+_MAX_FORECAST_HORIZON = max(FORECAST_HORIZONS)
+_MAX_DAILY_BAR_SYMBOLS_PER_QUERY = 800
+
+
+@dataclass
+class _FeedbackLookupCache:
+    """Per-label_due cache; never shared across runs or cutoff timestamps."""
+
+    stock_bars: dict[tuple[str, str, str], list[dict[str, Any]]] = field(default_factory=dict)
+    sector_members: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
+    sector_bars: dict[
+        tuple[tuple[str, ...], str, str],
+        dict[str, list[dict[str, Any]]],
+    ] = field(default_factory=dict)
+    aligned_windows: dict[
+        tuple[str, str, str],
+        dict[str, Any] | None,
+    ] = field(default_factory=dict)
 
 
 def _datetime(value: str | datetime) -> datetime:
@@ -63,6 +82,7 @@ class ForecastFeedback:
             }
             for scope in ("stock", "sector")
         }
+        lookup = _FeedbackLookupCache()
         # A sector backlog does not consume the stock budget.  Within each
         # scope, scan beyond the write limit and persist mature labels first so
         # an old permanently-unready row cannot starve later usable forecasts.
@@ -79,7 +99,7 @@ class ForecastFeedback:
             evaluated = []
             for row in rows:
                 forecast = self._forecast(row)
-                outcome, reason = self._label(forecast, cutoff)
+                outcome, reason = self._label(forecast, cutoff, lookup=lookup)
                 evaluated.append((forecast, outcome, reason))
             ready = [item for item in evaluated if item[1] is not None]
             waiting = [item for item in evaluated if item[1] is None]
@@ -127,15 +147,9 @@ class ForecastFeedback:
             "pending_count": stock_result["pending_count"],
             "labelled": stock_result["labelled"],
             "pending": stock_result["pending"],
-            "total_eligible_count": sum(
-                result["eligible_count"] for result in by_scope.values()
-            ),
-            "total_labelled_count": sum(
-                result["labelled_count"] for result in by_scope.values()
-            ),
-            "total_pending_count": sum(
-                result["pending_count"] for result in by_scope.values()
-            ),
+            "total_eligible_count": sum(result["eligible_count"] for result in by_scope.values()),
+            "total_labelled_count": sum(result["labelled_count"] for result in by_scope.values()),
+            "total_pending_count": sum(result["pending_count"] for result in by_scope.values()),
             "by_scope": by_scope,
             "horizon_days": sorted(FORECAST_HORIZONS),
             "review_only": True,
@@ -246,25 +260,30 @@ class ForecastFeedback:
         self,
         forecast: ForecastDecision,
         as_of: datetime,
+        *,
+        lookup: _FeedbackLookupCache,
     ) -> tuple[ForecastOutcome | None, str | dict[str, Any] | None]:
         if forecast.scope == "sector":
-            return self._label_sector(forecast, as_of)
+            return self._label_sector(forecast, as_of, lookup=lookup)
         if forecast.scope != "stock":
             return None, "unsupported_feedback_scope"
-        return self._label_stock(forecast, as_of)
+        return self._label_stock(forecast, as_of, lookup=lookup)
 
     def _label_stock(
         self,
         forecast: ForecastDecision,
         as_of: datetime,
+        *,
+        lookup: _FeedbackLookupCache,
     ) -> tuple[ForecastOutcome | None, str | None]:
         decision_date = _datetime(forecast.decision_cutoff).astimezone(_CHINA_TZ).date().isoformat()
         as_of_date = as_of.astimezone(_CHINA_TZ).date().isoformat()
-        stock_rows = self._bars_after(
+        stock_rows = self._cached_bars_after(
             forecast.subject,
             decision_date=decision_date,
             as_of_date=as_of_date,
             limit=forecast.horizon_days,
+            lookup=lookup,
         )
         if len(stock_rows) < forecast.horizon_days:
             return None, "stock_horizon_not_matured"
@@ -281,10 +300,11 @@ class ForecastFeedback:
         benchmark = None
         benchmark_symbol = None
         for symbol in _BENCHMARK_PRIORITY:
-            window = self._aligned_window(
+            window = self._cached_aligned_window(
                 symbol,
                 entry_date=str(entry["trade_date"]),
                 exit_date=str(exit_row["trade_date"]),
+                lookup=lookup,
             )
             if window is not None:
                 benchmark_symbol = symbol
@@ -297,10 +317,11 @@ class ForecastFeedback:
         benchmark_return = self._return(benchmark["entry_price"], benchmark["exit_price"])
         sector_symbol = self._sector_benchmark_symbol(forecast.features)
         sector_window = (
-            self._aligned_window(
+            self._cached_aligned_window(
                 sector_symbol,
                 entry_date=str(entry["trade_date"]),
                 exit_date=str(exit_row["trade_date"]),
+                lookup=lookup,
             )
             if sector_symbol
             else None
@@ -373,14 +394,17 @@ class ForecastFeedback:
         self,
         forecast: ForecastDecision,
         as_of: datetime,
+        *,
+        lookup: _FeedbackLookupCache,
     ) -> tuple[ForecastOutcome | None, str | dict[str, Any] | None]:
         decision_cutoff = _datetime(forecast.decision_cutoff)
         decision_date = decision_cutoff.astimezone(_CHINA_TZ).date().isoformat()
         as_of_date = as_of.astimezone(_CHINA_TZ).date().isoformat()
-        memberships = self._sector_members(
+        memberships = self._cached_sector_members(
             forecast.subject,
             decision_cutoff=decision_cutoff,
             decision_date=decision_date,
+            lookup=lookup,
         )
         required_complete_members = max(2, min(5, len(memberships)))
         minimum_coverage = 0.6
@@ -393,14 +417,16 @@ class ForecastFeedback:
                 minimum_coverage=minimum_coverage,
             )
 
+        bars_by_symbol = self._cached_sector_bars_after(
+            [str(membership["symbol"]) for membership in memberships],
+            decision_date=decision_date,
+            as_of_date=as_of_date,
+            lookup=lookup,
+        )
         stock_windows: list[dict[str, Any]] = []
         for membership in memberships:
-            bars = self._bars_after(
-                str(membership["symbol"]),
-                decision_date=decision_date,
-                as_of_date=as_of_date,
-                limit=forecast.horizon_days,
-            )
+            symbol = str(membership["symbol"]).strip().upper()
+            bars = bars_by_symbol.get(symbol, [])[: forecast.horizon_days]
             if len(bars) < forecast.horizon_days:
                 continue
             entry = bars[0]
@@ -450,10 +476,11 @@ class ForecastFeedback:
         for symbol in _BENCHMARK_PRIORITY:
             aligned_members = []
             for member in stock_windows:
-                benchmark = self._aligned_window(
+                benchmark = self._cached_aligned_window(
                     symbol,
                     entry_date=str(member["entry"]["trade_date"]),
                     exit_date=str(member["exit"]["trade_date"]),
+                    lookup=lookup,
                 )
                 if benchmark is None:
                     continue
@@ -553,14 +580,10 @@ class ForecastFeedback:
             "sector_return_semantics": "observed_equal_weight_member_return",
             "forecast_direction": str(forecast.features.get("direction") or "neutral"),
             "probability_semantics": forecast.features.get("probability_semantics"),
-            "probability_horizon_days": forecast.features.get(
-                "probability_horizon_days"
-            ),
+            "probability_horizon_days": forecast.features.get("probability_horizon_days"),
             "members": member_evidence,
         }
-        latest_exit_date = max(
-            str(member["exit"]["trade_date"]) for member in complete_members
-        )
+        latest_exit_date = max(str(member["exit"]["trade_date"]) for member in complete_members)
         outcome = ForecastOutcome(
             decision_id=forecast.decision_id,
             scope="sector",
@@ -612,6 +635,123 @@ class ForecastFeedback:
         for row in rows:
             unique.setdefault(str(row["symbol"]), row)
         return list(unique.values())
+
+    def _cached_sector_members(
+        self,
+        sector: str,
+        *,
+        decision_cutoff: datetime,
+        decision_date: str,
+        lookup: _FeedbackLookupCache,
+    ) -> list[dict[str, Any]]:
+        key = (sector, decision_cutoff.isoformat())
+        if key not in lookup.sector_members:
+            lookup.sector_members[key] = self._sector_members(
+                sector,
+                decision_cutoff=decision_cutoff,
+                decision_date=decision_date,
+            )
+        return lookup.sector_members[key]
+
+    def _cached_bars_after(
+        self,
+        symbol: str,
+        *,
+        decision_date: str,
+        as_of_date: str,
+        limit: int,
+        lookup: _FeedbackLookupCache,
+    ) -> list[dict[str, Any]]:
+        key = (symbol.strip().upper(), decision_date, as_of_date)
+        if key not in lookup.stock_bars:
+            lookup.stock_bars[key] = self._bars_after(
+                key[0],
+                decision_date=decision_date,
+                as_of_date=as_of_date,
+                limit=_MAX_FORECAST_HORIZON,
+            )
+        return lookup.stock_bars[key][:limit]
+
+    def _cached_sector_bars_after(
+        self,
+        symbols: list[str],
+        *,
+        decision_date: str,
+        as_of_date: str,
+        lookup: _FeedbackLookupCache,
+    ) -> dict[str, list[dict[str, Any]]]:
+        normalized = tuple(sorted({symbol.strip().upper() for symbol in symbols if symbol.strip()}))
+        key = (normalized, decision_date, as_of_date)
+        if key not in lookup.sector_bars:
+            lookup.sector_bars[key] = self._bars_after_many(
+                list(normalized),
+                decision_date=decision_date,
+                as_of_date=as_of_date,
+                limit=_MAX_FORECAST_HORIZON,
+            )
+        return lookup.sector_bars[key]
+
+    def _bars_after_many(
+        self,
+        symbols: list[str],
+        *,
+        decision_date: str,
+        as_of_date: str,
+        limit: int,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Load each member's next sessions in bounded, index-friendly batches."""
+
+        normalized = sorted({symbol.strip().upper() for symbol in symbols if symbol.strip()})
+        result = {symbol: [] for symbol in normalized}
+        safe_limit = max(1, min(int(limit), _MAX_FORECAST_HORIZON))
+        for offset in range(0, len(normalized), _MAX_DAILY_BAR_SYMBOLS_PER_QUERY):
+            chunk = normalized[offset : offset + _MAX_DAILY_BAR_SYMBOLS_PER_QUERY]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.store.fetch_all(
+                f"""
+                WITH ranked AS (
+                    SELECT symbol, trade_date, open, close, source,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY symbol
+                               ORDER BY trade_date ASC
+                           ) AS session_rank
+                    FROM daily_bar_cache
+                    WHERE symbol IN ({placeholders})
+                      AND trade_date > ?
+                      AND trade_date <= ?
+                      AND quality_status = 'ready'
+                      AND open IS NOT NULL AND open > 0
+                      AND close IS NOT NULL AND close > 0
+                )
+                SELECT symbol, trade_date, open, close, source
+                FROM ranked
+                WHERE session_rank <= ?
+                ORDER BY symbol ASC, trade_date ASC
+                """,
+                (*chunk, decision_date, as_of_date, safe_limit),
+            )
+            for row in rows:
+                symbol = str(row.get("symbol") or "").strip().upper()
+                if symbol in result:
+                    result[symbol].append(row)
+        return result
+
+    def _cached_aligned_window(
+        self,
+        symbol: str,
+        *,
+        entry_date: str,
+        exit_date: str,
+        lookup: _FeedbackLookupCache,
+    ) -> dict[str, Any] | None:
+        key = (symbol.strip().upper(), entry_date, exit_date)
+        if key not in lookup.aligned_windows:
+            lookup.aligned_windows[key] = self._aligned_window(
+                key[0],
+                entry_date=entry_date,
+                exit_date=exit_date,
+            )
+        return lookup.aligned_windows[key]
 
     @staticmethod
     def _session_close(trade_date: str) -> datetime:
@@ -731,20 +871,15 @@ class ForecastFeedback:
         for decision_id, fold_rows in sorted(grouped.items()):
             matured = [row for row in fold_rows if row.get("outcome_id") is not None]
             all_matured.extend(matured)
-            metric_forecasts = [
-                row for row in fold_rows if self._metric_eligible(row, scope=scope)
-            ]
-            metric_matured = [
-                row for row in matured if self._metric_eligible(row, scope=scope)
-            ]
+            metric_forecasts = [row for row in fold_rows if self._metric_eligible(row, scope=scope)]
+            metric_matured = [row for row in matured if self._metric_eligible(row, scope=scope)]
             top = metric_forecasts[:k]
             precision = None
             if len(top) == k and all(row.get("outcome_id") is not None for row in top):
-                precision = sum(
-                    1
-                    for row in top
-                    if float(self._evaluation_return(row, scope=scope)) > 0
-                ) / k
+                precision = (
+                    sum(1 for row in top if float(self._evaluation_return(row, scope=scope)) > 0)
+                    / k
+                )
             predictor_actual = [
                 (self._rank_predictor(row), self._evaluation_return(row, scope=scope))
                 for row in metric_matured
@@ -767,9 +902,7 @@ class ForecastFeedback:
             provided_probability_count = sum(
                 1 for row in metric_matured if row.get("probability") is not None
             )
-            uncalibrated_probability_count = (
-                provided_probability_count - len(probability_pairs)
-            )
+            uncalibrated_probability_count = provided_probability_count - len(probability_pairs)
             brier = self._brier(probability_pairs)
             by_decision.append(
                 {
@@ -804,9 +937,7 @@ class ForecastFeedback:
             for row in by_decision
             if row["spearman_rank_ic"] is not None
         ]
-        all_metric_matured = [
-            row for row in all_matured if self._metric_eligible(row, scope=scope)
-        ]
+        all_metric_matured = [row for row in all_matured if self._metric_eligible(row, scope=scope)]
         probability_pairs = [
             pair
             for row in all_metric_matured
@@ -824,12 +955,8 @@ class ForecastFeedback:
         )
         directional_sample_count = len(all_metric_matured)
         fold_count = sum(1 for row in by_decision if row["directional_sample_count"] > 0)
-        precision_at_k = (
-            sum(precision_values) / len(precision_values) if precision_values else None
-        )
-        spearman_rank_ic = (
-            sum(rank_ic_values) / len(rank_ic_values) if rank_ic_values else None
-        )
+        precision_at_k = sum(precision_values) / len(precision_values) if precision_values else None
+        spearman_rank_ic = sum(rank_ic_values) / len(rank_ic_values) if rank_ic_values else None
         brier_score = self._brier(probability_pairs)
         insufficient_reasons = []
         if directional_sample_count < min_samples:
@@ -837,10 +964,7 @@ class ForecastFeedback:
             insufficient_reasons.append(f"{reason_prefix}_below_{min_samples}")
         if fold_count < min_folds:
             insufficient_reasons.append(f"fold_count_below_{min_folds}")
-        if all(
-            metric is None
-            for metric in (precision_at_k, spearman_rank_ic, brier_score)
-        ):
+        if all(metric is None for metric in (precision_at_k, spearman_rank_ic, brier_score)):
             insufficient_reasons.append("no_available_evaluation_metric")
         return {
             "status": "insufficient_data" if insufficient_reasons else "ready",
@@ -873,9 +997,7 @@ class ForecastFeedback:
                 uncalibrated_probability_count,
             ),
             "probability_semantics": (
-                "directional_thesis_success"
-                if scope == "sector"
-                else "benchmark_outperformance"
+                "directional_thesis_success" if scope == "sector" else "benchmark_outperformance"
             ),
             "by_decision": by_decision,
             "insufficient_reasons": insufficient_reasons,
@@ -979,9 +1101,7 @@ class ForecastFeedback:
             return None
         features = cls._features(row)
         expected_semantics = (
-            "directional_thesis_success"
-            if scope == "sector"
-            else "benchmark_outperformance"
+            "directional_thesis_success" if scope == "sector" else "benchmark_outperformance"
         )
         if str(features.get("probability_semantics") or "") != expected_semantics:
             return None
@@ -1009,8 +1129,7 @@ class ForecastFeedback:
         if not probability_targets:
             return None
         return sum(
-            (probability - target) ** 2
-            for probability, target in probability_targets
+            (probability - target) ** 2 for probability, target in probability_targets
         ) / len(probability_targets)
 
     @classmethod
