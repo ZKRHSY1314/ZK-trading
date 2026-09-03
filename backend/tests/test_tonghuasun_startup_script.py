@@ -36,7 +36,20 @@ def _run_ps(script: str, executable: str | None = None) -> dict:
             key: value for key, value in environment.items() if key.upper() != "PSMODULEPATH"
         }
     result = subprocess.run(
-        [shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        # -ExecutionPolicy Bypass applies to this child process only and changes
+        # no machine state. Without it the suite cannot dot-source the repo's own
+        # .ps1 wherever the effective policy is Restricted - the Windows client
+        # default, and what every scope reports on a fresh host - so these tests
+        # failed for the environment rather than for the script under test.
+        [
+            shell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+            encoded,
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",
