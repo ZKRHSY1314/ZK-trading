@@ -1,3 +1,5 @@
+import json
+
 from app.ai.review_worker import AIReviewWorker
 from app.market_regime.service import MarketRegimeService
 from app.monitoring.service import MonitoringService
@@ -44,6 +46,50 @@ def test_ai_proposal_validation_and_rejection(test_db):
     assert validation["status"] in {"validation_failed", "validation_passed"}
     rejected = worker.reject(proposal["id"], reviewed_by="pytest", note="test rejection")
     assert rejected["status"] == "rejected"
+
+
+def test_ai_validation_ignores_legacy_completed_run_without_fills(monkeypatch, test_db):
+    with test_db.connect() as conn:
+        measured = conn.execute(
+            """
+            INSERT INTO historical_backtest_runs(
+                config_json, data_source, start_date, end_date, status,
+                initial_cash, final_cash, metrics_json
+            ) VALUES (?, 'fixture', '2020-01-01', '2020-01-10', 'completed', 100000, 101000, ?)
+            """,
+            ("{}", json.dumps({"trade_count": 2})),
+        )
+        measured_id = int(measured.lastrowid)
+        conn.execute(
+            """
+            INSERT INTO historical_backtest_runs(
+                config_json, data_source, start_date, end_date, status,
+                initial_cash, final_cash, metrics_json
+            ) VALUES (?, 'fixture', '2020-01-01', '2020-01-10', 'completed', 100000, 100000, ?)
+            """,
+            ("{}", json.dumps({"trade_count": 0, "entry_fill_count": 0})),
+        )
+
+    worker = AIReviewWorker()
+    proposal = worker.generate_review()
+    selected: dict[str, int] = {}
+
+    def fake_split(latest_run, _patch):
+        selected["id"] = int(latest_run["id"])
+        return {
+            "checks": {
+                "has_completed_backtest": True,
+                "sample_size": False,
+                "out_of_sample_not_worse": False,
+                "hard_blocks_preserved": True,
+                "live_trading_disabled": True,
+            }
+        }
+
+    monkeypatch.setattr(worker, "_split_validation", fake_split)
+    worker.validate_proposal(proposal["id"])
+
+    assert selected["id"] == measured_id
 
 
 def test_monitoring_alert_action_lifecycle(test_db):

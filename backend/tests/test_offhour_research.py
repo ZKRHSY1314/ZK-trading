@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from app.data.daily_bar_cache import DailyBarCacheService
+from app.learning.phase_replay import MainForcePhaseReplayService
 from app.research import offhour
 from app.research.offhour import OffhourResearchLoopService
 
@@ -716,6 +717,334 @@ def test_daily_bar_cache_refresh_symbols_saves_explicit_stock_history(clean_stor
     assert len(bars) == 2
     assert bars[0]["trade_date"] == "2026-01-03"
     assert bars[0]["source"] == "akshare.stock_zh_a_hist"
+    assert bars[0]["adjustment_mode"] == "qfq"
+    assert bars[0]["volume_unit"] == "hand"
+
+
+def test_daily_bar_cache_uses_qfq_fallback_without_mixing_raw_prices(clean_store, monkeypatch):
+    service = DailyBarCacheService(store=clean_store)
+
+    def fail_primary(*_args, **_kwargs):
+        raise RuntimeError("primary unavailable")
+
+    fallback = pd.DataFrame(
+        [
+            {
+                "date": "2026-01-02",
+                "open": "10.0",
+                "high": "10.5",
+                "low": "9.8",
+                "close": "10.2",
+                "volume": "1234",
+                "amount": None,
+            }
+        ]
+    )
+    fallback.attrs["adjustment_mode"] = "qfq"
+    monkeypatch.setattr(service.builder.provider, "get_daily_bars", fail_primary)
+    monkeypatch.setattr(
+        service,
+        "_load_tencent_qfq_daily_bars",
+        lambda *_args, **_kwargs: fallback,
+    )
+
+    result = service.refresh_symbols(["SZ002842"], days=30)
+
+    assert result["results"][0]["source"] == "tencent.fqkline.qfq"
+    assert result["results"][0]["adjustment_mode"] == "qfq"
+    bars = service.get_bars("SZ002842", limit=5)
+    assert bars[0]["adjustment_mode"] == "qfq"
+    assert bars[0]["volume_unit"] == "hand"
+    assert bars[0]["amount"] is None
+
+
+def test_amountless_fallback_cannot_downgrade_complete_ready_rows(clean_store, monkeypatch):
+    service = DailyBarCacheService(store=clean_store)
+    primary = pd.DataFrame(
+        [
+            {
+                "date": "2026-01-02",
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.8,
+                "close": 10.2,
+                "volume": 1234,
+                "amount": 567890.0,
+            }
+        ]
+    )
+    monkeypatch.setattr(service.builder.provider, "get_daily_bars", lambda _code: primary)
+    service.refresh_symbols(["SZ002842"], days=30)
+
+    def fail_primary(*_args, **_kwargs):
+        raise RuntimeError("primary unavailable")
+
+    fallback = pd.DataFrame(
+        [
+            {
+                "date": "2026-01-02",
+                "open": 99.0,
+                "high": 100.0,
+                "low": 98.0,
+                "close": 99.5,
+                "volume": 9999,
+                "amount": None,
+            },
+            {
+                "date": "2026-01-03",
+                "open": 10.3,
+                "high": 10.7,
+                "low": 10.1,
+                "close": 10.6,
+                "volume": 1500,
+                "amount": None,
+            },
+        ]
+    )
+    fallback.attrs["adjustment_mode"] = "qfq"
+    monkeypatch.setattr(service.builder.provider, "get_daily_bars", fail_primary)
+    monkeypatch.setattr(
+        service,
+        "_load_tencent_qfq_daily_bars",
+        lambda *_args, **_kwargs: fallback,
+    )
+
+    service.refresh_symbols(["SZ002842"], days=30)
+
+    bars = {row["trade_date"]: row for row in service.get_bars("SZ002842", limit=5)}
+    assert bars["2026-01-02"]["close"] == 10.2
+    assert bars["2026-01-02"]["amount"] == 567890.0
+    assert bars["2026-01-02"]["source"] == "akshare.stock_zh_a_hist"
+    assert bars["2026-01-03"]["close"] == 10.6
+    assert bars["2026-01-03"]["amount"] is None
+    assert bars["2026-01-03"]["source"] == "tencent.fqkline.qfq"
+
+
+def test_daily_bar_cache_drops_incomplete_current_session(clean_store, monkeypatch):
+    service = DailyBarCacheService(store=clean_store)
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2026-07-14",
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.8,
+                "close": 10.2,
+                "volume": 1000,
+            },
+            {
+                "date": "2026-07-15",
+                "open": 10.3,
+                "high": 10.8,
+                "low": 10.1,
+                "close": 10.6,
+                "volume": 800,
+            },
+        ]
+    )
+    monkeypatch.setattr(service.builder.provider, "get_daily_bars", lambda _code: frame)
+    monkeypatch.setattr(service, "_incomplete_session_date", lambda: "2026-07-15")
+
+    result = service.refresh_symbols(["SZ002842"], days=30)
+
+    assert result["results"][0]["bars_saved"] == 1
+    bars = service.get_bars("SZ002842", limit=5)
+    assert [bar["trade_date"] for bar in bars] == ["2026-07-14"]
+
+
+def test_tencent_qfq_loader_accepts_day_when_no_adjustment_exists(clean_store, monkeypatch):
+    service = DailyBarCacheService(store=clean_store)
+    payload = {
+        "code": 0,
+        "data": {
+            "sh688515": {
+                "day": [["2026-07-14", "10.0", "10.2", "10.5", "9.8", "1234"]]
+            }
+        },
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr("app.data.daily_bar_cache.urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    frame = service._load_tencent_qfq_daily_bars("688515")
+
+    assert frame.iloc[0].to_dict() == {
+        "date": "2026-07-14",
+        "open": "10.0",
+        "close": "10.2",
+        "high": "10.5",
+        "low": "9.8",
+        "volume": "1234",
+        "amount": None,
+    }
+    assert frame.attrs["adjustment_mode"] == "none"
+    assert frame.attrs["source"] == "tencent.fqkline.raw"
+
+
+def test_tencent_raw_is_qfq_only_when_sina_unit_factor_covers_full_horizon(
+    clean_store,
+    monkeypatch,
+):
+    service = DailyBarCacheService(store=clean_store)
+    raw_payload = {
+        "code": 0,
+        "data": {
+            "bj920011": {
+                "day": [
+                    ["2026-07-16", "10.0", "10.2", "10.5", "9.8", "1234"],
+                    ["2026-07-17", "10.2", "10.4", "10.6", "10.1", "1500"],
+                ]
+            }
+        },
+    }
+    factor_payload = {
+        "total": 2,
+        "data": [
+            {"d": "2026-04-08", "f": "1.0000000000000000"},
+            {"d": "1900-01-01", "f": "1.0000000000000000"},
+        ],
+    }
+
+    class FakeResponse:
+        def __init__(self, body):
+            self.body = body.encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return self.body
+
+    def fake_urlopen(request, timeout):
+        assert timeout == 20
+        if "finance.sina.com.cn" in request.full_url:
+            return FakeResponse(f"var bj920011qfq={json.dumps(factor_payload)} /* audit */")
+        return FakeResponse(json.dumps(raw_payload))
+
+    monkeypatch.setattr("app.data.daily_bar_cache.urlopen", fake_urlopen)
+
+    frame = service._load_tencent_qfq_daily_bars("BJ920011", days=120)
+
+    assert frame.attrs["adjustment_mode"] == "qfq"
+    assert frame.attrs["source"] == (
+        "tencent.fqkline.raw+sina.qfq_factor.unit_verified"
+    )
+    assert frame["date"].tolist() == ["2026-07-16", "2026-07-17"]
+    assert frame["close"].tolist() == ["10.2", "10.4"]
+
+
+@pytest.mark.parametrize(
+    "factor_payload",
+    [
+        {"total": 0, "data": []},
+        {
+            "total": 2,
+            "data": [
+                {"d": "2026-04-08", "f": "1.0000000000000000"},
+                {"d": "1900-01-01", "f": "1.1000000000000000"},
+            ],
+        },
+        {
+            "total": 1,
+            "data": [{"d": "2026-07-18", "f": "1.0000000000000000"}],
+        },
+    ],
+    ids=("missing", "non_unit", "does_not_cover_raw_horizon"),
+)
+def test_tencent_raw_remains_isolated_when_sina_factor_is_not_safe(
+    clean_store,
+    monkeypatch,
+    factor_payload,
+):
+    service = DailyBarCacheService(store=clean_store)
+    raw_payload = {
+        "code": 0,
+        "data": {
+            "bj920011": {
+                "day": [["2026-07-17", "10.2", "10.4", "10.6", "10.1", "1500"]]
+            }
+        },
+    }
+
+    class FakeResponse:
+        def __init__(self, body):
+            self.body = body.encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return self.body
+
+    def fake_urlopen(request, timeout):
+        assert timeout == 20
+        if "finance.sina.com.cn" in request.full_url:
+            return FakeResponse(f"var bj920011qfq={json.dumps(factor_payload)} /* audit */")
+        return FakeResponse(json.dumps(raw_payload))
+
+    monkeypatch.setattr("app.data.daily_bar_cache.urlopen", fake_urlopen)
+
+    frame = service._load_tencent_qfq_daily_bars("BJ920011", days=120)
+
+    assert frame.attrs["adjustment_mode"] == "none"
+    assert frame.attrs["source"] == "tencent.fqkline.raw"
+
+
+def test_phase_replay_prefers_local_qfq_cache(clean_store):
+    dates = pd.bdate_range(end="2026-07-14", periods=80)
+    with clean_store.connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO daily_bar_cache(
+                symbol, trade_date, open, high, low, close, volume, amount,
+                source, adjustment_mode, volume_unit, quality_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "SH600129",
+                    trade_date.date().isoformat(),
+                    10.0 + index * 0.01,
+                    10.4 + index * 0.01,
+                    9.8 + index * 0.01,
+                    10.2 + index * 0.01,
+                    1000 + index,
+                    1_000_000 + index,
+                    "tencent.fqkline.qfq",
+                    "qfq",
+                    "hand",
+                    "ready",
+                )
+                for index, trade_date in enumerate(dates)
+            ],
+        )
+
+    class RemoteMustNotRun:
+        def get_daily_bars(self, *_args, **_kwargs):
+            raise AssertionError("local qfq cache should be preferred")
+
+    service = MainForcePhaseReplayService(provider=RemoteMustNotRun())
+
+    frame, source = service._load_daily_bars("600129")
+
+    assert source == "daily_bar_cache.qfq"
+    assert len(frame) == 80
+    assert frame.iloc[-1]["日期"] == "2026-07-14"
 
 
 def test_offhour_ensure_benchmark_history_refreshes_when_phase_confidence_needs_it(
@@ -1428,7 +1757,11 @@ def test_offhour_research_reads_dataset2_chinese_path_and_writes_candidate_artif
     )
     result = service.run(limit=10, strategy_limit=5, history_days=60, write_artifact=True)
 
-    assert result["status"] == "completed"
+    # The replay backtest produces no entry signal on this fixture, so the run
+    # is honestly partial and says why. This test guards the Chinese dataset2
+    # path handling and the candidate artifact, not the backtest outcome.
+    assert result["status"] == "partial"
+    assert "backtest_no_signal" in result["blocked_reasons"]
     assert result["dataset2_source"]["rule_count"] == 1
     assert result["dataset1_experience"]["status"] in {"ready", "missing"}
     assert result["dataset1_experience"]["constraints"]

@@ -53,7 +53,13 @@ $components = @(
     @{ name = "frontend"; data = $metadata.frontend },
     @{ name = "control_worker"; data = $metadata.control_worker },
     @{ name = "reference_data_worker"; data = $metadata.reference_data_worker },
-    @{ name = "codex_market_pulse"; data = $metadata.codex_market_pulse }
+    @{ name = "full_market_feature_worker"; data = $metadata.full_market_feature_worker },
+    @{ name = "market_history_refresh_worker"; data = $metadata.market_history_refresh_worker },
+    @{ name = "capital_flow_refresh_worker"; data = $metadata.capital_flow_refresh_worker },
+    @{ name = "instrument_catalog_refresh_worker"; data = $metadata.instrument_catalog_refresh_worker },
+    @{ name = "full_market_calibration_worker"; data = $metadata.full_market_calibration_worker },
+    @{ name = "codex_market_pulse"; data = $metadata.codex_market_pulse },
+    @{ name = "codex_decision_review"; data = $metadata.codex_decision_review }
 ) | Where-Object { $null -ne $_.data.pid }
 $rootPids = @($components | ForEach-Object { [int]$_.data.pid } | Select-Object -Unique)
 

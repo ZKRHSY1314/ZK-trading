@@ -15,8 +15,8 @@
       </label>
 
       <div class="header-actions">
-        <div class="status-pill" data-testid="release-gate">
-          <span>Release Gate</span>
+        <div class="status-pill" data-testid="release-gate" aria-label="Release Gate">
+          <span>发布门禁</span>
           <strong>{{ releaseGateStatus }}</strong>
         </div>
         <div class="status-pill safe" data-testid="trading-safety-status">
@@ -95,25 +95,39 @@
 
           <article class="card flow-card">
             <div class="card-title-row">
-              <h2>资金流向（待接入）</h2>
-              <span class="muted">等待行情源</span>
+              <h2>资金流向</h2>
+              <span class="muted">{{ capitalFlowSummary.sourceLabel }}</span>
             </div>
             <div class="flow-content">
-              <div class="donut negative">
-                <span>净流入</span>
-                <strong>待接入</strong>
+              <div
+                v-if="capitalFlowSummary.available"
+                class="donut"
+                :class="capitalFlowSummary.displayAmount >= 0 ? 'positive' : 'negative'"
+                :style="capitalFlowDonutStyle"
+                data-testid="capital-flow-donut"
+              >
+                <span>{{ capitalFlowSummary.displayLabel }}</span>
+                <strong>{{ formatMarketFlowAmount(capitalFlowSummary.displayAmount, capitalFlowSummary.unit, true) }}</strong>
+                <small v-if="capitalFlowSummary.hasOrderSizeData">净流入档位 {{ capitalFlowSummary.positiveRatio.toFixed(0) }}%</small>
+                <small v-else>供应商日频口径</small>
               </div>
-              <div class="flow-stats">
+              <div v-if="capitalFlowSummary.available" class="flow-stats">
                 <div v-for="item in capitalFlow" :key="item.label">
                   <span>{{ item.label }}</span>
-                  <strong :class="item.value === '--' ? 'muted' : item.value.startsWith('-') ? 'down' : 'up'">{{ item.value }}</strong>
+                  <strong :class="item.tone">{{ item.value }}</strong>
                 </div>
               </div>
+              <div v-else class="flow-unavailable" data-testid="capital-flow-empty" role="status">
+                <strong>{{ marketFlowLoading ? "正在同步资金流" : "行情源暂不可用" }}</strong>
+                <span>{{ marketFlowLoading ? "请稍候…" : capitalFlowSummary.reason }}</span>
+              </div>
             </div>
-            <div class="flow-footer">
-              <span>大单净额 <strong>--</strong></span>
-              <span>中单净额 <strong>--</strong></span>
-              <span>小单净额 <strong>--</strong></span>
+            <div v-if="capitalFlowSummary.available" class="flow-footer">
+              <span v-for="item in capitalFlowFooter" :key="item.label">
+                {{ item.label }} <strong :class="item.tone">{{ item.value }}</strong>
+              </span>
+              <span>数据日 <strong>{{ capitalFlowSummary.tradeDateLabel }}</strong></span>
+              <span>采集 <strong>{{ capitalFlowSummary.updatedLabel }}</strong></span>
             </div>
           </article>
         </section>
@@ -177,6 +191,14 @@
               </div>
             </div>
 
+            <p
+              v-if="selectedCandidateCalibrationLabel"
+              class="candidate-calibration"
+              data-testid="selected-candidate-calibration"
+            >
+              {{ selectedCandidateCalibrationLabel }}
+            </p>
+
             <div class="quote-metrics">
               <div v-for="item in quoteMetrics" :key="item.label">
                 <span>{{ item.label }}</span>
@@ -204,35 +226,38 @@
               </div>
             </div>
 
-            <div class="kline-board">
-              <div class="ma-line ma5"></div>
-              <div class="ma-line ma20"></div>
-              <div class="candle-row">
-                <span
-                  v-for="bar in klineBars"
-                  :key="bar.date"
-                  class="candle-wrap"
-                  :class="bar.close >= bar.open ? 'rise' : 'fall'"
-                >
-                  <i
-                    class="wick"
-                    :style="{ top: `${bar.top}%`, height: `${bar.height}%` }"
-                  ></i>
-                  <b
-                    class="body"
-                    :style="{ top: `${bar.bodyTop}%`, height: `${bar.bodyHeight}%` }"
-                  ></b>
-                </span>
+            <div class="kline-board" :class="{ empty: !klineBars.length }">
+              <template v-if="klineBars.length">
+                <div class="candle-row">
+                  <span
+                    v-for="bar in klineBars"
+                    :key="bar.date"
+                    class="candle-wrap"
+                    :class="bar.close >= bar.open ? 'rise' : 'fall'"
+                  >
+                    <i
+                      class="wick"
+                      :style="{ top: `${bar.top}%`, height: `${bar.height}%` }"
+                    ></i>
+                    <b
+                      class="body"
+                      :style="{ top: `${bar.bodyTop}%`, height: `${bar.bodyHeight}%` }"
+                    ></b>
+                  </span>
+                </div>
+                <div class="volume-row">
+                  <span
+                    v-for="bar in klineBars"
+                    :key="`volume-${bar.date}`"
+                    :class="bar.close >= bar.open ? 'rise' : 'fall'"
+                    :style="{ height: `${bar.volumePct}%` }"
+                  ></span>
+                </div>
+              </template>
+              <div v-else class="chart-empty" data-testid="stock-chart-empty" role="status">
+                <strong>{{ stockMarketLoading ? "正在加载K线" : "暂无K线数据" }}</strong>
+                <span>{{ stockMarketLoading ? "请稍候…" : stockMarketError || "选择有日线数据的股票后查看。" }}</span>
               </div>
-              <div class="volume-row">
-                <span
-                  v-for="bar in klineBars"
-                  :key="`volume-${bar.date}`"
-                  :class="bar.close >= bar.open ? 'rise' : 'fall'"
-                  :style="{ height: `${bar.volumePct}%` }"
-                ></span>
-              </div>
-              <p v-if="!klineBars.length" class="chart-empty">{{ dataStatus }}</p>
             </div>
           </article>
         </section>
@@ -346,24 +371,48 @@
           <article class="card holdings-card">
             <div class="card-title-row">
               <h2>我的持仓</h2>
-              <span class="mock-badge">模拟</span>
+              <span class="mock-badge">{{ simulationAccountBadge }}</span>
             </div>
             <div class="holding-grid">
               <div v-for="item in holdings" :key="item.label">
                 <span>{{ item.label }}</span>
                 <strong :class="item.tone">{{ item.value }}</strong>
               </div>
-              <div class="mini-donut">
-                <strong>42%</strong>
+              <div
+                class="mini-donut"
+                :class="{ unavailable: simulationValuation?.ratio == null }"
+                :style="holdingDonutStyle"
+              >
+                <strong>{{ holdingRatioText }}</strong>
                 <span>持仓占比</span>
               </div>
             </div>
+            <p class="holding-source" data-testid="simulation-holdings-status">{{ simulationHoldingStatus }}</p>
+            <div
+              v-if="usingScreenPositions"
+              class="screen-position-list"
+              data-testid="simulation-screen-positions"
+            >
+              <div v-if="!screenPositionRows.length" class="screen-position-empty">
+                模拟窗口已验证，当前未检测到持仓。
+              </div>
+              <template v-else>
+                <div v-for="position in screenPositionRows" :key="position.symbol" class="screen-position-row">
+                  <span>
+                    <strong>{{ position.name }}</strong>
+                    <small>{{ position.symbol }} · {{ position.quantity }} 股</small>
+                  </span>
+                  <span>持仓市值 <strong>{{ position.marketValue }}</strong></span>
+                  <span>持仓当日浮盈 <strong :class="position.todayPnlTone">{{ position.todayPnl }}</strong></span>
+                </div>
+              </template>
+            </div>
           </article>
 
-          <article class="card heatmap-card">
+          <article class="card heatmap-card" aria-label="Market Pulse">
             <div class="card-title-row">
               <h2>行业板块热力图</h2>
-              <span class="muted">Market Pulse · {{ publicOpinionStatusLabel }}</span>
+              <span class="muted">市场脉搏 · {{ publicOpinionStatusLabel }}</span>
             </div>
             <div class="heatmap">
               <button
@@ -404,7 +453,7 @@
             <div class="news-list">
               <article
                 v-for="item in news"
-                :key="`${item.title}-${item.time}`"
+                :key="`${item.url || item.title}-${item.time}`"
                 data-testid="public-opinion-news"
               >
                 <span>{{ item.tag }}</span>
@@ -421,7 +470,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import {
   fetchJson,
@@ -479,6 +528,13 @@ type SelectionCandidate = {
     pct_change?: number;
     latest_realtime?: RealtimeEvent | null;
   };
+  full_market_scan?: {
+    calibrated_probability?: number | null;
+    probability_semantics?: string;
+    calibration?: {
+      status?: string;
+    } | null;
+  } | null;
   entry_price_plan?: number | null;
   stop_loss_plan?: number | null;
   take_profit_plan?: number | null;
@@ -535,9 +591,80 @@ type RealtimeEvent = {
 };
 
 type SimulationAccount = {
+  account_id?: number;
+  name?: string;
   cash: number;
   initial_cash: number;
-  positions: Array<{ symbol: string; quantity: number; avg_cost: number }>;
+  total_assets?: number | null;
+  market_value?: number | null;
+  unrealized_pnl?: number | null;
+  today_pnl?: number | null;
+  today_pnl_scope?: string | null;
+  position_ratio?: number | null;
+  valuation_status?: string | null;
+  valuation_as_of?: string | null;
+  freshness?: string | null;
+  valuation_warnings?: string[];
+  screen_snapshot_status?: string | null;
+  screen_snapshot_reason?: string | null;
+  screen_snapshot_scope?: string | null;
+  screen_snapshot_as_of?: string | null;
+  screen_positions?: Array<{
+    symbol: string;
+    name?: string | null;
+    quantity: number;
+    sellable_quantity?: number | null;
+    avg_cost?: number | null;
+    mark_price?: number | null;
+    market_value?: number | null;
+    today_pnl?: number | null;
+  }>;
+  simulation_only?: boolean;
+  live_trading_enabled?: boolean;
+  positions: Array<{
+    symbol: string;
+    name?: string | null;
+    quantity: number;
+    sellable_quantity?: number;
+    avg_cost: number;
+    mark_price?: number | null;
+    previous_close?: number | null;
+    market_value?: number | null;
+    unrealized_pnl?: number | null;
+    today_pnl?: number | null;
+    mark_source?: string | null;
+    mark_as_of?: string | null;
+    freshness?: string | null;
+  }>;
+};
+
+type MarketFlowSnapshot = {
+  status: string;
+  scope?: "market" | "symbol" | string;
+  symbol?: string | null;
+  source?: string | null;
+  as_of?: string | null;
+  trade_date?: string | null;
+  retrieved_at?: string | null;
+  freshness?: string | null;
+  unit?: string | null;
+  net_inflow?: number | null;
+  main_net_inflow?: number | null;
+  super_large_order_net?: number | null;
+  main_inflow?: number | null;
+  main_outflow?: number | null;
+  retail_inflow?: number | null;
+  retail_outflow?: number | null;
+  large_order_net?: number | null;
+  medium_order_net?: number | null;
+  small_order_net?: number | null;
+  provider?: string | null;
+  upstream?: string | null;
+  source_semantics?: string | null;
+  reason?: string | null;
+  review_only?: boolean;
+  simulation_only?: boolean;
+  live_trading_enabled?: boolean;
 };
 
 type PublicOpinionSector = {
@@ -613,7 +740,14 @@ const dataStatus = ref("正在同步候选与行情");
 const selectionV2 = ref<SelectionV2Result | null>(null);
 const dailyBars = ref<DailyBar[]>([]);
 const realtimeEvent = ref<RealtimeEvent | null>(null);
+const stockMarketLoading = ref(false);
+const stockMarketError = ref("");
 const simulationAccount = ref<SimulationAccount | null>(null);
+const simulationAccountLoading = ref(true);
+const simulationAccountError = ref("");
+const marketFlowSnapshot = ref<MarketFlowSnapshot | null>(null);
+const marketFlowLoading = ref(true);
+const marketFlowError = ref("");
 const publicOpinionContext = ref<PublicOpinionContext | null>(null);
 const publicOpinionRun = ref<PublicOpinionRun | null>(null);
 const publicOpinionLoading = ref(true);
@@ -622,6 +756,9 @@ const publicOpinionError = ref("");
 const controlPlaneLoading = ref(false);
 const controlPlaneActionMessage = ref("");
 const lastControlPlaneRun = ref<ControlPlaneRunResult | null>(null);
+let selectedRealtimeTimer: ReturnType<typeof setInterval> | null = null;
+let simulationAccountTimer: ReturnType<typeof setInterval> | null = null;
+let stockRequestGeneration = 0;
 const {
   readiness: runtimeReadiness,
   controlPlane: controlPlaneSnapshot,
@@ -631,13 +768,13 @@ const {
 } = useCockpitObservability();
 
 const controlPlaneStatus = computed(() => {
-  if (controlPlaneLoading.value) return "adaptive 运行中";
+  if (controlPlaneLoading.value) return "自适应流程运行中";
   if (controlPlaneActionMessage.value) return controlPlaneActionMessage.value;
   const snapshot = controlPlaneSnapshot.value;
   if (!snapshot) return observabilityError.value ? "控制平面离线" : "控制平面待运行";
   return snapshot.recommended_profile
-    ? `${snapshot.status} · ${snapshot.recommended_profile}`
-    : snapshot.status;
+    ? `${operationalStatusLabel(snapshot.status)} · ${profileLabel(snapshot.recommended_profile)}`
+    : operationalStatusLabel(snapshot.status);
 });
 
 const watchlist = ref<Stock[]>([]);
@@ -659,18 +796,91 @@ const indices = ref<IndexItem[]>(indexCatalog.map((item) => ({
   spark: [0, 0, 0, 0, 0, 0, 0]
 })));
 
-const capitalFlow = [
-  { label: "主力流入", value: "--" },
-  { label: "主力流出", value: "--" },
-  { label: "散户流入", value: "--" },
-  { label: "散户流出", value: "--" }
-];
-
 const sortedDailyBars = computed(() =>
   [...dailyBars.value].sort((left, right) => left.trade_date.localeCompare(right.trade_date))
 );
 const latestBar = computed(() => sortedDailyBars.value[sortedDailyBars.value.length - 1] ?? null);
 const previousBar = computed(() => sortedDailyBars.value[sortedDailyBars.value.length - 2] ?? null);
+
+const capitalFlowSummary = computed(() => {
+  const snapshot = marketFlowSnapshot.value;
+  const mainNet = finiteMarketFlowValue(snapshot?.main_net_inflow ?? snapshot?.net_inflow);
+  const superLargeNet = finiteMarketFlowValue(snapshot?.super_large_order_net);
+  const largeNet = finiteMarketFlowValue(snapshot?.large_order_net);
+  const mediumNet = finiteMarketFlowValue(snapshot?.medium_order_net);
+  const smallNet = finiteMarketFlowValue(snapshot?.small_order_net);
+  const orderSizeValues = [superLargeNet, largeNet, mediumNet, smallNet].filter(isNonNullNumber);
+  const positiveAmount = orderSizeValues
+    .filter((value) => value > 0)
+    .reduce((sum, value) => sum + value, 0);
+  const absoluteAmount = orderSizeValues.reduce((sum, value) => sum + Math.abs(value), 0);
+  const hasOrderSizeData = orderSizeValues.length > 0 && absoluteAmount > 0;
+  const numericRows = [
+    { label: "主力净额", value: mainNet },
+    { label: "超大单净额", value: superLargeNet },
+    { label: "大单净额", value: largeNet },
+    { label: "中单净额", value: mediumNet },
+    { label: "小单净额", value: smallNet },
+  ];
+  const primaryRow = numericRows.find((row) => row.value !== null) ?? { label: "资金流", value: 0 };
+  const status = String(snapshot?.status || "").toLowerCase();
+  const available = ["available", "degraded"].includes(status)
+    && numericRows.some((row) => row.value !== null);
+  return {
+    available,
+    displayAmount: primaryRow.value ?? 0,
+    displayLabel: primaryRow.label,
+    positiveRatio: hasOrderSizeData ? positiveAmount / absoluteAmount * 100 : 0,
+    hasOrderSizeData,
+    mainNet,
+    superLargeNet,
+    largeNet,
+    mediumNet,
+    smallNet,
+    unit: snapshot?.unit || "CNY",
+    sourceLabel: available
+      ? `${marketFlowSourceLabel(snapshot?.source)} · ${status === "degraded" ? "上一可用交易日" : marketFlowFreshnessLabel(snapshot?.freshness)}`
+      : marketFlowLoading.value ? "正在同步行情源" : "真实资金流数据缺失",
+    tradeDateLabel: available ? String(snapshot?.trade_date || snapshot?.as_of || "--").slice(0, 10) : "--",
+    updatedLabel: available ? formatMarketUpdateTime(snapshot?.retrieved_at || snapshot?.as_of) : "--",
+    reason: marketFlowError.value
+      || marketFlowReasonLabel(snapshot?.reason)
+      || (snapshot?.status === "available" ? "资金流字段不完整，未绘制图形。" : "真实行情源当前没有返回可用资金流数据。"),
+  };
+});
+
+const capitalFlow = computed(() => {
+  const flow = capitalFlowSummary.value;
+  if (!flow.available) return [];
+  return [
+    { label: "主力净额", value: formatMarketFlowAmount(flow.mainNet, flow.unit, true), tone: marketFlowTone(flow.mainNet) },
+    { label: "超大单净额", value: formatMarketFlowAmount(flow.superLargeNet, flow.unit, true), tone: marketFlowTone(flow.superLargeNet) },
+    { label: "大单净额", value: formatMarketFlowAmount(flow.largeNet, flow.unit, true), tone: marketFlowTone(flow.largeNet) },
+    { label: "中单净额", value: formatMarketFlowAmount(flow.mediumNet, flow.unit, true), tone: marketFlowTone(flow.mediumNet) },
+  ];
+});
+
+const capitalFlowFooter = computed(() => {
+  const snapshot = marketFlowSnapshot.value;
+  const unit = capitalFlowSummary.value.unit;
+  return [
+    { label: "小单净额", value: formatMarketFlowAmount(snapshot?.small_order_net, unit, true), tone: marketFlowTone(snapshot?.small_order_net) },
+  ];
+});
+
+const capitalFlowDonutStyle = computed(() => {
+  const flow = capitalFlowSummary.value;
+  if (!flow.hasOrderSizeData) {
+    const color = flow.displayAmount >= 0 ? "#ef4444" : "#10b981";
+    return {
+      background: `radial-gradient(circle at center, #ffffff 0 54%, transparent 56%), conic-gradient(${color} 0 100%)`,
+    };
+  }
+  const ratio = flow.positiveRatio;
+  return {
+    background: `radial-gradient(circle at center, #ffffff 0 54%, transparent 56%), conic-gradient(#ef4444 0 ${ratio.toFixed(2)}%, #10b981 ${ratio.toFixed(2)}% 100%)`,
+  };
+});
 
 const quoteMetrics = computed(() => [
   { label: "最高", value: formatNumber(latestBar.value?.high) },
@@ -684,19 +894,159 @@ const quoteMetrics = computed(() => [
 const sellBook = computed(() => buildDepth("sell"));
 const buyBook = computed(() => buildDepth("buy"));
 
-const holdings = computed(() => {
+const usingScreenPositions = computed(() => {
   const account = simulationAccount.value;
-  const cash = account?.cash ?? 0;
-  const initial = account?.initial_cash ?? 0;
-  const positionValue = account?.positions?.reduce((sum, item) => sum + item.quantity * item.avg_cost, 0) ?? 0;
-  const total = cash + positionValue;
-  const pnl = total - initial;
+  return String(account?.screen_snapshot_status || "").toLowerCase() === "available"
+    && Array.isArray(account?.screen_positions);
+});
+
+const holdingPnlLabel = computed(() => (
+  usingScreenPositions.value
+  || simulationAccount.value?.today_pnl_scope === "open_positions_mark_to_previous_close"
+    ? "持仓当日浮盈"
+    : "今日盈亏"
+));
+
+const screenPositionRows = computed(() => (simulationAccount.value?.screen_positions ?? []).map((position) => {
+  const todayPnl = finiteOptionalNumber(position.today_pnl);
+  return {
+    symbol: position.symbol,
+    name: position.name || position.symbol,
+    quantity: Number(position.quantity || 0).toLocaleString("zh-CN"),
+    marketValue: formatOptionalCurrency(position.market_value),
+    todayPnl: todayPnl === null ? "--" : `${todayPnl >= 0 ? "+" : ""}${formatCurrency(todayPnl)}`,
+    todayPnlTone: todayPnl === null ? "muted" : todayPnl >= 0 ? "up" : "down",
+  };
+}));
+
+const simulationValuation = computed(() => {
+  const account = simulationAccount.value;
+  if (!account) return null;
+  if (usingScreenPositions.value) {
+    const positions = account.screen_positions ?? [];
+    const marketValues = positions.map((position) => finiteOptionalNumber(position.market_value));
+    const todayPnls = positions.map((position) => finiteOptionalNumber(position.today_pnl));
+    const completeMarketValue = marketValues.every(isNonNullNumber);
+    const completeTodayPnl = todayPnls.every(isNonNullNumber);
+    return {
+      source: "screen" as const,
+      cash: null,
+      marketValue: completeMarketValue ? marketValues.reduce((sum, value) => sum + value, 0) : null,
+      todayPnl: completeTodayPnl ? todayPnls.reduce((sum, value) => sum + value, 0) : null,
+      total: null,
+      ratio: null,
+      quotedPositionCount: positions.filter((position) => finiteOptionalNumber(position.mark_price) !== null).length,
+      valuationStatus: "screen_snapshot",
+      valuationAsOf: account.screen_snapshot_as_of || null,
+    };
+  }
+  const cash = Number(account.cash || 0);
+  let quotedPositionCount = 0;
+  let fallbackMarketValue = 0;
+  let fallbackUnrealizedPnl = 0;
+  let fallbackTodayPnl = 0;
+  let completeTodayPnlCount = 0;
+  for (const position of account.positions ?? []) {
+    const markPrice = finiteOptionalNumber(position.mark_price);
+    const hasQuote = markPrice !== null && markPrice > 0;
+    const conservativeMark = hasQuote ? markPrice : Number(position.avg_cost || 0);
+    if (hasQuote) quotedPositionCount += 1;
+    const quantity = Number(position.quantity || 0);
+    const positionMarketValue = finiteOptionalNumber(position.market_value);
+    const unrealizedPnl = finiteOptionalNumber(position.unrealized_pnl);
+    const todayPnl = finiteOptionalNumber(position.today_pnl);
+    fallbackMarketValue += positionMarketValue ?? quantity * conservativeMark;
+    fallbackUnrealizedPnl += unrealizedPnl ?? quantity * (conservativeMark - Number(position.avg_cost || 0));
+    if (todayPnl !== null) {
+      fallbackTodayPnl += todayPnl;
+      completeTodayPnlCount += 1;
+    }
+  }
+  const marketValue = finiteOptionalNumber(account.market_value) ?? fallbackMarketValue;
+  const total = finiteOptionalNumber(account.total_assets) ?? cash + marketValue;
+  const unrealizedPnl = finiteOptionalNumber(account.unrealized_pnl) ?? fallbackUnrealizedPnl;
+  const accountTodayPnl = finiteOptionalNumber(account.today_pnl);
+  const todayPnl = accountTodayPnl ?? (
+    completeTodayPnlCount === (account.positions?.length ?? 0) ? fallbackTodayPnl : null
+  );
+  const backendRatio = finiteOptionalNumber(account.position_ratio);
+  const normalizedBackendRatio = backendRatio === null ? null : backendRatio <= 1 ? backendRatio * 100 : backendRatio;
+  const ratio = normalizedBackendRatio ?? (total > 0 ? marketValue / total * 100 : 0);
+  return {
+    source: "ledger" as const,
+    cash,
+    marketValue,
+    unrealizedPnl,
+    todayPnl,
+    total,
+    ratio: clamp(ratio, 0, 100),
+    quotedPositionCount,
+    valuationStatus: account.valuation_status || "fallback",
+    valuationAsOf: account.valuation_as_of || null,
+  };
+});
+
+const holdings = computed(() => {
+  const valuation = simulationValuation.value;
+  if (!valuation) {
+    return [
+      { label: "总资产", value: "--", tone: "" },
+      { label: holdingPnlLabel.value, value: "--", tone: "muted" },
+      { label: "持仓市值", value: "--", tone: "" },
+      { label: "可用资金", value: "--", tone: "" },
+    ];
+  }
+  const todayPnl = valuation.todayPnl;
   return [
-    { label: "总资产", value: formatCurrency(total), tone: "" },
-    { label: "今日盈亏", value: `${pnl >= 0 ? "+" : ""}${formatCurrency(pnl)}`, tone: pnl >= 0 ? "up" : "down" },
-    { label: "持仓市值", value: formatCurrency(positionValue), tone: "" },
-    { label: "可用资金", value: formatCurrency(cash), tone: "" }
+    { label: "总资产", value: formatOptionalCurrency(valuation.total), tone: "" },
+    { label: holdingPnlLabel.value, value: todayPnl === null ? "--" : `${todayPnl >= 0 ? "+" : ""}${formatCurrency(todayPnl)}`, tone: todayPnl === null ? "muted" : todayPnl >= 0 ? "up" : "down" },
+    { label: "持仓市值", value: formatOptionalCurrency(valuation.marketValue), tone: "" },
+    { label: "可用资金", value: formatOptionalCurrency(valuation.cash), tone: "" }
   ];
+});
+
+const holdingRatioText = computed(() => {
+  const ratio = simulationValuation.value?.ratio;
+  return ratio == null ? "--" : `${ratio.toFixed(1)}%`;
+});
+const holdingDonutStyle = computed(() => {
+  const ratio = simulationValuation.value?.ratio;
+  if (ratio == null) return { background: "#f8fafc" };
+  return {
+    background: `radial-gradient(circle at center, #ffffff 0 56%, transparent 58%), conic-gradient(#2563eb 0 ${ratio.toFixed(2)}%, #e5e7eb ${ratio.toFixed(2)}% 100%)`,
+  };
+});
+const simulationAccountBadge = computed(() => {
+  if (simulationAccountLoading.value && !simulationAccount.value) return "模拟账户 · 加载中";
+  const positionCount = usingScreenPositions.value
+    ? simulationAccount.value?.screen_positions?.length ?? 0
+    : simulationAccount.value?.positions?.length ?? 0;
+  return usingScreenPositions.value
+    ? `模拟窗口持仓 · ${positionCount} 只`
+    : `内部模拟账本 · ${positionCount} 只`;
+});
+const simulationHoldingStatus = computed(() => {
+  if (simulationAccountError.value && !simulationAccount.value) return `模拟账户数据暂不可用：${simulationAccountError.value}`;
+  if (simulationAccountLoading.value && !simulationAccount.value) return "正在读取模拟账户持仓…";
+  const account = simulationAccount.value;
+  if (!account) return "模拟账户数据暂不可用。";
+  if (usingScreenPositions.value) {
+    const scope = account.screen_snapshot_scope === "full_account" ? "全账户" : "持仓页";
+    const asOf = account.screen_snapshot_as_of ? ` · 更新 ${formatMarketUpdateTime(account.screen_snapshot_as_of)}` : "";
+    return `模拟窗口持仓证据可用 · ${scope}${asOf}；未与内部账本资金混算。`;
+  }
+  const fallbackPrefix = `模拟窗口证据不可用：${screenSnapshotReasonLabel(account.screen_snapshot_reason)}；已回退内部模拟账本。`;
+  if (!account.positions?.length) return `${fallbackPrefix} 内部账本暂无持仓。`;
+  if (account.valuation_warnings?.length) {
+    return `${fallbackPrefix} 估值提示：${account.valuation_warnings.map(simulationValuationWarningLabel).join("、")}`;
+  }
+  const quoted = simulationValuation.value?.quotedPositionCount ?? 0;
+  const valuationTime = simulationValuation.value?.valuationAsOf
+    ? `；估值更新 ${formatMarketUpdateTime(simulationValuation.value.valuationAsOf)}`
+    : "";
+  return quoted === account.positions.length
+    ? `${fallbackPrefix} ${account.positions.length} 只持仓均按最新行情估值${valuationTime}。`
+    : `${fallbackPrefix} ${quoted}/${account.positions.length} 只持仓有最新行情，其余按持仓成本暂估${valuationTime}。`;
 });
 
 const publicOpinionStatusLabel = computed(() => {
@@ -719,7 +1069,7 @@ const sectors = computed(() => {
     return [{ name: "暂无板块信号", heatScore: 0, pending: true, risk: false, label: publicOpinionStatusLabel.value }];
   }
   return rows.slice(0, 8).map((sector) => ({
-    name: sector.display_name || sector.sector,
+    name: localizeSectorName(sector.display_name || sector.sector),
     heatScore: Number(sector.heat_score ?? 0),
     pending: context?.status === "stale",
     risk: sector.suggested_action === "risk_review_only" || Number(sector.risk_count ?? 0) > 0,
@@ -736,11 +1086,11 @@ const news = computed(() => {
   }
   const items = publicOpinionRun.value?.items ?? [];
   if (!items.length) {
-    return [{ title: "暂无已捕捉资讯，可点击“立即捕捉”运行 review-only 搜索", time: "暂无", tag: "状态", url: null }];
+    return [{ title: "暂无已捕捉资讯，可点击“立即捕捉”运行只读搜索", time: "暂无", tag: "状态", url: null }];
   }
   const stale = publicOpinionContext.value?.status === "stale";
   return items.slice(0, 6).map((item) => ({
-    title: item.title,
+    title: localizeNewsTitle(item.title, item.category, item.source_name),
     time: formatNewsTime(item.published_at || item.created_at),
     tag: stale
       ? "已过期"
@@ -773,6 +1123,24 @@ const selectedCandidate = computed(() => {
   const symbol = selectedStock.value?.symbol;
   if (!symbol || !selectionV2.value) return null;
   return selectionV2.value.daily_candidate_snapshot.find((item) => item.symbol === symbol) ?? null;
+});
+
+const selectedCandidateCalibrationLabel = computed(() => {
+  const scan = selectedCandidate.value?.full_market_scan;
+  if (!scan) return "";
+  const probability = Number(scan.calibrated_probability);
+  if (
+    scan.calibration?.status === "ready"
+    && scan.calibrated_probability !== null
+    && scan.calibrated_probability !== undefined
+    && Number.isFinite(probability)
+  ) {
+    return `有限历史校准 ${(probability * 100).toFixed(1)}%`;
+  }
+  if (["insufficient_data", "insufficient_samples"].includes(String(scan.calibration?.status || ""))) {
+    return "校准样本不足";
+  }
+  return "";
 });
 
 const selectionCounts = computed(() => {
@@ -835,6 +1203,11 @@ function formatCurrency(value: number) {
   return value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function formatOptionalCurrency(value: number | null | undefined) {
+  const numeric = finiteOptionalNumber(value);
+  return numeric === null ? "--" : formatCurrency(numeric);
+}
+
 function formatNumber(value: number | string | undefined | null) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "--";
@@ -849,6 +1222,91 @@ function formatAmount(value: number | undefined | null) {
   return numeric.toFixed(0);
 }
 
+function finiteMarketFlowValue(value: number | null | undefined) {
+  const numeric = Number(value);
+  return value !== null && value !== undefined && Number.isFinite(numeric) ? numeric : null;
+}
+
+function finiteOptionalNumber(value: number | null | undefined) {
+  return finiteMarketFlowValue(value);
+}
+
+function isNonNullNumber(value: number | null): value is number {
+  return value !== null;
+}
+
+function formatMarketFlowAmount(value: number | null | undefined, unit?: string | null, signed = false) {
+  const numeric = finiteMarketFlowValue(value);
+  if (numeric === null) return "--";
+  if (numeric === 0) return "0";
+  const normalizedUnit = String(unit || "yuan").toLowerCase();
+  const magnitude = Math.abs(numeric);
+  const formatted = normalizedUnit.includes("万") || normalizedUnit.includes("wan")
+    ? `${magnitude.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}万`
+    : normalizedUnit.includes("亿") || normalizedUnit.includes("yi")
+    ? `${magnitude.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}亿`
+    : formatAmount(magnitude);
+  return signed ? `${numeric > 0 ? "+" : "-"}${formatted}` : formatted;
+}
+
+function marketFlowTone(value: number | null | undefined) {
+  const numeric = finiteMarketFlowValue(value);
+  if (numeric === null || numeric === 0) return "muted";
+  return numeric > 0 ? "up" : "down";
+}
+
+function marketFlowSourceLabel(source?: string | null) {
+  const normalized = String(source || "").toLowerCase();
+  if (normalized.includes("eastmoney") || normalized.includes("akshare")) {
+    return "东方财富日频 · 经 AKShare";
+  }
+  return "供应商日频资金流";
+}
+
+function marketFlowFreshnessLabel(freshness?: string | null) {
+  const labels: Record<string, string> = {
+    intraday_vendor_snapshot: "当日供应商快照",
+    end_of_day: "当日收盘口径",
+    latest_session: "最近交易日",
+    stale: "历史数据",
+  };
+  return labels[String(freshness || "").toLowerCase()] || "日频数据";
+}
+
+function marketFlowReasonLabel(reason?: string | null) {
+  const value = String(reason || "").trim();
+  if (!value) return "";
+  if (/[\u3400-\u9fff]/.test(value)) return value;
+  if (/unavailable|failed|timeout|proxy|502|network/i.test(value)) {
+    return "行情源暂不可用，将在下一轮自动刷新。";
+  }
+  return "行情源暂无可用资金流数据。";
+}
+
+function simulationValuationWarningLabel(warning: string) {
+  const normalized = String(warning || "").toLowerCase();
+  if (/mark|price|quote|fresh|stale/.test(normalized)) return "部分持仓缺少最新行情，已按成本暂估";
+  if (/no[_ ]positions|empty/.test(normalized)) return "模拟账户暂无持仓";
+  if (/[\u3400-\u9fff]/.test(warning)) return warning;
+  return "模拟账户估值为保守回退结果";
+}
+
+function screenSnapshotReasonLabel(reason?: string | null) {
+  const normalized = String(reason || "screen_positions_evidence_missing").toLowerCase();
+  const labels: Record<string, string> = {
+    screen_positions_evidence_missing: "未检测到模拟窗口持仓证据",
+    screen_positions_evidence_expired: "模拟窗口持仓证据已过期",
+    screen_positions_not_parsed: "模拟窗口持仓尚未完成解析",
+    screen_positions_verification_missing: "模拟窗口验证记录缺失",
+    screen_positions_verification_failed: "模拟窗口验证未通过",
+    screen_positions_verification_expired: "模拟窗口验证已过期",
+    screen_positions_safety_contract_failed: "模拟窗口安全校验未通过",
+    screen_positions_time_unreadable: "模拟窗口证据时间无法识别",
+    screen_positions_payload_invalid: "模拟窗口持仓数据无效",
+  };
+  return labels[normalized] ?? "模拟窗口持仓证据暂不可用";
+}
+
 function formatVolume(value: number | undefined | null) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return "--";
@@ -858,6 +1316,102 @@ function formatVolume(value: number | undefined | null) {
 
 function isFiniteNumber(value: unknown) {
   return Number.isFinite(Number(value));
+}
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function formatMarketUpdateTime(value?: string | null) {
+  if (!value) return "--";
+  const timestamp = new Date(value);
+  if (!Number.isFinite(timestamp.getTime())) return value;
+  return timestamp.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+function localizeSectorName(value: string) {
+  const normalized = String(value || "").trim();
+  const sectorLabels: Record<string, string> = {
+    "AI computing": "AI 算力",
+    Consumer: "消费",
+    Semiconductors: "半导体",
+    Technology: "科技",
+    Healthcare: "医药健康",
+    Finance: "金融",
+    Energy: "能源",
+  };
+  return sectorLabels[normalized] ?? normalized;
+}
+
+function localizeNewsTitle(title: string, category?: string, sourceName?: string) {
+  const normalized = String(title || "").trim();
+  if (!normalized || /[\u3400-\u9fff]/.test(normalized)) return normalized || "资讯内容待补充";
+  if (/oil.+(?:us[- ]iran|iran).+(?:strait|hormuz)|(?:strait|hormuz).+oil/i.test(normalized)) {
+    return "美伊紧张局势令霍尔木兹海峡供应风险升温，油价上涨";
+  }
+  if (/china.+q2.+gdp.+4\.3|gdp.+4\.3.+china/i.test(normalized)) {
+    return "中国二季度国内生产总值增速放缓至4.3%";
+  }
+  if (/asian shares.+inflation.+shanghai|shanghai.+china gdp concerns/i.test(normalized)) {
+    return "美国通胀降温后亚洲股市走高，上海市场受国内增长担忧影响相对落后";
+  }
+  if (/china|shanghai|shenzhen|a[- ]?share/i.test(normalized)) {
+    return "中国市场资讯更新，点击查看原文";
+  }
+  const categoryLabel = category === "policy" ? "政策" : category === "company" ? "公司" : "海外市场";
+  const localizedSource = sourceName && /[\u3400-\u9fff]/.test(sourceName) ? `${sourceName}：` : "";
+  return `${localizedSource}${categoryLabel}资讯更新，点击查看原文`;
+}
+
+function operationalStatusLabel(status?: string | null) {
+  const normalized = String(status || "unknown").toLowerCase();
+  return {
+    ready: "就绪",
+    healthy: "健康",
+    completed: "已完成",
+    attention: "需关注",
+    partial: "部分可用",
+    degraded: "降级",
+    stale: "已过期",
+    missing: "暂无数据",
+    invalid: "数据无效",
+    insufficient_data: "数据不足",
+    insufficient_samples: "样本不足",
+    no_signal: "无入场信号",
+    no_fill: "有信号未成交",
+    blocked: "已阻断",
+    failed: "失败",
+    tracking: "跟踪中",
+    unknown: "未知",
+    pass: "已通过",
+    passed: "已通过",
+    needs_v1_stabilization: "需完成一级稳定性",
+    needs_v1_stabilization_work: "需继续一级稳定性工作",
+    needs_stabilization: "需完成稳定性验证",
+    not_ready: "未就绪",
+    offline_display: "离线展示",
+  }[normalized] ?? normalized.replace(/_/g, " ");
+}
+
+function profileLabel(profile?: string | null) {
+  return {
+    adaptive: "自适应流程",
+    pulse: "市场脉搏",
+    training: "训练流程",
+    maintenance: "维护流程",
+    full: "完整流程",
+  }[String(profile || "adaptive").toLowerCase()] ?? String(profile || "自适应流程");
+}
+
+function friendlyError(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (!message || /failed to fetch|networkerror|load failed|^\d{3}\s|\/api\//i.test(message)) return fallback;
+  return message.replace(/failed to fetch/gi, fallback);
 }
 
 function planTypeLabel(planType?: string) {
@@ -961,9 +1515,25 @@ async function loadPublicOpinionData() {
   } catch (error) {
     publicOpinionContext.value = null;
     publicOpinionRun.value = null;
-    publicOpinionError.value = error instanceof Error ? error.message : "无法连接后端";
+    publicOpinionError.value = friendlyError(error, "无法连接资讯服务");
   } finally {
     publicOpinionLoading.value = false;
+  }
+}
+
+async function loadMarketFlow(silent = false) {
+  if (!silent) marketFlowLoading.value = true;
+  marketFlowError.value = "";
+  try {
+    marketFlowSnapshot.value = await fetchJson<MarketFlowSnapshot>("/api/market/flow");
+  } catch (error) {
+    marketFlowSnapshot.value = null;
+    marketFlowError.value = friendlyError(error, "行情源暂不可用，将在下一轮自动刷新。");
+    if (/^\d{3}\s|\/api\/market\/flow/i.test(marketFlowError.value)) {
+      marketFlowError.value = "行情源暂不可用，将在下一轮自动刷新。";
+    }
+  } finally {
+    marketFlowLoading.value = false;
   }
 }
 
@@ -983,7 +1553,7 @@ async function capturePublicOpinion() {
     });
     await loadPublicOpinionData();
   } catch (error) {
-    publicOpinionError.value = error instanceof Error ? error.message : "捕捉失败";
+    publicOpinionError.value = friendlyError(error, "资讯捕捉失败");
   } finally {
     publicOpinionCaptureLoading.value = false;
   }
@@ -999,10 +1569,12 @@ async function runControlPlane() {
     });
     lastControlPlaneRun.value = result;
     const status = result.status || "completed";
-    controlPlaneActionMessage.value = result.task_id ? `${status} · task #${result.task_id}` : status;
+    controlPlaneActionMessage.value = result.task_id
+      ? `${operationalStatusLabel(status)} · 任务 #${result.task_id}`
+      : operationalStatusLabel(status);
     await Promise.all([loadPublicOpinionData(), loadDashboardData(), refreshObservability()]);
   } catch (error) {
-    controlPlaneActionMessage.value = error instanceof Error ? `运行失败：${error.message}` : "运行失败";
+    controlPlaneActionMessage.value = `运行失败：${friendlyError(error, "无法连接控制平面")}`;
   } finally {
     controlPlaneLoading.value = false;
   }
@@ -1018,14 +1590,14 @@ async function loadDashboardData() {
 
   try {
     dataStatus.value = "正在同步候选与行情";
-    const [stability, selection, account] = await Promise.all([
+    const [stability, selection] = await Promise.all([
       fetchJson<{ release_gate?: { status?: string } }>("/api/system/v1-stability"),
-      fetchJson<SelectionV2Result>("/api/candidates/selection-v2/summary?mode=balanced&limit=120"),
-      fetchJson<SimulationAccount>("/api/simulation/account")
+      fetchJson<SelectionV2Result>("/api/candidates/selection-v2/summary?mode=balanced&limit=120")
     ]);
-    releaseGateStatus.value = stability.release_gate?.status ?? "未加载";
+    releaseGateStatus.value = stability.release_gate?.status
+      ? operationalStatusLabel(stability.release_gate.status)
+      : "未加载";
     selectionV2.value = selection;
-    simulationAccount.value = account;
     const candidates = [
       ...selection.strict_buy_plans,
       ...selection.wait_pullback_plans,
@@ -1043,27 +1615,83 @@ async function loadDashboardData() {
     dataStatus.value = watchlist.value.length ? `已同步 ${watchlist.value.length} 只候选` : "暂无候选，需先运行候选发现";
   } catch (error) {
     releaseGateStatus.value = "离线展示";
-    dataStatus.value = error instanceof Error ? `数据同步失败：${error.message}` : "数据同步失败";
+    dataStatus.value = `数据同步失败：${friendlyError(error, "无法连接数据服务")}`;
   }
 }
 
 async function loadStockMarketData(symbol: string) {
   if (!symbol) return;
-  try {
-    const [bars, snapshot] = await Promise.all([
+  const generation = ++stockRequestGeneration;
+  stockMarketLoading.value = true;
+  stockMarketError.value = "";
+  dailyBars.value = [];
+  realtimeEvent.value = null;
+  const [barsResult, snapshotResult] = await Promise.allSettled([
       fetchJson<DailyBar[]>(`/api/data/daily-bars/${encodeURIComponent(symbol)}?limit=120`),
       fetchJson<{ event?: RealtimeEvent; status: string }>(`/api/realtime/snapshot/${encodeURIComponent(symbol)}`)
-    ]);
-    dailyBars.value = bars;
-    realtimeEvent.value = snapshot.event ?? null;
+  ]);
+  if (generation !== stockRequestGeneration) return;
+
+  if (barsResult.status === "fulfilled") {
+    dailyBars.value = barsResult.value;
+    if (!barsResult.value.length) stockMarketError.value = "该股票暂无可用日线数据。";
+  } else {
+    stockMarketError.value = friendlyError(barsResult.reason, "无法连接K线数据服务");
+  }
+  if (snapshotResult.status === "fulfilled") {
+    realtimeEvent.value = snapshotResult.value.event ?? null;
     if (realtimeEvent.value?.price) {
       planPrice.value = realtimeEvent.value.price;
+      updateSelectedStockQuote(symbol, realtimeEvent.value.price);
     }
-  } catch (error) {
-    dailyBars.value = [];
-    realtimeEvent.value = null;
-    dataStatus.value = error instanceof Error ? `行情同步失败：${error.message}` : "行情同步失败";
   }
+  stockMarketLoading.value = false;
+}
+
+async function loadSimulationAccount(silent = false) {
+  if (!silent) simulationAccountLoading.value = true;
+  simulationAccountError.value = "";
+  try {
+    const account = await fetchJson<SimulationAccount>("/api/simulation/account");
+    simulationAccount.value = account;
+  } catch (error) {
+    simulationAccountError.value = friendlyError(error, "无法连接模拟账户服务");
+  } finally {
+    simulationAccountLoading.value = false;
+  }
+}
+
+async function refreshSelectedRealtime() {
+  const symbol = selectedStock.value?.symbol;
+  if (!symbol || (typeof document !== "undefined" && document.hidden)) return;
+  try {
+    const snapshot = await fetchJson<{ event?: RealtimeEvent; status: string }>(
+      `/api/realtime/snapshot/${encodeURIComponent(symbol)}`,
+    );
+    if (selectedStock.value?.symbol !== symbol) return;
+    realtimeEvent.value = snapshot.event ?? null;
+    const price = Number(snapshot.event?.price);
+    if (Number.isFinite(price) && price > 0) {
+      planPrice.value = price;
+      updateSelectedStockQuote(symbol, price);
+    }
+  } catch {
+    // 保留最后一次有效行情，下一轮继续重试。
+  }
+}
+
+function updateSelectedStockQuote(symbol: string, price: number) {
+  if (selectedStock.value?.symbol !== symbol) return;
+  const referenceClose = Number(previousBar.value?.close ?? latestBar.value?.open);
+  const change = Number.isFinite(referenceClose) && referenceClose > 0
+    ? ((price - referenceClose) / referenceClose) * 100
+    : selectedStock.value.change;
+  selectedStock.value = {
+    ...selectedStock.value,
+    price: formatNumber(price),
+    delta: Number.isFinite(referenceClose) && referenceClose > 0 ? formatNumber(price - referenceClose) : "--",
+    change,
+  };
 }
 
 async function loadIndexOverview() {
@@ -1095,7 +1723,22 @@ async function loadIndexOverview() {
 
 onMounted(() => {
   void loadDashboardData();
+  void loadSimulationAccount();
+  void loadMarketFlow();
   void loadPublicOpinionData();
+  selectedRealtimeTimer = setInterval(() => {
+    void refreshSelectedRealtime();
+    void loadMarketFlow(true);
+  }, 15_000);
+  simulationAccountTimer = setInterval(() => {
+    if (typeof document === "undefined" || !document.hidden) void loadSimulationAccount(true);
+  }, 30_000);
+});
+
+onBeforeUnmount(() => {
+  if (selectedRealtimeTimer !== null) clearInterval(selectedRealtimeTimer);
+  if (simulationAccountTimer !== null) clearInterval(simulationAccountTimer);
+  stockRequestGeneration += 1;
 });
 </script>
 
@@ -1211,14 +1854,15 @@ em {
 
 .header-actions {
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
+  font-size: 11px;
 }
 
 .status-pill {
   display: grid;
-  min-width: 112px;
+  min-width: 98px;
   gap: 2px;
-  padding: 7px 10px;
+  padding: 6px 9px;
   border: 1px solid #bfdbfe;
   border-radius: 12px;
   background: #eff6ff;
@@ -1226,14 +1870,14 @@ em {
 
 .status-pill span {
   color: #6b7280;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
 }
 
 .status-pill strong {
   overflow: hidden;
   color: #1d4ed8;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1260,12 +1904,17 @@ em {
 
 .header-actions button {
   height: 34px;
-  padding: 0 12px;
+  min-width: 42px;
+  padding: 0 9px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .user-chip {
   gap: 8px;
   padding-left: 8px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .avatar {
@@ -1502,17 +2151,47 @@ em {
 .donut {
   width: 118px;
   height: 118px;
-  background: radial-gradient(circle at center, #ffffff 0 54%, transparent 56%), conic-gradient(#10b981 0 42%, #ef4444 42% 100%);
+  background: #ffffff;
 }
 
 .donut strong {
   font-size: 18px;
 }
 
+.donut small {
+  color: #6b7280;
+  font-size: 10px;
+}
+
 .flow-stats {
   display: grid;
   flex: 1;
   gap: 10px;
+}
+
+.flow-unavailable {
+  display: grid;
+  flex: 1;
+  min-height: 118px;
+  gap: 6px;
+  place-content: center;
+  padding: 18px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+  text-align: center;
+}
+
+.flow-unavailable strong {
+  color: #475569;
+  font-size: 14px;
+}
+
+.flow-unavailable span {
+  max-width: 260px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .flow-stats div,
@@ -1538,6 +2217,14 @@ em {
   background: #f8fafc;
   color: #6b7280;
   font-size: 12px;
+}
+
+.flow-empty,
+.holding-source {
+  margin: 12px 0 0;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .index-grid {
@@ -1624,6 +2311,17 @@ em {
   font-size: 36px;
 }
 
+.candidate-calibration {
+  width: fit-content;
+  margin: -7px 0 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .quote-metrics {
   grid-template-columns: repeat(6, 1fr);
   gap: 10px;
@@ -1680,24 +2378,30 @@ em {
     #ffffff;
 }
 
-.ma-line {
-  position: absolute;
-  left: 28px;
-  right: 28px;
-  height: 2px;
-  border-radius: 999px;
+.kline-board.empty {
+  display: grid;
+  place-items: center;
+  background: #f8fafc;
 }
 
-.ma5 {
-  top: 30%;
-  background: #2563eb;
-  transform: rotate(-5deg);
+.kline-board .chart-empty {
+  display: grid;
+  max-width: 420px;
+  gap: 7px;
+  margin: 0;
+  padding: 24px;
+  text-align: center;
 }
 
-.ma20 {
-  top: 43%;
-  background: #f59e0b;
-  transform: rotate(4deg);
+.kline-board .chart-empty strong {
+  color: #374151;
+  font-size: 15px;
+}
+
+.kline-board .chart-empty span {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .candle-row {
@@ -1939,11 +2643,58 @@ em {
 .mini-donut {
   width: 108px;
   height: 108px;
-  background: radial-gradient(circle at center, #ffffff 0 56%, transparent 58%), conic-gradient(#2563eb 0 42%, #e5e7eb 42% 100%);
+  background: #ffffff;
 }
 
 .mini-donut span {
   margin-top: -20px;
+}
+
+.mini-donut.unavailable {
+  border: 1px dashed #cbd5e1;
+  color: #64748b;
+}
+
+.holding-source {
+  padding-top: 10px;
+  border-top: 1px solid #eef2f7;
+}
+
+.screen-position-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.screen-position-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #475569;
+  font-size: 11px;
+}
+
+.screen-position-row > span:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.screen-position-row small {
+  font-size: 10px;
+}
+
+.screen-position-empty {
+  padding: 10px;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 11px;
+  text-align: center;
 }
 
 .mock-badge {

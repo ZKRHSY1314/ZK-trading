@@ -91,6 +91,9 @@ def test_public_opinion_capture_scores_and_persists_sector_signals(test_db, monk
 
 def test_public_opinion_api_smoke(client, monkeypatch):
     class FakePublicOpinionService:
+        def __init__(self, store=None):
+            self.store = store
+
         def capabilities(self):
             return {"status": "ok", "safety": {"allow_live_order": False}}
 

@@ -21,6 +21,24 @@ class Settings(BaseSettings):
     backtest_max_participation_rate: float = 0.005
     backtest_default_partial_fill_ratio: float = 0.5
     backtest_default_benchmark_symbol: str = "SH000300"
+    # 2026-09-03: the opt-in condition above is now met, so this defaults to the
+    # local client. A real candle sample was checked against an independent
+    # source over 2,260 overlapping days on 40 symbols: qfq closes agree with a
+    # median relative difference of 0, amounts likewise, and the only divergence
+    # (Beijing 92xxxx) resolved in the local client's favour against Tencent as
+    # a third source. Volume is 股 upstream and is normalized to 手 by the
+    # adapter. The chain still falls back to Sina then Tencent, which matters:
+    # the plugin answers with an EMPTY frame rather than an error once it
+    # throttles, so a fallback that carries 成交额 must sit behind it.
+    daily_bar_source_policy: str = "tonghuasun_first"
+    # Empty means "let the adapter discover it" (TONGHUASUN_AGENT_HOME, then
+    # %LOCALAPPDATA%\TonghuasunCodex). Set it when the plugin lives elsewhere;
+    # run_stack.ps1 exports the env var, but nothing else does.
+    tonghuasun_product_home: str = ""
+    # A 500-bar history request costs the local host a few seconds, and it is
+    # served by the desktop client rather than a web API. The 5s realtime quote
+    # timeout below is too tight for it and produced spurious failures.
+    tonghuasun_request_timeout_seconds: float = 30.0
     realtime_provider: str = "disabled"
     asharehub_api_key: str | None = None
     asharehub_base_url: str = "https://asharehub.com/api"

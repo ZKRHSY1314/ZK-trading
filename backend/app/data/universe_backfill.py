@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -16,7 +17,13 @@ from app.data.daily_bar_cache import DailyBarCacheService
 
 
 class DailyBarRefresher(Protocol):
-    def refresh_symbols(self, symbols: list[str], days: int = 120) -> dict[str, Any]: ...
+    def refresh_symbols(
+        self,
+        symbols: list[str],
+        days: int = 120,
+        source_policy: str | None = None,
+        max_workers: int = 5,
+    ) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -94,10 +101,28 @@ class UniverseBackfillService:
         days: int = 500,
         batch_size: int = 200,
         rate_limit_seconds: float = 0.5,
+        source_policy: str | None = None,
+        max_workers: int = 5,
         resume_after: str | None = None,
+        retry_symbols: list[str] | tuple[str, ...] | None = None,
+        retry_quality_gaps: bool = False,
+        expected_universe_hash: str | None = None,
         limit: int | None = None,
         checkpoint_path: str | Path | None = None,
+        manifest_path: str | Path | None = None,
     ) -> dict[str, Any]:
+        source_policy = str(source_policy or settings.daily_bar_source_policy).strip().lower()
+        if source_policy not in {
+            "tonghuasun_first",
+            "tonghuasun_only",
+            "akshare_first",
+            "sina_first",
+            "sina_only",
+            "tencent_first",
+            "akshare_only",
+        }:
+            raise ValueError(f"unsupported daily-bar source policy: {source_policy}")
+        max_workers = max(1, min(int(max_workers), 20))
         if apply and settings.enable_live_trading:
             return {
                 "status": "blocked",
@@ -106,9 +131,13 @@ class UniverseBackfillService:
                 "universe_count": 0,
                 "planned": 0,
                 "resume_after": resume_after,
+                "source_policy": source_policy,
+                "max_workers": max_workers,
                 "processed": 0,
                 "success": 0,
+                "isolated": 0,
                 "error": 0,
+                "isolated_results": [],
                 "last_processed_symbol": None,
                 "errors": [{"stage": "safety", "error": "live_trading_enabled"}],
                 "discovery": {
@@ -133,9 +162,13 @@ class UniverseBackfillService:
                 "universe_count": 0,
                 "planned": 0,
                 "resume_after": resume_after,
+                "source_policy": source_policy,
+                "max_workers": max_workers,
                 "processed": 0,
                 "success": 0,
+                "isolated": 0,
                 "error": 0,
+                "isolated_results": [],
                 "last_processed_symbol": None,
                 "errors": [{"stage": "universe_discovery", "error": str(exc)}],
                 "discovery": {
@@ -149,6 +182,48 @@ class UniverseBackfillService:
                 "checkpoint": self._checkpoint_summary(checkpoint_path),
                 "safety": self._safety(apply=apply),
             }
+        universe_hash = self._universe_hash(plan.universe_symbols)
+        if expected_universe_hash and expected_universe_hash != universe_hash:
+            return {
+                "status": "blocked",
+                "mode": "apply" if apply else "dry_run",
+                "reason": "universe_hash_mismatch",
+                "observed_at": plan.observed_at,
+                "universe_count": plan.universe_count,
+                "universe_hash": universe_hash,
+                "expected_universe_hash": expected_universe_hash,
+                "planned": 0,
+                "processed": 0,
+                "success": 0,
+                "isolated": 0,
+                "error": 0,
+                "isolated_results": [],
+                "errors": [],
+                "source_policy": source_policy,
+                "max_workers": max_workers,
+                "safety": self._safety(apply=apply),
+            }
+        if apply:
+            self._write_manifest(
+                manifest_path,
+                plan=plan,
+                universe_hash=universe_hash,
+            )
+        universe_set = set(plan.universe_symbols)
+        normalized_retries: list[str] = []
+        requested_retries = [*(retry_symbols or ())]
+        if retry_quality_gaps:
+            requested_retries.extend(self._local_quality_gap_symbols())
+        for raw_symbol in requested_retries:
+            normalized = self._normalize_symbol(raw_symbol)
+            if normalized in universe_set and normalized not in normalized_retries:
+                normalized_retries.append(normalized)
+        continuation_set = set(plan.symbols)
+        retry_only_symbols = [
+            symbol for symbol in normalized_retries if symbol not in continuation_set
+        ]
+        retry_only_set = set(retry_only_symbols)
+        run_symbols = tuple([*retry_only_symbols, *plan.symbols])
         days = max(1, min(int(days), 500))
         batch_size = max(1, min(int(batch_size), 200))
         rate_limit_seconds = max(0.0, float(rate_limit_seconds))
@@ -159,7 +234,7 @@ class UniverseBackfillService:
                 else "degraded"
                 if not apply
                 else "empty"
-                if not plan.symbols
+                if not run_symbols
                 else "completed"
                 if plan.discovery_complete
                 else "partial"
@@ -167,12 +242,22 @@ class UniverseBackfillService:
             "mode": "apply" if apply else "dry_run",
             "observed_at": plan.observed_at,
             "universe_count": plan.universe_count,
-            "planned": len(plan.symbols),
+            "universe_hash": universe_hash,
+            "planned": len(run_symbols),
+            "retry_planned": len(retry_only_symbols),
+            "retry_quality_gaps": bool(retry_quality_gaps),
+            "continuation_planned": len(plan.symbols),
             "resume_after": plan.resume_after,
+            "source_policy": source_policy,
+            "max_workers": max_workers,
             "processed": 0,
             "success": 0,
+            "isolated": 0,
             "error": 0,
-            "last_processed_symbol": None,
+            "isolated_results": [],
+            "last_processed_symbol": plan.resume_after,
+            "last_attempted_symbol": None,
+            "retry_last_attempted": None,
             "errors": [],
             "discovery": {
                 "source": plan.discovery_source,
@@ -183,17 +268,35 @@ class UniverseBackfillService:
             "coverage": self._coverage(plan.universe_symbols),
             "reference_data": self._reference_data_plan(apply=apply),
             "checkpoint": self._checkpoint_summary(checkpoint_path),
+            "manifest": self._manifest_summary(manifest_path),
             "safety": self._safety(apply=apply),
         }
         if not apply:
             return result
+        if not run_symbols:
+            quality_gaps = [
+                symbol
+                for symbol in self._local_quality_gap_symbols()
+                if symbol in universe_set
+            ]
+            result["status"] = "partial" if quality_gaps else "completed"
+            result["unresolved_quality_gap_count"] = len(quality_gaps)
+            result["unresolved_quality_gap_symbols"] = quality_gaps
+            result["checkpoint_preserved"] = checkpoint_path is not None
+            result["reference_data"] = self._reference_data_plan(apply=False)
+            return result
 
         batches = [
-            list(plan.symbols[offset : offset + batch_size])
-            for offset in range(0, len(plan.symbols), batch_size)
+            list(run_symbols[offset : offset + batch_size])
+            for offset in range(0, len(run_symbols), batch_size)
         ]
         for index, symbols in enumerate(batches):
-            items = self._refresh_with_isolation(symbols, days=days)
+            items = self._refresh_with_isolation(
+                symbols,
+                days=days,
+                source_policy=source_policy,
+                max_workers=max_workers,
+            )
             by_symbol = {
                 str(item.get("symbol")): item
                 for item in items
@@ -202,9 +305,16 @@ class UniverseBackfillService:
             for symbol in symbols:
                 item = by_symbol.get(symbol)
                 result["processed"] += 1
-                result["last_processed_symbol"] = symbol
+                result["last_attempted_symbol"] = symbol
+                if symbol in retry_only_set:
+                    result["retry_last_attempted"] = symbol
+                else:
+                    result["last_processed_symbol"] = symbol
                 if item is not None and item.get("status") == "success":
                     result["success"] += 1
+                elif item is not None and str(item.get("status") or "").startswith("isolated_"):
+                    result["isolated"] += 1
+                    result["isolated_results"].append(dict(item))
                 else:
                     result["error"] += 1
                     result["errors"].append(
@@ -218,11 +328,16 @@ class UniverseBackfillService:
                 status="running",
                 result=result,
                 plan=plan,
+                source_policy=source_policy,
+                max_workers=max_workers,
+                universe_hash=universe_hash,
+                days=days,
+                batch_size=batch_size,
             )
             if index < len(batches) - 1 and rate_limit_seconds:
                 self.sleep_fn(rate_limit_seconds)
 
-        if result["error"]:
+        if result["error"] or result["isolated"]:
             result["status"] = "partial" if result["success"] else "error"
         reference_data = self._refresh_reference_data(days=days)
         result["reference_data"] = reference_data
@@ -234,6 +349,11 @@ class UniverseBackfillService:
             status=str(result["status"]),
             result=result,
             plan=plan,
+            source_policy=source_policy,
+            max_workers=max_workers,
+            universe_hash=universe_hash,
+            days=days,
+            batch_size=batch_size,
         )
         result["checkpoint"] = self._checkpoint_summary(checkpoint_path)
         return result
@@ -246,6 +366,53 @@ class UniverseBackfillService:
             "granularity": "batch",
         }
 
+    @staticmethod
+    def _manifest_summary(path: str | Path | None) -> dict[str, Any]:
+        return {
+            "enabled": path is not None,
+            "path": str(Path(path).resolve()) if path is not None else None,
+            "kind": "current_official_universe",
+        }
+
+    def _write_manifest(
+        self,
+        path: str | Path | None,
+        *,
+        plan: UniverseBackfillPlan,
+        universe_hash: str,
+    ) -> None:
+        if path is None:
+            return
+        target = Path(path).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        quality_gaps = [
+            symbol
+            for symbol in self._local_quality_gap_symbols()
+            if symbol in set(plan.universe_symbols)
+        ]
+        payload = {
+            "schema_version": "a_share_universe_manifest.v1",
+            "observed_at": plan.observed_at,
+            "universe_count": plan.universe_count,
+            "universe_hash": universe_hash,
+            "universe_symbols": list(plan.universe_symbols),
+            "discovery_source": plan.discovery_source,
+            "discovery_status": plan.discovery_status,
+            "discovery_complete": plan.discovery_complete,
+            "discovery_attempts": list(plan.discovery_attempts),
+            "quality_gap_count": len(quality_gaps),
+            "quality_gap_symbols": quality_gaps,
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(target)
+
     def _write_checkpoint(
         self,
         path: str | Path | None,
@@ -253,22 +420,63 @@ class UniverseBackfillService:
         status: str,
         result: dict[str, Any],
         plan: UniverseBackfillPlan,
+        source_policy: str,
+        max_workers: int,
+        universe_hash: str,
+        days: int,
+        batch_size: int,
     ) -> None:
         if path is None:
             return
         target = Path(path).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "schema_version": "universe_backfill_checkpoint.v1",
+            "schema_version": "universe_backfill_checkpoint.v2",
+            "checkpoint_kind": "run_state",
             "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "status": status,
             "last_processed_symbol": result.get("last_processed_symbol"),
+            "last_attempted_symbol": result.get("last_attempted_symbol"),
+            "retry_last_attempted": result.get("retry_last_attempted"),
             "processed": result.get("processed", 0),
             "success": result.get("success", 0),
+            "isolated": result.get("isolated", 0),
             "error": result.get("error", 0),
             "planned": result.get("planned", 0),
+            "retry_planned": result.get("retry_planned", 0),
+            "continuation_planned": result.get("continuation_planned", 0),
+            "retry_quality_gaps": result.get("retry_quality_gaps", False),
             "universe_count": result.get("universe_count", 0),
+            "universe_hash": universe_hash,
+            "universe_symbols": list(plan.universe_symbols),
+            "observed_at": plan.observed_at,
             "discovery_source": plan.discovery_source,
+            "discovery_status": plan.discovery_status,
+            "discovery_complete": plan.discovery_complete,
+            "discovery_attempts": list(plan.discovery_attempts),
+            "source_policy": source_policy,
+            "max_workers": max_workers,
+            "days": days,
+            "batch_size": batch_size,
+            "error_symbols": [
+                str(item["symbol"])
+                for item in result.get("errors", [])
+                if isinstance(item, dict) and item.get("symbol")
+            ],
+            "isolated_symbols": [
+                str(item["symbol"])
+                for item in result.get("isolated_results", [])
+                if isinstance(item, dict) and item.get("symbol")
+            ],
+            "pending_gap_count": len(result.get("errors", []))
+            + len(result.get("isolated_results", [])),
+            "pending_error_count": len(result.get("errors", [])),
+            "pending_isolated_count": len(result.get("isolated_results", [])),
+            "error_details": [
+                dict(item)
+                for item in result.get("errors", [])
+                if isinstance(item, dict)
+            ],
             "review_only": True,
             "simulation_only": True,
             "live_trading_enabled": settings.enable_live_trading,
@@ -282,6 +490,87 @@ class UniverseBackfillService:
 
     def _discover_symbols(self) -> tuple[set[str], dict[str, Any]]:
         attempts: list[dict[str, Any]] = []
+        segmented_sources = (
+            (
+                "akshare.stock_info_sh_name_code.main",
+                getattr(self.provider, "get_sh_main_code_name", None),
+            ),
+            (
+                "akshare.stock_info_sh_name_code.star",
+                getattr(self.provider, "get_sh_star_code_name", None),
+            ),
+            (
+                "akshare.stock_info_sz_name_code.a",
+                getattr(self.provider, "get_sz_a_code_name", None),
+            ),
+            (
+                "akshare.stock_info_bj_name_code",
+                getattr(self.provider, "get_bj_code_name", None),
+            ),
+        )
+        if any(callable(loader) for _, loader in segmented_sources):
+            symbols: set[str] = set()
+            successful_segments = 0
+            for source, loader in segmented_sources:
+                if not callable(loader):
+                    attempts.append({"source": source, "status": "unsupported", "count": 0})
+                    continue
+                try:
+                    discovered = self._extract_symbols(loader())
+                except Exception as exc:
+                    attempts.append(
+                        {"source": source, "status": "error", "count": 0, "error": str(exc)}
+                    )
+                    continue
+                if discovered:
+                    successful_segments += 1
+                    symbols.update(discovered)
+                    attempts.append(
+                        {"source": source, "status": "success", "count": len(discovered)}
+                    )
+                else:
+                    attempts.append({"source": source, "status": "empty", "count": 0})
+
+            if symbols and successful_segments < len(segmented_sources):
+                combined_loader = getattr(self.provider, "get_a_share_code_name", None)
+                if callable(combined_loader):
+                    source = "akshare.stock_info_a_code_name"
+                    try:
+                        combined = self._extract_symbols(combined_loader())
+                    except Exception as exc:
+                        attempts.append(
+                            {
+                                "source": source,
+                                "status": "error",
+                                "count": 0,
+                                "error": str(exc),
+                            }
+                        )
+                    else:
+                        symbols.update(combined)
+                        attempts.append(
+                            {
+                                "source": source,
+                                "status": "success" if combined else "empty",
+                                "count": len(combined),
+                            }
+                        )
+                        if combined:
+                            return symbols, {
+                                "source": "akshare.segmented_exchange_code_lists",
+                                "status": "complete_external_with_combined_fallback",
+                                "complete": True,
+                                "attempts": attempts,
+                            }
+            if symbols:
+                complete = successful_segments == len(segmented_sources)
+                return symbols, {
+                    "source": "akshare.segmented_exchange_code_lists",
+                    "status": "complete_external" if complete else "partial_external",
+                    "complete": complete,
+                    "attempts": attempts,
+                }
+
         external_sources = (
             ("akshare.stock_zh_a_spot_em", getattr(self.provider, "get_a_share_spot", None)),
             (
@@ -450,6 +739,8 @@ class UniverseBackfillService:
                     FROM daily_bar_cache
                     WHERE trade_date != 'ERROR'
                       AND close IS NOT NULL
+                      AND quality_status = 'ready'
+                      AND adjustment_mode = 'qfq'
                       AND symbol IN ({placeholders})
                     GROUP BY symbol
                     """,
@@ -490,6 +781,26 @@ class UniverseBackfillService:
             return 0.0
         return round(numerator / denominator * 100.0, 2)
 
+    def _local_quality_gap_symbols(self) -> list[str]:
+        store = getattr(self.cache_service, "store", None)
+        if store is None or not hasattr(store, "fetch_all"):
+            return []
+        rows = store.fetch_all(
+            """
+            SELECT DISTINCT symbol
+            FROM daily_bar_cache
+            WHERE trade_date = 'ERROR'
+               OR quality_status != 'ready'
+               OR adjustment_mode != 'qfq'
+            ORDER BY symbol
+            """
+        )
+        return [str(row["symbol"]) for row in rows if row.get("symbol")]
+
+    @staticmethod
+    def _universe_hash(symbols: tuple[str, ...]) -> str:
+        return hashlib.sha256("\n".join(symbols).encode("utf-8")).hexdigest()
+
     @staticmethod
     def _safety(*, apply: bool) -> dict[str, bool]:
         return {
@@ -499,16 +810,33 @@ class UniverseBackfillService:
             "writes_enabled": bool(apply),
         }
 
-    def _refresh_with_isolation(self, symbols: list[str], *, days: int) -> list[dict[str, Any]]:
+    def _refresh_with_isolation(
+        self,
+        symbols: list[str],
+        *,
+        days: int,
+        source_policy: str,
+        max_workers: int,
+    ) -> list[dict[str, Any]]:
         try:
-            response = self.cache_service.refresh_symbols(symbols, days=days)
+            response = self.cache_service.refresh_symbols(
+                symbols,
+                days=days,
+                source_policy=source_policy,
+                max_workers=max_workers,
+            )
         except Exception as batch_error:
             if len(symbols) == 1:
                 return [{"symbol": symbols[0], "status": "error", "error": str(batch_error)}]
             isolated: list[dict[str, Any]] = []
             for symbol in symbols:
                 try:
-                    response = self.cache_service.refresh_symbols([symbol], days=days)
+                    response = self.cache_service.refresh_symbols(
+                        [symbol],
+                        days=days,
+                        source_policy=source_policy,
+                        max_workers=max_workers,
+                    )
                 except Exception as symbol_error:
                     isolated.append(
                         {"symbol": symbol, "status": "error", "error": str(symbol_error)}
@@ -531,7 +859,11 @@ class UniverseBackfillService:
     def _extract_symbols(cls, spot: pd.DataFrame) -> set[str]:
         if not isinstance(spot, pd.DataFrame) or spot.empty:
             return set()
-        code_column = next(
+        native_code_column = next(
+            (column for column in ("证券代码", "A股代码") if column in spot.columns),
+            None,
+        )
+        code_column = native_code_column or next(
             (column for column in ("代码", "symbol", "code", "证券代码") if column in spot.columns),
             None,
         )
@@ -558,6 +890,8 @@ class UniverseBackfillService:
             code = match.group(1)
         if code.startswith(("600", "601", "603", "605", "688", "689")):
             return f"SH{code}"
-        if code.startswith(("000", "001", "002", "003", "300", "301")):
+        if code.startswith(("000", "001", "002", "003", "300", "301", "302")):
             return f"SZ{code}"
+        if code.startswith(("43", "82", "83", "87", "88", "92")):
+            return f"BJ{code}"
         return None

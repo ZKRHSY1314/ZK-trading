@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field, model_validator
 
 from app.config import settings
@@ -63,14 +63,17 @@ class CodexEvidenceIngestInput(BaseModel):
 
 
 @router.get("/capabilities")
-def public_opinion_capabilities() -> dict:
-    return CodexPublicOpinionService().capabilities()
+def public_opinion_capabilities(request: Request) -> dict:
+    return CodexPublicOpinionService(store=request.app.state.runtime_store).capabilities()
 
 
 @router.post("/run")
-def run_public_opinion_capture(input_data: PublicOpinionRunInput | None = None) -> dict:
+def run_public_opinion_capture(
+    request: Request,
+    input_data: PublicOpinionRunInput | None = None,
+) -> dict:
     payload = input_data or PublicOpinionRunInput()
-    return CodexPublicOpinionService().run(
+    return CodexPublicOpinionService(store=request.app.state.runtime_store).run(
         limit=payload.limit,
         persist=payload.persist,
         requested_by=payload.requested_by,
@@ -79,8 +82,8 @@ def run_public_opinion_capture(input_data: PublicOpinionRunInput | None = None) 
 
 
 @router.get("/runs/latest")
-def latest_public_opinion_run() -> dict:
-    latest = CodexPublicOpinionService().latest_run()
+def latest_public_opinion_run(request: Request) -> dict:
+    latest = CodexPublicOpinionService(store=request.app.state.runtime_store).latest_run()
     if latest is None:
         return {
             "status": "empty",
@@ -94,19 +97,22 @@ def latest_public_opinion_run() -> dict:
 
 
 @router.get("/context/latest")
-def latest_public_opinion_context(limit: int = 8) -> dict:
-    return CodexPublicOpinionService().latest_context(limit=limit)
+def latest_public_opinion_context(request: Request, limit: int = 8) -> dict:
+    return CodexPublicOpinionService(store=request.app.state.runtime_store).latest_context(limit=limit)
 
 
 @router.get("/runs")
-def list_public_opinion_runs(limit: int = 20) -> list[dict]:
-    return CodexPublicOpinionService().list_runs(limit=limit)
+def list_public_opinion_runs(request: Request, limit: int = 20) -> list[dict]:
+    return CodexPublicOpinionService(store=request.app.state.runtime_store).list_runs(limit=limit)
 
 
 @router.post("/evidence/ingest")
-def ingest_codex_public_opinion_evidence(input_data: CodexEvidenceIngestInput) -> dict:
+def ingest_codex_public_opinion_evidence(
+    input_data: CodexEvidenceIngestInput,
+    request: Request,
+) -> dict:
     evidence = [item.model_dump(mode="json") for item in input_data.evidence]
-    return CodexPublicOpinionService().ingest_evidence(
+    return CodexPublicOpinionService(store=request.app.state.runtime_store).ingest_evidence(
         evidence,
         persist=input_data.persist,
         requested_by=input_data.requested_by,

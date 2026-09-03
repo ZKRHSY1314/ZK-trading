@@ -77,6 +77,12 @@ class AIReviewWorker:
             SELECT *
             FROM historical_backtest_runs
             WHERE status = 'completed'
+              AND json_valid(metrics_json)
+              AND COALESCE(
+                    json_extract(metrics_json, '$.entry_fill_count'),
+                    json_extract(metrics_json, '$.trade_count'),
+                    0
+                  ) > 0
             ORDER BY id DESC
             LIMIT 1
             """

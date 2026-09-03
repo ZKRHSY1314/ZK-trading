@@ -584,6 +584,9 @@ class OffhourResearchLoopService:
             blocked_reasons.append("insufficient_history_data" if not coverage["ready_symbols"] else "no_dataset2_strategy_matches")
         elif backtest["status"] not in {"completed", "partial", "skipped"}:
             status = "partial"
+            # Name the degradation. A bare "partial" with no reason is why the
+            # existing worker heartbeats stopped carrying information.
+            blocked_reasons.append(f"backtest_{backtest['status']}")
 
         result = {
             "schema_version": "offhour_research_run.v1",
@@ -4673,8 +4676,8 @@ class OffhourResearchLoopService:
         symbol = str(signal.get("symbol") or "")
         normalized = normalize_a_share_code(symbol) if symbol else ""
         return bool(
-            symbol.startswith(("SH688", "SZ300", "SZ301"))
-            or normalized.startswith(("SH688", "SZ300", "SZ301"))
+            symbol.startswith(("SH688", "SZ300", "SZ301", "SZ302"))
+            or normalized.startswith(("SH688", "SZ300", "SZ301", "SZ302"))
             or infer_board_type(normalized, None) in {"star", "chinext"}
         )
 
@@ -6351,7 +6354,7 @@ class OffhourResearchLoopService:
             learning.add("stop_loss_triggered")
         if action_label == "WAIT_CONFIRMATION" and pnl < 0:
             learning.add("weak_confirmation_risk")
-        if symbol.startswith(("SH688", "SZ300", "SZ301")):
+        if symbol.startswith(("SH688", "SZ300", "SZ301", "SZ302")):
             learning.add("high_volatility_board_risk")
         if tags & {"top_risk", "distribution", "big_fall", "volume_up_price_stall", "reduce"}:
             learning.add("distribution_or_stall_risk")

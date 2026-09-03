@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.agent_control.service import AgentControlService
 from app.ai.weight_optimizer import WeightOptimizer
 from app.automation.supervisor import AutomationSupervisor
 from app.candidates.auto_discovery import AutoDiscoveryScanner
+from app.candidates.full_market_scan import FullMarketFeatureScanner
 from app.candidates.lifecycle import CandidateLifecycleService
 from app.candidates.local_scanner import LocalCandidateScanner
 from app.candidates.offhour_search import OffhourPotentialSearchService
@@ -21,6 +22,7 @@ from app.learning.phase_matcher import PhaseSimilarityService
 from app.learning.phase_replay import MainForcePhaseReplayService, PhaseReplayError
 from app.learning.service import LearningService
 from app.models import (
+    CapitalFlowSnapshot,
     CandidateDecision,
     DecisionAnalysis,
     LearningBacktestResult,
@@ -4872,68 +4874,111 @@ def market_snapshot(symbol: str, name: str | None = None) -> MarketSnapshot:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/market/flow", response_model=CapitalFlowSnapshot)
+def market_capital_flow(
+    request: Request,
+    symbol: str | None = None,
+) -> CapitalFlowSnapshot:
+    from app.data.capital_flow import CapitalFlowService
+
+    try:
+        return CapitalFlowService(store=request.app.state.runtime_store).latest(
+            scope="symbol" if symbol else "market",
+            symbol=symbol,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/market/capital-flow/{symbol}", response_model=CapitalFlowSnapshot)
+def symbol_capital_flow(request: Request, symbol: str) -> CapitalFlowSnapshot:
+    from app.data.capital_flow import CapitalFlowService
+
+    try:
+        return CapitalFlowService(store=request.app.state.runtime_store).latest(
+            scope="symbol",
+            symbol=symbol,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/realtime/capabilities")
-def realtime_capabilities() -> dict:
+def realtime_capabilities(request: Request) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().capabilities()
+    return RealtimeMarketService(store=request.app.state.runtime_store).capabilities()
 
 
 @router.get("/realtime/scheduler-plan")
-def realtime_scheduler_plan() -> dict:
+def realtime_scheduler_plan(request: Request) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().scheduler_plan()
+    return RealtimeMarketService(store=request.app.state.runtime_store).scheduler_plan()
 
 
 @router.get("/realtime/automation-proposal")
-def realtime_automation_proposal() -> dict:
+def realtime_automation_proposal(request: Request) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().automation_proposal()
+    return RealtimeMarketService(store=request.app.state.runtime_store).automation_proposal()
 
 
 @router.get("/realtime/provider-health")
-def realtime_provider_health() -> list[dict]:
+def realtime_provider_health(request: Request) -> list[dict]:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().provider_health()
+    return RealtimeMarketService(store=request.app.state.runtime_store).provider_health()
 
 
 @router.get("/realtime/snapshot/{symbol}")
-def realtime_snapshot(symbol: str) -> dict:
+def realtime_snapshot(symbol: str, request: Request) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().latest_snapshot(symbol)
+    return RealtimeMarketService(store=request.app.state.runtime_store).latest_snapshot(symbol)
 
 
 @router.get("/realtime/events")
-def realtime_events(symbol: str | None = None, limit: int = 50) -> list[dict]:
+def realtime_events(
+    request: Request,
+    symbol: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().list_events(symbol=symbol, limit=limit)
+    return RealtimeMarketService(store=request.app.state.runtime_store).list_events(
+        symbol=symbol,
+        limit=limit,
+    )
 
 
 @router.get("/realtime/cycles")
-def realtime_cycles(limit: int = 20) -> list[dict]:
+def realtime_cycles(request: Request, limit: int = 20) -> list[dict]:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().list_cycle_runs(limit=limit)
+    return RealtimeMarketService(store=request.app.state.runtime_store).list_cycle_runs(limit=limit)
 
 
 @router.get("/realtime/cycles/latest")
-def realtime_latest_cycle() -> dict:
+def realtime_latest_cycle(request: Request) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().latest_cycle_run()
+    return RealtimeMarketService(store=request.app.state.runtime_store).latest_cycle_run()
 
 
 @router.post("/realtime/refresh")
-def realtime_refresh(symbols: str = "SZ002081,SZ002115", limit: int = 20) -> dict:
+def realtime_refresh(
+    request: Request,
+    symbols: str = "SZ002081,SZ002115",
+    limit: int = 20,
+) -> dict:
     from app.realtime.service import RealtimeMarketService
 
     symbol_list = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
-    return RealtimeMarketService().refresh_symbols(symbols=symbol_list, limit=limit)
+    return RealtimeMarketService(store=request.app.state.runtime_store).refresh_symbols(
+        symbols=symbol_list,
+        limit=limit,
+    )
 
 
 @router.post("/realtime/monitoring-sync")
@@ -4945,6 +4990,7 @@ def realtime_monitoring_sync(limit: int = 100) -> dict:
 
 @router.post("/realtime/cycle")
 def realtime_cycle(
+    request: Request,
     symbols: str = "SZ002081,SZ002115",
     refresh_limit: int = 20,
     sync_limit: int = 100,
@@ -4953,7 +4999,7 @@ def realtime_cycle(
     from app.realtime.service import RealtimeMarketService
 
     symbol_list = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
-    return RealtimeMarketService().run_cycle(
+    return RealtimeMarketService(store=request.app.state.runtime_store).run_cycle(
         symbols=symbol_list,
         refresh_limit=refresh_limit,
         sync_limit=sync_limit,
@@ -4962,10 +5008,17 @@ def realtime_cycle(
 
 
 @router.post("/realtime/replay")
-def realtime_replay(symbol: str | None = None, limit: int = 100) -> dict:
+def realtime_replay(
+    request: Request,
+    symbol: str | None = None,
+    limit: int = 100,
+) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().replay(symbol=symbol, limit=limit)
+    return RealtimeMarketService(store=request.app.state.runtime_store).replay(
+        symbol=symbol,
+        limit=limit,
+    )
 
 
 @router.get("/screen-monitoring/capabilities")
@@ -5589,21 +5642,59 @@ def screen_monitoring_capture_stub(input_data: ScreenCaptureStubInput | None = N
 
 
 @router.post("/data/daily-bars/refresh")
-def refresh_daily_bars(limit: int = 50, days: int = 120) -> dict:
+def refresh_daily_bars(
+    request: Request,
+    limit: int = 50,
+    days: int = 120,
+    source_policy: str | None = None,
+) -> dict:
     from app.data.daily_bar_cache import DailyBarCacheService
-    return DailyBarCacheService().refresh_bars(limit=limit, days=days)
+
+    return DailyBarCacheService(store=request.app.state.runtime_store).refresh_bars(
+        limit=limit,
+        days=days,
+        source_policy=source_policy,
+    )
+
+
+@router.get("/data/tonghuasun/status")
+def get_tonghuasun_status() -> dict:
+    """Report non-secret local market-data discovery state without probing accounts."""
+    from app.data.tonghuasun_provider import TonghuasunMarketDataProvider
+
+    result = TonghuasunMarketDataProvider(
+        timeout=settings.realtime_request_timeout_seconds
+    ).status()
+    result.update(
+        {
+            "source_policy": settings.daily_bar_source_policy,
+            "enabled": settings.daily_bar_source_policy
+            in {"tonghuasun_first", "tonghuasun_only"},
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+    )
+    return result
 
 
 @router.get("/data/daily-bars/coverage")
-def get_daily_bar_coverage(limit: int = 100) -> list[dict]:
+def get_daily_bar_coverage(request: Request, limit: int = 100) -> list[dict]:
     from app.data.daily_bar_cache import DailyBarCacheService
-    return DailyBarCacheService().get_coverage(limit=limit)
+
+    return DailyBarCacheService(store=request.app.state.runtime_store).get_coverage(limit=limit)
 
 
 @router.get("/data/daily-bars/{symbol}")
-def get_daily_bars_for_symbol(symbol: str, limit: int = 120) -> list[dict]:
+def get_daily_bars_for_symbol(
+    symbol: str,
+    request: Request,
+    limit: int = 120,
+) -> list[dict]:
     from app.data.daily_bar_cache import DailyBarCacheService
-    return DailyBarCacheService().get_bars(symbol=symbol, limit=limit)
+
+    return DailyBarCacheService(store=request.app.state.runtime_store).get_bars(
+        symbol=symbol,
+        limit=limit,
+    )
 
 
 @router.post("/candidates/evaluate", response_model=CandidateDecision)
@@ -5620,6 +5711,34 @@ def local_candidate_scan(limit: int = 100, persist: bool = True) -> dict:
 @router.post("/candidates/auto-discovery")
 def auto_discover_candidates(limit: int = 50, persist: bool = True) -> dict:
     return AutoDiscoveryScanner().scan(limit=limit, persist=persist)
+
+
+@router.post("/candidates/full-market-scan/run")
+def run_full_market_feature_scan(
+    request: Request,
+    candidate_limit: int = 300,
+    lookback_bars: int = 120,
+    persist: bool = True,
+    force: bool = False,
+) -> dict:
+    return FullMarketFeatureScanner(store=request.app.state.runtime_store).run(
+        limit=candidate_limit,
+        lookback=lookback_bars,
+        persist=persist,
+        force=force,
+    )
+
+
+@router.get("/candidates/full-market-scan/latest")
+def latest_full_market_feature_scan(
+    request: Request,
+    limit: int = 300,
+    tier: str | None = None,
+) -> dict:
+    return FullMarketFeatureScanner(store=request.app.state.runtime_store).latest(
+        limit=limit,
+        tier=tier,
+    )
 
 
 @router.get("/candidates/auto-discovery/latest")
@@ -5658,17 +5777,26 @@ def candidate_score_summary(limit: int = 10) -> dict:
 
 
 @router.get("/candidates/selection-v2/summary")
-def candidate_selection_v2_summary(mode: str = "balanced", limit: int = 200) -> dict:
-    return StrategySelectionV2Service().run(mode=mode, limit=limit, write_artifacts=False)
+def candidate_selection_v2_summary(
+    request: Request,
+    mode: str = "balanced",
+    limit: int = 200,
+) -> dict:
+    return StrategySelectionV2Service(store=request.app.state.runtime_store).run(
+        mode=mode,
+        limit=limit,
+        write_artifacts=False,
+    )
 
 
 @router.post("/candidates/selection-v2/run")
 def run_candidate_selection_v2(
+    request: Request,
     mode: str = "balanced",
     limit: int = 200,
     write_artifacts: bool = True,
 ) -> dict:
-    return StrategySelectionV2Service().run(
+    return StrategySelectionV2Service(store=request.app.state.runtime_store).run(
         mode=mode,
         limit=limit,
         write_artifacts=write_artifacts,
@@ -6147,6 +6275,10 @@ class BacktestRunInput(BaseModel):
     max_positions: int = 5
     per_symbol_cap: float = 0.2
     benchmark_symbol: str = "SH000300"
+    # Off by default: the run stays point-in-time. On, market cap / PB are
+    # projected from the latest snapshot and the run reports
+    # fundamental_point_in_time=false.
+    allow_projected_fundamentals: bool = False
 
 
 @router.post("/backtest/runs")
@@ -6161,6 +6293,7 @@ def run_historical_backtest(input_data: BacktestRunInput) -> dict:
         max_positions=input_data.max_positions,
         per_symbol_cap=input_data.per_symbol_cap,
         benchmark_symbol=input_data.benchmark_symbol,
+        allow_projected_fundamentals=input_data.allow_projected_fundamentals,
     )
 
 

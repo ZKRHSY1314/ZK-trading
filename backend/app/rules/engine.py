@@ -1,13 +1,18 @@
+import itertools
+import logging
 from typing import Any
 
 from app.models import CandidateDecision, CandidateTier, MarketSnapshot, RuleHit
-from app.strategies.dengzhan import DengZhanSignals
+from app.strategies.dengzhan import UNKNOWN, DengZhanSignals, SignalResult
+
+logger = logging.getLogger(__name__)
 
 
 class RuleEngine:
     def __init__(self, config: dict):
         self.config = config
         self.signals = DengZhanSignals()
+        logger.info("rule engine tier reachability: %s", self.tier_reachability())
 
     def evaluate(self, snapshot: MarketSnapshot) -> CandidateDecision:
         hits: list[RuleHit] = []
@@ -41,9 +46,13 @@ class RuleEngine:
             and snapshot.metadata.get("data_quality") in {"fallback_profile", "realtime_quote_fallback"}
         ):
             tier = CandidateTier.watch
+        unknown_rule_ids = [hit.rule_id for hit in hits if hit.evaluation == UNKNOWN]
+        missing_inputs = sorted({name for hit in hits for name in hit.missing_inputs})
         return CandidateDecision(
             symbol=snapshot.symbol,
             name=snapshot.name,
+            unknown_rule_ids=unknown_rule_ids,
+            missing_inputs=missing_inputs,
             score=score,
             raw_score=round(raw_score, 6),
             max_score=round(max_score, 6),
@@ -52,6 +61,42 @@ class RuleEngine:
             blocked=blocked,
             hits=hits,
         )
+
+    def tier_reachability(self) -> dict[str, Any]:
+        """Which combinations of enabled strategy rules can actually reach a tier.
+
+        A configuration where no combination reaches ``strong`` produces zero
+        entries no matter what the market does. That must be visible at startup,
+        not discovered after a backtest returns no trades.
+        """
+
+        strategy_rules = [
+            (str(rule["id"]), max(0.0, float(rule.get("weight", 0))))
+            for rule in self.config.get("rules", [])
+            if rule.get("enabled", True) and rule.get("group") == "strategy"
+        ]
+        max_score = sum(weight for _, weight in strategy_rules)
+        tiers = self.config.get("candidate_tiers", {})
+        report: dict[str, Any] = {"max_strategy_score": max_score}
+        for tier_name, key in (("strong", "strong_min_score"), ("watch", "watch_min_score")):
+            threshold = float(tiers.get(key, 80 if tier_name == "strong" else 60))
+            combos = []
+            for size in range(1, len(strategy_rules) + 1):
+                for combo in itertools.combinations(strategy_rules, size):
+                    raw = sum(weight for _, weight in combo)
+                    if self._normalized_score(raw, max_score) >= threshold:
+                        combos.append(sorted(rule_id for rule_id, _ in combo))
+            minimal = [
+                combo
+                for combo in combos
+                if not any(set(other) < set(combo) for other in combos)
+            ]
+            report[tier_name] = {
+                "min_score": threshold,
+                "reachable": bool(minimal),
+                "minimal_rule_sets": minimal,
+            }
+        return report
 
     def _max_strategy_score(self) -> float:
         return sum(
@@ -74,7 +119,8 @@ class RuleEngine:
         hard_block_failed = False
 
         if rule_id == "constitution_no_high_position":
-            passed, reason = self.signals.is_low_position(snapshot, params)
+            result = self.signals.is_low_position(snapshot, params)
+            passed, reason = result.passed, result.reason
             if not passed and is_hard_block:
                 hard_block_failed = True
                 evidence = {
@@ -88,7 +134,8 @@ class RuleEngine:
                     ),
                 }
         elif rule_id == "dengzhan_low_position_limit_up":
-            passed, reason = self.signals.is_low_position_limit_up(snapshot, params)
+            result = self.signals.is_low_position_limit_up(snapshot, params)
+            passed, reason = result.passed, result.reason
             if not passed and is_hard_block:
                 hard_block_failed = True
                 evidence = {
@@ -100,7 +147,8 @@ class RuleEngine:
                     "limit_up_threshold": snapshot.metadata.get("limit_up_threshold"),
                 }
         elif rule_id == "dengzhan_forced_divergence":
-            passed, reason = self.signals.has_forced_divergence(snapshot, params)
+            result = self.signals.has_forced_divergence(snapshot, params)
+            passed, reason = result.passed, result.reason
             if not passed and is_hard_block:
                 hard_block_failed = True
                 evidence = {
@@ -108,7 +156,8 @@ class RuleEngine:
                     "volume_ratio": snapshot.metadata.get("volume_ratio"),
                 }
         elif rule_id == "risk_no_chasing_after_big_rise":
-            passed, reason = self.signals.no_chasing_after_big_rise(snapshot, params)
+            result = self.signals.no_chasing_after_big_rise(snapshot, params)
+            passed, reason = result.passed, result.reason
             if not passed and is_hard_block:
                 hard_block_failed = True
                 evidence = {
@@ -116,7 +165,9 @@ class RuleEngine:
                     "five_day_pct": snapshot.metadata.get("five_day_pct"),
                 }
         else:
-            passed, reason = False, f"规则 {rule_id} 尚未实现"
+            reason = f"规则 {rule_id} 尚未实现"
+            result = SignalResult(False, reason, UNKNOWN, ("rule_implementation",))
+            passed = False
 
             if is_hard_block:
                 hard_block_failed = True
@@ -139,6 +190,8 @@ class RuleEngine:
             trigger_level="hard" if is_hard_block else "soft",
             source="rules-engine",
             reason=reason,
+            evaluation=result.status,
+            missing_inputs=list(result.missing),
         )
 
     def _tier(self, score: float, blocked: bool) -> CandidateTier:

@@ -18,9 +18,17 @@ from app.config import settings
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 HEARTBEAT_PATH = PROJECT_ROOT / "backend" / "logs" / "reference_data_heartbeat.json"
 DEFAULT_INTERVAL_SECONDS = 4 * 60 * 60
+RETRY_INTERVAL_SECONDS = 15 * 60
 UNSUCCESSFUL_STATUSES = frozenset(
     {"failed", "blocked", "error", "partial", "degraded", "empty"}
 )
+
+
+def next_interval_seconds(status: str, configured_interval_seconds: int) -> int:
+    configured = max(60, int(configured_interval_seconds))
+    if str(status).strip().lower() in UNSUCCESSFUL_STATUSES:
+        return min(configured, RETRY_INTERVAL_SECONDS)
+    return configured
 
 
 def write_heartbeat(payload: dict[str, Any], *, path: Path = HEARTBEAT_PATH) -> None:
@@ -191,6 +199,7 @@ def _run_cycles(
         if status in UNSUCCESSFUL_STATUSES:
             had_unsuccessful_cycle = True
         completed = datetime.now().astimezone()
+        next_interval = next_interval_seconds(status, interval_seconds)
         heartbeat = {
             **base_heartbeat,
             "status": status,
@@ -198,11 +207,12 @@ def _run_cycles(
             "duration_seconds": round((completed - started).total_seconds(), 2),
             "summary": _result_summary(result),
             "error": error,
+            "next_interval_seconds": next_interval,
         }
         write_heartbeat(heartbeat, path=heartbeat_path)
         print(json.dumps(heartbeat, ensure_ascii=False), flush=True)
         if args.max_cycles <= 0 or cycle < args.max_cycles:
-            sleep_fn(interval_seconds)
+            sleep_fn(next_interval)
     return 1 if had_unsuccessful_cycle else 0
 
 
@@ -315,7 +325,7 @@ def _result_summary(result: dict[str, Any]) -> dict[str, Any]:
         if isinstance(result.get("global_markets"), dict)
         else {}
     )
-    return {
+    summary = {
         "mode": result.get("mode"),
         "sector_status": sectors.get("status"),
         "sector_memberships_written": sectors.get("membership_records_written", 0),
@@ -328,6 +338,32 @@ def _result_summary(result: dict[str, Any]) -> dict[str, Any]:
         ),
         "reason": result.get("reason"),
     }
+    source_errors: dict[str, list[dict[str, Any]]] = {}
+    for label, section in (
+        ("sectors", sectors),
+        ("disclosures", disclosures),
+        ("global_markets", global_markets),
+    ):
+        errors = section.get("errors")
+        if not isinstance(errors, list):
+            continue
+        compacted = []
+        for item in errors[:20]:
+            if not isinstance(item, dict):
+                compacted.append({"error": str(item)[-500:]})
+                continue
+            compacted.append(
+                {
+                    key: (str(item[key])[-500:] if key == "error" else item[key])
+                    for key in ("source", "error", "error_type", "status", "symbol")
+                    if item.get(key) is not None
+                }
+            )
+        if compacted:
+            source_errors[label] = compacted
+    if source_errors:
+        summary["source_errors"] = source_errors
+    return summary
 
 
 if __name__ == "__main__":

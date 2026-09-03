@@ -27,15 +27,45 @@ _DEFAULT_HEARTBEATS = {
     / "backend"
     / "logs"
     / "codex_market_pulse_heartbeat.json",
+    "codex_decision_review": PROJECT_ROOT
+    / "backend"
+    / "logs"
+    / "codex_decision_review_heartbeat.json",
     "reference_data": PROJECT_ROOT
     / "backend"
     / "logs"
     / "reference_data_heartbeat.json",
+    "full_market_features": PROJECT_ROOT
+    / "backend"
+    / "logs"
+    / "full_market_feature_heartbeat.json",
+    "market_history_refresh": PROJECT_ROOT
+    / "backend"
+    / "logs"
+    / "market_history_refresh_heartbeat.json",
+    "instrument_catalog_refresh": PROJECT_ROOT
+    / "backend"
+    / "logs"
+    / "instrument_catalog_refresh_heartbeat.json",
+    "full_market_calibration": PROJECT_ROOT
+    / "backend"
+    / "logs"
+    / "full_market_calibration_heartbeat.json",
+    "capital_flow_refresh": PROJECT_ROOT
+    / "backend"
+    / "logs"
+    / "capital_flow_refresh_heartbeat.json",
 }
 _HEARTBEAT_STALE_AFTER_SECONDS = {
     "control_plane": 1800,
     "codex_market_pulse": 18000,
+    "codex_decision_review": 18000,
     "reference_data": 18000,
+    "full_market_features": 18000,
+    "market_history_refresh": 18000,
+    "instrument_catalog_refresh": 90000,
+    "full_market_calibration": 90000,
+    "capital_flow_refresh": 1800,
 }
 
 
@@ -152,6 +182,8 @@ def _heartbeat_snapshot(path: Path, *, stale_after_seconds: int = 18000) -> dict
     last_status = str(payload.get("status") or "unknown").strip().lower()
     if age_seconds > stale_after_seconds:
         runtime_status = "stale"
+    elif last_status == "running":
+        runtime_status = "running"
     elif last_status in {
         "failed",
         "blocked",
@@ -172,4 +204,6 @@ def _heartbeat_snapshot(path: Path, *, stale_after_seconds: int = 18000) -> dict
         "cycle": payload.get("cycle"),
         "last_status": last_status,
         "completed_at": completed_at,
+        "timeout_seconds": payload.get("timeout_seconds"),
+        "deadline_seconds": payload.get("deadline_seconds"),
     }

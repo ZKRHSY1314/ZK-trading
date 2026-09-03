@@ -66,3 +66,58 @@ def test_browser_adapter_targets_the_mounted_trading_dashboard():
     ]:
         assert legacy_selector not in adapter
     assert "live_trading_enabled !== false" in adapter
+
+
+def test_control_plane_card_has_a_chinese_label_for_full_market_worker():
+    frontend_root = Path(__file__).resolve().parents[2] / "frontend" / "src"
+    source = (
+        frontend_root
+        / "components"
+        / "control-plane"
+        / "ControlPlaneObservabilityCard.vue"
+    ).read_text(encoding="utf-8")
+
+    assert 'key: "full_market_features"' in source
+    assert 'label: "全市场特征扫描"' in source
+    assert "全市场特征扫描心跳降级" in source
+
+
+def test_control_plane_card_has_a_chinese_label_for_market_history_refresh_worker():
+    project_root = Path(__file__).resolve().parents[2]
+    frontend_root = project_root / "frontend" / "src"
+    source = (
+        frontend_root
+        / "components"
+        / "control-plane"
+        / "ControlPlaneObservabilityCard.vue"
+    ).read_text(encoding="utf-8")
+    api_source = (frontend_root / "api" / "cockpit.ts").read_text(encoding="utf-8")
+
+    assert 'key: "market_history_refresh"' in source
+    assert 'label: "日线增量刷新"' in source
+    assert "日线增量刷新正在运行" in source
+    assert "日线增量刷新心跳暂缺" in source
+    assert "日线增量刷新心跳降级" in source
+    assert "日线增量刷新心跳已过期" in source
+    assert '"market_history_refresh"' in api_source
+    assert "deadline_seconds?: number | null" in api_source
+
+
+def test_control_plane_card_has_a_chinese_label_for_capital_flow_worker():
+    project_root = Path(__file__).resolve().parents[2]
+    frontend_root = project_root / "frontend" / "src"
+    source = (
+        frontend_root
+        / "components"
+        / "control-plane"
+        / "ControlPlaneObservabilityCard.vue"
+    ).read_text(encoding="utf-8")
+    api_source = (frontend_root / "api" / "cockpit.ts").read_text(encoding="utf-8")
+
+    assert 'key: "capital_flow_refresh"' in source
+    assert 'label: "资金流同步"' in source
+    assert "资金流同步正在运行" in source
+    assert "资金流同步心跳暂缺" in source
+    assert "资金流数据源暂时降级" in source
+    assert "资金流同步心跳已过期" in source
+    assert '"capital_flow_refresh"' in api_source

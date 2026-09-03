@@ -12,16 +12,31 @@ import urllib.request
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 HEARTBEAT_PATH = PROJECT_ROOT / "backend" / "logs" / "control_plane_heartbeat.json"
+RETRY_INTERVAL_SECONDS = 300
+UNSUCCESSFUL_STATUSES = frozenset({"failed", "blocked", "partial", "degraded", "error"})
 
 
-def request_json(method: str, url: str, payload: dict | None = None) -> dict:
+def next_interval_seconds(status: str, configured_interval_seconds: int) -> int:
+    configured = max(30, int(configured_interval_seconds))
+    if str(status).strip().lower() in UNSUCCESSFUL_STATUSES:
+        return min(configured, RETRY_INTERVAL_SECONDS)
+    return configured
+
+
+def request_json(
+    method: str,
+    url: str,
+    payload: dict | None = None,
+    *,
+    timeout: int = 240,
+) -> dict:
     body = None
     headers = {"Accept": "application/json"}
     if payload is not None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(request, timeout=240) as response:
+    with urllib.request.urlopen(request, timeout=max(1, int(timeout))) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -32,14 +47,15 @@ def write_heartbeat(payload: dict) -> None:
     temp.replace(HEARTBEAT_PATH)
 
 
-def run_slot(api_base: str, profile: str, limit: int) -> dict:
-    health = request_json("GET", f"{api_base}/health")
+def run_slot(api_base: str, profile: str, limit: int, *, timeout_seconds: int = 240) -> dict:
+    health = request_json("GET", f"{api_base}/health", timeout=min(30, timeout_seconds))
     if health.get("live_trading_enabled") is not False:
         return {"status": "blocked", "reason": "live_trading_enabled", "health": health}
     return request_json(
         "POST",
         f"{api_base}/api/control-plane/run-once",
         {"profile": profile, "limit": limit, "requested_by": "control_plane_worker"},
+        timeout=timeout_seconds,
     )
 
 
@@ -54,6 +70,7 @@ def main() -> int:
     parser.add_argument("--interval-seconds", type=int, default=900)
     parser.add_argument("--max-cycles", type=int, default=0, help="0 runs forever")
     parser.add_argument("--limit", type=int, default=30)
+    parser.add_argument("--timeout-seconds", type=int, default=240)
     args = parser.parse_args()
 
     cycle = 0
@@ -72,10 +89,16 @@ def main() -> int:
                 "error": None,
                 "duration_ms": None,
                 "interval_seconds": max(30, int(args.interval_seconds)),
+                "timeout_seconds": max(30, int(args.timeout_seconds)),
             }
         )
         try:
-            result = run_slot(args.api_base.rstrip("/"), args.profile, args.limit)
+            result = run_slot(
+                args.api_base.rstrip("/"),
+                args.profile,
+                args.limit,
+                timeout_seconds=max(30, int(args.timeout_seconds)),
+            )
             status = str(result.get("status") or "failed")
             error = None
         except (OSError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
@@ -93,11 +116,13 @@ def main() -> int:
             "error": error,
             "duration_ms": result.get("duration_ms"),
             "interval_seconds": max(30, int(args.interval_seconds)),
+            "timeout_seconds": max(30, int(args.timeout_seconds)),
+            "next_interval_seconds": next_interval_seconds(status, args.interval_seconds),
         }
         write_heartbeat(heartbeat)
         print(json.dumps(heartbeat, ensure_ascii=False), flush=True)
         if args.max_cycles <= 0 or cycle < args.max_cycles:
-            time.sleep(max(30, int(args.interval_seconds)))
+            time.sleep(heartbeat["next_interval_seconds"])
     return 0 if status not in {"failed", "blocked"} else 1
 
 

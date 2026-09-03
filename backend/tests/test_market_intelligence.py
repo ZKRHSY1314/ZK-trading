@@ -452,6 +452,9 @@ def test_codex_schema_and_api_preserve_structured_event_fact(client, monkeypatch
     captured = {}
 
     class FakeService:
+        def __init__(self, store=None):
+            self.store = store
+
         def ingest_evidence(self, evidence, *, persist, requested_by):
             captured["evidence"] = evidence
             return {

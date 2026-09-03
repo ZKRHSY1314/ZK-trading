@@ -144,7 +144,17 @@ Invoke-RestMethod -Method Post `
 
 `backend/scripts/control_plane_loop.py` 每个调度槽先读取 `/health`，只有明确返回 `live_trading_enabled=false` 才调用 Control Plane。心跳写入 `backend/logs/control_plane_heartbeat.json`，日志与 PID 均位于 Git 忽略目录。
 
-`backend/scripts/reference_data_loop.py` 每 4 小时刷新参考 ledger，心跳写入 `backend/logs/reference_data_heartbeat.json`。它的异常/超时只会将该轮降级并记录，不会跳过 live-disabled 门禁。
+`backend/scripts/reference_data_loop.py` 每 4 小时刷新参考 ledger，心跳写入 `backend/logs/reference_data_heartbeat.json`。它的异常/超时只会将该轮降级并记录，不会跳过 live-disabled 门禁；失败或部分成功会在最多 15 分钟后独立重试，不等待下一次 4 小时调度槽。
+
+`backend/scripts/capital_flow_refresh_loop.py` 定时采集东方财富、经 AKShare 暴露的日频资金流，并把口径固定标记为供应商推导的订单规模分类数据，不冒充交易所官方或逐笔实时资金流。采集失败时仅保留并标记最近一次已知快照为 `degraded_last_known`；没有可信快照时返回不可用，不以零值、静态图形或其他行情事件伪造资金流。该 worker 只有在 `/health.live_trading_enabled=false` 时运行，心跳写入 `backend/logs/capital_flow_refresh_heartbeat.json`。
+
+`backend/scripts/full_market_feature_loop.py` 是独立的全市场日线特征 worker。启动栈时立即扫描最新官方 A 股快照，此后每 4 小时增量运行；失败或部分成功在 15 分钟后重试。它只读 `market_history.sqlite3` 的 `qfq/ready` 日线，把派生特征和输入修订写入独立状态表，不进入下单链路。心跳写入 `backend/logs/full_market_feature_heartbeat.json`，单轮超时 300 秒。
+
+`backend/scripts/market_history_refresh_loop.py` 负责完成交易日日线前滚。它在 15:15 收盘完成门槛和交易日历共同确认后，按官方股票池对已有 qfq 覆盖标的执行 150 日重叠窗刷新，并每轮有界尝试最多 500 个 qfq 缺口，再分批同步独立历史库并触发特征扫描；只有响应明确带 `qfqday` 时才记为前复权，不会把原始 `day` 重标。历史已最新时不发起常规远程前滚；未解决缺口保留结构化计数，瞬时失败保留旧缓存并在 15 分钟后独立重试。心跳写入 `backend/logs/market_history_refresh_heartbeat.json`。
+
+`backend/scripts/instrument_catalog_refresh_loop.py` 是官方股票目录 worker。启动时立即运行，完整成功后每日刷新，异常后 15 分钟重试。只有沪、深、北所需分段完整且未触发缩量门禁时才原子落库；新股、改名和退出当前目录的状态变化会保留历史快照与日线。心跳写入 `backend/logs/instrument_catalog_refresh_heartbeat.json`。
+
+`backend/scripts/full_market_calibration_loop.py` 每日对结构分执行有限历史校准，异常后 30 分钟重试，单轮截止时间 900 秒。它使用明确的未来标签、按时间排序的验证集和 horizon purge；只有整体与分箱样本都充足时才输出校准值。前端标注为“有限历史校准”，不把未校准结构分表述为上涨概率。心跳写入 `backend/logs/full_market_calibration_heartbeat.json`。
 
 ```powershell
 backend\.venv\Scripts\python.exe -X utf8 backend\scripts\control_plane_loop.py `
@@ -153,9 +163,13 @@ backend\.venv\Scripts\python.exe -X utf8 backend\scripts\control_plane_loop.py `
   --max-cycles 0
 ```
 
-`backend/scripts/codex_market_pulse.py` 使用本机已登录的 Codex CLI，以 `--ephemeral --sandbox read-only` 运行网络研究，并受 JSON schema 约束。它只把带 URL、检索时间、发布时间状态和事实摘要的证据提交到 `/api/public-opinion/evidence/ingest`；不向后端保存 OpenAI 凭据，也不允许 Computer Use。
+`backend/scripts/codex_market_pulse.py` 使用本机已登录的 Codex CLI，以 `--ephemeral --sandbox read-only` 运行网络研究，并受 JSON schema 约束。常驻市场脉冲/循环研究的运行档固定为 `gpt-5.5` + `medium`，不会继承或回退到用户全局 coding 模型；代码开发继续由用户级 `gpt-5.6-sol` + `xhigh` 配置承担，项目脚本不修改全局 Codex 配置。worker 只把带 URL、检索时间、发布时间状态和事实摘要的证据提交到 `/api/public-opinion/evidence/ingest`；不向后端保存 OpenAI 凭据，也不允许 Computer Use。
 
-提交批次前，worker 会逐条复用 evidence API 的 Pydantic 契约进行校验。单条证据的时间、长度或枚举不合规时，只拒绝该条并在心跳中记录 `submitted_count`、`rejected_count` 和 `validation_errors`；其余合规证据继续批量提交，整轮降级为 `partial`，不会自动篡改时间、截断事实，也不会因一条坏数据丢弃整个批次。输出 schema 同步约束 URL、标题、摘要和来源名称的后端长度契约，并要求具体文章/公告 URL 与来源域名一致，禁止通用主页和搜索结果页；若整轮为 `failed`、`blocked`，或 `partial` 且没有一条有效证据，下一轮缩短为 15 分钟重试，得到有效证据后恢复 4 小时间隔，`next_interval_seconds` 会写入心跳。
+`run_stack.ps1` 会把该运行档显式写入 Codex worker 命令、PID 元数据和心跳。`ensure_stack.ps1` 同时核对 `enabled`、进程身份、`model`、`reasoning_effort` 与心跳配置；旧 worker 缺少这些字段或值不一致时会被判为不健康，并通过既有 stop/start 流程替换。
+
+`backend/scripts/codex_decision_review.py` 使用同一 `gpt-5.5` + `medium` 运行档，每四小时只读复核候选、阶段回放和确定性阻断证据。它禁用联网浏览与 Computer Use，JSON schema 只允许等待复核、观察或拒绝，并强制 `order_allowed=false`、`simulation_only=true`、`live_trading_enabled=false`。结果仅写入 `ai_model_audit_logs` 供审计，不进入委托链路；`ensure_stack.ps1` 还会核对该 worker 的进程身份、心跳 PID、模型档和只读安全字段。
+
+提交批次前，worker 会逐条复用 evidence API 的 Pydantic 契约进行校验。单条证据的时间、长度或枚举不合规时，只拒绝该条并在心跳中记录 `submitted_count`、`rejected_count` 和 `validation_errors`；其余合规证据继续批量提交，整轮降级为 `partial`，不会自动篡改时间、截断事实，也不会因一条坏数据丢弃整个批次。输出 schema 同步约束 URL、标题、摘要和来源名称的后端长度契约，并要求具体文章/公告 URL 与来源域名一致，禁止通用主页和搜索结果页；若整轮为 `failed`、`blocked` 或任何 `partial`，下一轮都缩短为 15 分钟独立重试，只有完整成功后才恢复 4 小时间隔，`next_interval_seconds` 会写入心跳。
 
 `scripts/run_stack.ps1` 默认每 4 小时启动一次 Codex 搜索。关闭该可选进程：
 
@@ -165,7 +179,7 @@ backend\.venv\Scripts\python.exe -X utf8 backend\scripts\control_plane_loop.py `
 
 停止时使用 `scripts/stop_stack.ps1`。启动器记录每个进程的 PID、可执行路径、完整命令行和创建时间；停止器全部匹配后才会终止进程和删除 PID 文件。
 
-`scripts/ensure_stack.ps1` 是幂等健康入口：它检查 `/health`、`/readyz`、前端，以及 Control Plane / reference-data / Codex 舆情 worker 的心跳和受跟踪进程身份，要求 `live_trading_enabled=false`；健康时返回 `already_running`，不健康时只通过受跟踪 PID 停止旧进程，再调用 `run_stack.ps1` 并复验安全状态。
+`scripts/ensure_stack.ps1` 是幂等健康入口：它检查 `/health`、`/readyz`、前端，以及 Control Plane、reference-data、日线增量刷新、全市场特征、股票目录刷新、结构概率校准、Codex 舆情与决策复核 worker 的心跳、配置和受跟踪进程身份，要求 `live_trading_enabled=false`；健康时返回 `already_running`，不健康时只通过受跟踪 PID 停止旧进程，再调用 `run_stack.ps1` 并复验安全状态。
 
 ```powershell
 cd D:\codex-A股交易
@@ -181,7 +195,7 @@ cd D:\codex-A股交易
 .\scripts\control_plane_task.ps1 -Action Uninstall
 ```
 
-安装会创建当前用户、Limited 权限的 `ZKTrading-ReviewOnly-ControlPlane` 任务，在登录时和设定间隔调用 ensure。任务使用 `MultipleInstances IgnoreNew`，不会并发启动多个 ensure。安装或触发后必须再次检查：
+安装会创建当前用户、Limited 权限的 `ZKTrading-ReviewOnly-ControlPlane` 任务，在登录时和设定间隔调用 ensure。重复触发没有结束时间，允许在电池供电时启动并继续运行，并使用 `MultipleInstances IgnoreNew` 避免并发启动多个 ensure。再次执行 `Install` 会安全迁移动作仍指向本项目的旧版布尔参数或旧调度设置。`Status` 的 `definition_valid=true`、`configuration_matches=true` 表示动作、间隔、身份和持续运行设置符合本次请求；`operational_ok=true` 进一步表示最近执行成功且下次触发时间正常。安装或触发后必须再次检查：
 
 ```powershell
 (Invoke-RestMethod http://127.0.0.1:8000/health).live_trading_enabled
@@ -196,7 +210,11 @@ Forecast Feedback 的一次 `label_due` 调用会在运行内复用板块成分�
 
 Sector Exposure 的 snapshot cutoff 使用规范化 UTC ISO 时间直接比较，保留微秒精度。全市场目录的外部 adapter 不可用时，Universe Backfill 还会从 append-only 板块成分快照和 legacy membership history 恢复本地已知股票池；该回退仍标记为 `degraded_local_partial`，不会冒充完整全市场目录。
 
-前端右栏的 Control Plane Observatory 只轮询 `GET /readyz` 与 `GET /api/control-plane/status`，页面隐藏时暂停、恢复时立即刷新，不会自动触发运行。它展示三个 worker、Market Pulse、Decision Snapshot、Forecast Feedback 和 Training Feedback；当 `forecast_outcomes=0` 时明确提示当前不能评价准确率。只有操作员点击原有控制面按钮时才会调用 `POST /api/control-plane/run-once`，并展示该次运行返回的逐步状态。
+模拟持仓的屏幕读回只接受已验证的同花顺 `mncg` / 模拟炒股窗口证据，并按账户层返回结构化持仓。未找到目标窗口、窗口证据过期或持仓表无法可靠解析时，状态保持不可用或未解析，不把它解释成空仓；其他窗口、真实账户、登录、资金或银证页面均不进入读回链路。整个 Sim Cockpit 仍要求 `live_trading_enabled=false`。
+
+前端右栏的“持续运行观测”只轮询 `GET /readyz` 与 `GET /api/control-plane/status`，页面隐藏时暂停、恢复时立即刷新，不会自动触发运行。它展示控制面、参考数据、日线增量刷新、全市场特征、市场脉冲、决策快照、预测反馈和训练反馈；当 `forecast_outcomes=0` 时明确提示当前不能评价准确率。只有操作员点击原有控制面按钮时才会调用 `POST /api/control-plane/run-once`，并展示该次运行返回的逐步状态。
+
+其中后台任务状态还会以中文展示“股票目录刷新”和“结构概率校准”。候选详情仅在校准分箱样本充足时展示“有限历史校准”，否则显示“校准样本不足”或不显示；结构分本身始终是未校准分数。
 
 ## 验收条件
 
@@ -208,6 +226,10 @@ Sector Exposure 的 snapshot cutoff 使用规范化 UTC ISO 时间直接比较�
 - 到期 stock/sector forecast 能形成 point-in-time Outcome；样本不足时评估明确为 `insufficient_data`，不输出未经支持的准确率结论。
 - 舆情上下文包含来源覆盖、新鲜度、Event Fact、Sector Thesis、板块信号和证据链接。
 - 全市场 backfill 显式区分 dry-run/apply，并报告 bar、amount 与最新横截面覆盖。
+- 全市场特征扫描只消费最新官方股票池的 `qfq/ready` 日线，保存输入修订并证明无变化重跑可全部复用；结构分明确标记为未校准分数，不表述为上涨概率。
+- 日线增量 worker 只在已完成交易日出现缺口时联网刷新，历史已最新时零远程刷新；单股失败保留旧数据并结构化降级。
+- 官方目录不完整或异常缩量时零落库；完整刷新也不删除旧快照和日线。
+- 结构校准不足时返回 `insufficient_data`；候选详情不宣称“极大概率”。
 - Disclosure Fact 修订、Sector Exposure 和 Forecast Ledger 的 `as_of` 查询均不返回截止时间以后才可用的数据。
 - reference-data worker 具有单例、有界超时、心跳和进程身份验证；某个数据源失败时保留结构化 `partial` 证据。
 - 前端显示真实状态，不再用静态新闻掩盖后端离线。

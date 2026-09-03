@@ -779,7 +779,7 @@ class ReferenceIngestService:
             code = match.group(1)
         if code.startswith(("600", "601", "603", "605", "688", "689")):
             return f"SH{code}"
-        if code.startswith(("000", "001", "002", "003", "300", "301")):
+        if code.startswith(("000", "001", "002", "003", "300", "301", "302")):
             return f"SZ{code}"
         return None
 

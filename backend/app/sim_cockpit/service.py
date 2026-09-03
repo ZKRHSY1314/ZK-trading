@@ -109,6 +109,129 @@ def _hash_text(value: str | None) -> str | None:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _positive_int(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return int(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _valid_window_rect(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    try:
+        left = int(value["left"])
+        top = int(value["top"])
+        if value.get("width") is not None and value.get("height") is not None:
+            width = int(value["width"])
+            height = int(value["height"])
+        else:
+            width = int(value["right"]) - left
+            height = int(value["bottom"]) - top
+    except (KeyError, TypeError, ValueError):
+        return False
+    return width > 0 and height > 0
+
+
+def _desktop_window_evidence_reasons(raw_payload: Any) -> list[str]:
+    if not isinstance(raw_payload, dict):
+        raw_payload = {}
+
+    reasons: list[str] = []
+    if raw_payload.get("source") != "desktop_adapter":
+        reasons.append("screen_click_requires_desktop_adapter_verification")
+    if raw_payload.get("detection_status") != "verified":
+        reasons.append("desktop_detection_not_verified")
+
+    window = raw_payload.get("window")
+    if not isinstance(window, dict) or not window:
+        reasons.append("screen_click_requires_detected_window")
+        return reasons
+    if not _positive_int(window.get("hwnd")):
+        reasons.append("desktop_window_hwnd_invalid")
+    if not _positive_int(window.get("pid")):
+        reasons.append("desktop_window_pid_invalid")
+    if not _valid_window_rect(window.get("rect")):
+        reasons.append("desktop_window_rect_invalid")
+    return reasons
+
+
+def verification_freshness(
+    verification: dict[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    age_seconds: float | None = None
+    if not verification:
+        reasons.append("no_window_verification")
+    else:
+        created_at = str(verification.get("created_at") or "")
+        try:
+            created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            else:
+                created = created.astimezone(timezone.utc)
+            current = now or datetime.now(timezone.utc)
+            if current.tzinfo is None:
+                current = current.replace(tzinfo=timezone.utc)
+            else:
+                current = current.astimezone(timezone.utc)
+            age_seconds = (current - created).total_seconds()
+            if age_seconds < -60:
+                reasons.append("window_verification_time_in_future")
+            elif age_seconds > MAX_VERIFICATION_AGE_SECONDS:
+                reasons.append("window_verification_expired")
+        except (TypeError, ValueError):
+            reasons.append("window_verification_time_unreadable")
+    return {
+        "fresh": not reasons,
+        "age_seconds": round(age_seconds, 2) if age_seconds is not None else None,
+        "max_age_seconds": MAX_VERIFICATION_AGE_SECONDS,
+        "blocked_reasons": reasons,
+    }
+
+
+def simulation_window_readiness(
+    verification: dict[str, Any] | None,
+    *,
+    live_trading_enabled: bool,
+) -> dict[str, Any]:
+    freshness = verification_freshness(verification)
+    reasons = list(freshness["blocked_reasons"])
+    if live_trading_enabled:
+        reasons.append("live_trading_enabled")
+    if verification:
+        reasons.extend(str(item) for item in verification.get("blocked_reasons") or [])
+        if verification.get("status") != "verified":
+            reasons.append("window_verification_not_verified")
+        if verification.get("live_trading_enabled"):
+            reasons.append("live_trading_enabled")
+        if verification.get("simulation_mode_detected") is not True:
+            reasons.append("simulation_mode_not_detected")
+        if verification.get("real_trading_blocked") is not True:
+            reasons.append("real_trading_not_blocked")
+        reasons.extend(_desktop_window_evidence_reasons(verification.get("raw_payload")))
+    reasons = sorted(set(reasons))
+    if verification and verification.get("status") == "blocked":
+        status = "blocked"
+    elif "live_trading_enabled" in reasons:
+        status = "blocked"
+    elif not reasons:
+        status = "verified"
+    else:
+        status = "needs_verification"
+    return {
+        "ready": not reasons,
+        "status": status,
+        "blocked_reasons": reasons,
+        "freshness": freshness,
+    }
+
+
 class SimCockpitService:
     """Verified Tonghuashun simulation account action gateway.
 
@@ -127,8 +250,11 @@ class SimCockpitService:
         latest_verification = self._latest_verification()
         latest_actions = self.latest_actions(limit=10)
         latest_readbacks = self.latest_readbacks(limit=10)
-        verified = bool(latest_verification and latest_verification.get("status") == "verified")
-        blocked = bool(latest_verification and latest_verification.get("status") == "blocked")
+        readiness = simulation_window_readiness(
+            latest_verification,
+            live_trading_enabled=settings.enable_live_trading,
+        )
+        verified = bool(readiness["ready"])
         latest_real_click = any(
             bool((item.get("execution") or {}).get("real_screen_click_executed")) for item in latest_actions[:1]
         )
@@ -136,8 +262,10 @@ class SimCockpitService:
             "schema_version": "sim_cockpit_status.v1",
             "stage": "SIM-COCKPIT-P2",
             "gateway": "tonghuashun_simulation_action_gateway",
-            "status": "blocked" if blocked else ("verified" if verified else "needs_verification"),
-            "simulation_actions_allowed": verified and not settings.enable_live_trading,
+            "status": readiness["status"],
+            "simulation_actions_allowed": verified,
+            "blocked_reasons": readiness["blocked_reasons"],
+            "verification_freshness": readiness["freshness"],
             "full_auto_simulation_enabled": True,
             "real_trading_blocked": True,
             "broker_api_enabled": False,
@@ -176,7 +304,9 @@ class SimCockpitService:
 
         best = detection.get("best_window") or {}
         visible_text = " ".join(str(item) for item in best.get("child_texts") or [])
-        window_title = best.get("title") or target_title
+        # target_title is only a caller-provided search hint. It must never be
+        # persisted or evaluated as proof that a desktop window was detected.
+        window_title = best.get("title")
         window_payload = self._verification_window_payload(best)
         raw_payload = {
             "source": "desktop_adapter",
@@ -187,9 +317,13 @@ class SimCockpitService:
             "blocked_reason_count": len(detection.get("blocked_reasons") or []),
         }
         detected_items = [
-            {"type": "desktop_window", "value": window_title, "confidence": 0.9 if best else 0.0},
-            {"type": "process_name", "value": best.get("process_name"), "confidence": 0.9 if best.get("process_name") else 0.0},
-            {"type": "window_rect", "value": best.get("rect"), "confidence": 0.8 if best.get("rect") else 0.0},
+            item
+            for item in [
+                {"type": "desktop_window", "value": window_title, "confidence": 0.9},
+                {"type": "process_name", "value": best.get("process_name"), "confidence": 0.9},
+                {"type": "window_rect", "value": best.get("rect"), "confidence": 0.8},
+            ]
+            if item["value"]
         ]
         verification = self.verify_window(
             window_title=window_title,
@@ -202,8 +336,10 @@ class SimCockpitService:
         return {**detection, "verification": verification}
 
     def _verification_window_payload(self, window: dict[str, Any]) -> dict[str, Any]:
+        if not window:
+            return {}
         uia = window.get("uia") or {}
-        return {
+        payload = {
             "hwnd": window.get("hwnd"),
             "pid": window.get("pid"),
             "title": window.get("title"),
@@ -225,6 +361,11 @@ class SimCockpitService:
                 "texts": (uia.get("texts") or [])[:80],
             },
         }
+        return {
+            key: value
+            for key, value in payload.items()
+            if value is not None and value != [] and value != {} and value != ""
+        }
 
     def verify_window(
         self,
@@ -237,7 +378,22 @@ class SimCockpitService:
     ) -> dict[str, Any]:
         detected_items = detected_items or []
         raw_payload = raw_payload or {}
-        evidence_text = _compact_text(window_title, visible_text, detected_items, raw_payload)
+        raw_window = raw_payload.get("window") if isinstance(raw_payload.get("window"), dict) else {}
+        legacy_window_identity = {
+            key: raw_payload.get(key)
+            for key in ("process_name", "process_path", "window_class", "title")
+            if raw_payload.get(key)
+        }
+        # Control-plane metadata such as ``needs_simulation_window`` describes
+        # detector state, not visible desktop evidence.  Only evaluate actual
+        # window identity/text (plus the legacy identity shape) as proof.
+        evidence_text = _compact_text(
+            window_title,
+            visible_text,
+            detected_items,
+            raw_window,
+            legacy_window_identity,
+        )
         positive_terms = _terms_found(evidence_text, SIMULATION_POSITIVE_TERMS)
         process_terms = _terms_found(evidence_text, TONGHUASHUN_PROCESS_TERMS)
         dangerous_terms = _terms_found(evidence_text, DANGEROUS_REAL_TRADING_TERMS)
@@ -392,10 +548,16 @@ class SimCockpitService:
         verification = self._verification_for_action(window_verification_id)
         if not verification or verification.get("status") != "verified":
             blocked_reasons.append("blocked_needs_verified_simulation_window")
-        elif verification.get("live_trading_enabled"):
+        if verification and verification.get("live_trading_enabled"):
             blocked_reasons.append("blocked_verified_window_live_trading_enabled")
-        elif execution_mode == "screen_click_simulation":
-            blocked_reasons.extend(self._screen_click_verification_reasons(verification))
+        if verification:
+            readiness = simulation_window_readiness(
+                verification,
+                live_trading_enabled=settings.enable_live_trading,
+            )
+            blocked_reasons.extend(readiness["blocked_reasons"])
+            if execution_mode == "screen_click_simulation":
+                blocked_reasons.extend(self._screen_click_verification_reasons(verification))
 
         if settings.enable_live_trading:
             blocked_reasons.append("blocked_live_trading_enabled")
@@ -637,6 +799,23 @@ class SimCockpitService:
                 quantity=quantity,
                 order_id=order_id,
             )
+            if normalized_type == "positions":
+                interpretation = result.get("interpretation")
+                if isinstance(interpretation, dict):
+                    result = {
+                        **result,
+                        "readback_type": "positions",
+                        "parsed": interpretation.get("parsed") is True,
+                        "requires_visual_or_ocr_review": bool(
+                            interpretation.get("requires_visual_or_ocr_review")
+                        ),
+                        "scope": str(interpretation.get("scope") or "full_account"),
+                        "positions": (
+                            interpretation.get("positions")
+                            if isinstance(interpretation.get("positions"), list)
+                            else []
+                        ),
+                    }
             if result.get("status") == "blocked" and result.get("reason"):
                 reasons = [str(result["reason"])]
 
@@ -923,22 +1102,16 @@ class SimCockpitService:
         return reasons
 
     def _screen_click_verification_reasons(self, verification: dict[str, Any]) -> list[str]:
-        reasons: list[str] = []
-        raw_payload = verification.get("raw_payload") or {}
-        if raw_payload.get("source") != "desktop_adapter":
-            reasons.append("screen_click_requires_desktop_adapter_verification")
-        if not raw_payload.get("window"):
-            reasons.append("screen_click_requires_detected_window")
-        created_at = str(verification.get("created_at") or "")
-        try:
-            created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-            age_seconds = (now_utc - created.replace(tzinfo=None)).total_seconds()
-            if age_seconds > MAX_VERIFICATION_AGE_SECONDS:
-                reasons.append("screen_click_window_verification_expired")
-        except ValueError:
+        readiness = simulation_window_readiness(
+            verification,
+            live_trading_enabled=settings.enable_live_trading,
+        )
+        reasons = list(readiness["blocked_reasons"])
+        if "window_verification_expired" in reasons:
+            reasons.append("screen_click_window_verification_expired")
+        if "window_verification_time_unreadable" in reasons:
             reasons.append("screen_click_window_verification_time_unreadable")
-        return reasons
+        return sorted(set(reasons))
 
     def _insert_readback(
         self,

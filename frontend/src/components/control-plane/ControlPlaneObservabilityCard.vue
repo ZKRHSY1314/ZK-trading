@@ -2,7 +2,7 @@
   <article class="card observability-card" data-testid="control-plane-observability">
     <div class="observability-heading">
       <div>
-        <p>Control Plane Observatory</p>
+        <p>控制平面运行观测</p>
         <h2>持续运行与决策闭环</h2>
       </div>
       <span class="status-badge" :class="statusTone(overallStatus)">
@@ -15,12 +15,12 @@
       <span>{{ checkedAtLabel }}</span>
     </div>
 
-    <p v-if="error" class="observability-error">{{ error }}</p>
+    <p v-if="error" class="observability-error">{{ detailLabel(error) }}</p>
     <p v-if="loading && !readiness && !controlPlane" class="observability-loading">
       正在读取心跳和控制面状态…
     </p>
 
-    <div class="worker-list" aria-label="后台 worker 状态">
+    <div class="worker-list" aria-label="后台任务状态">
       <div
         v-for="worker in workerRows"
         :key="worker.key"
@@ -32,21 +32,22 @@
           <strong>{{ worker.label }}</strong>
           <small>
             {{ statusLabel(worker.status) }}
-            <template v-if="worker.cycle !== null"> · cycle {{ worker.cycle }}</template>
+            <template v-if="worker.cycle !== null"> · 周期 {{ worker.cycle }}</template>
           </small>
         </div>
         <time>{{ ageLabel(worker.ageSeconds, worker.completedAt) }}</time>
       </div>
+      <p class="calibration-note">结构概率仅为有限历史校准，不把结构分当作上涨概率。</p>
     </div>
 
     <div class="stage-list">
       <section class="stage" data-testid="observability-market-pulse">
         <div class="stage-title">
-          <strong>Market Pulse</strong>
+          <strong>市场脉搏</strong>
           <span :class="statusTone(marketPulseStatus)">{{ statusLabel(marketPulseStatus) }}</span>
         </div>
         <p>
-          新鲜度 {{ marketPulse?.freshness_status || "--" }}
+          新鲜度 {{ statusLabel(marketPulse?.freshness_status || "missing") }}
           <template v-if="marketPulse?.context_age_hours != null">
             · {{ formatHours(marketPulse.context_age_hours) }} 小时前
           </template>
@@ -57,13 +58,13 @@
           · 板块 {{ marketPulse?.sector_count ?? 0 }}
         </p>
         <p v-if="pulseWarnings.length" class="stage-warning">
-          质量提示：{{ pulseWarnings.join("、") }}
+          质量提示：{{ pulseWarnings.map(detailLabel).join("、") }}
         </p>
       </section>
 
       <section class="stage" data-testid="observability-decision-snapshot">
         <div class="stage-title">
-          <strong>Decision Snapshot</strong>
+          <strong>决策快照</strong>
           <span :class="statusTone(decisionSnapshot?.status || 'missing')">
             {{ statusLabel(decisionSnapshot?.status || "missing") }}
           </span>
@@ -74,15 +75,15 @@
           · 数据缺口 {{ decisionSnapshot?.summary.data_gap_count ?? 0 }}
         </p>
         <p v-if="topDecisionBlocker" class="stage-warning">
-          首要拦截：{{ topDecisionBlocker.reason }} ({{ topDecisionBlocker.count }})
+          首要拦截：{{ detailLabel(topDecisionBlocker.reason) }}（{{ topDecisionBlocker.count }}）
         </p>
       </section>
 
       <section class="stage" data-testid="observability-forecast-feedback">
         <div class="stage-title">
-          <strong>Forecast Feedback</strong>
+          <strong>预测反馈</strong>
           <span :class="!forecastDataAvailable ? 'tone-muted' : forecastOutcomes === 0 ? 'tone-warning' : 'tone-ok'">
-            {{ !forecastDataAvailable ? "unknown" : forecastOutcomes === 0 ? "insufficient_data" : "tracking" }}
+            {{ statusLabel(!forecastDataAvailable ? "unknown" : forecastOutcomes === 0 ? "insufficient_data" : "tracking") }}
           </span>
         </div>
         <p>
@@ -101,7 +102,7 @@
 
       <section class="stage" data-testid="observability-training-feedback">
         <div class="stage-title">
-          <strong>Training Feedback</strong>
+          <strong>训练反馈</strong>
           <span :class="statusTone(training?.status || 'missing')">
             {{ statusLabel(training?.status || "missing") }}
           </span>
@@ -111,21 +112,21 @@
           · 待成熟 {{ training?.pending_outcome_count ?? 0 }}
         </p>
         <p v-if="training?.blocked_reasons?.length" class="stage-warning">
-          {{ training.blocked_reasons.join("、") }}
+          {{ training.blocked_reasons.map(detailLabel).join("、") }}
         </p>
       </section>
     </div>
 
     <div v-if="attentionReasons.length" class="attention-box">
       <strong>需关注</strong>
-      <span>{{ attentionReasons.join("、") }}</span>
+      <span>{{ attentionReasons.map(detailLabel).join("、") }}</span>
     </div>
 
     <div v-if="lastRun?.steps?.length" class="last-run" data-testid="control-plane-last-run-steps">
       <div class="last-run-title">
         <strong>最近手工运行</strong>
         <span>
-          {{ lastRun.profile || lastRun.requested_profile || "adaptive" }}
+          {{ profileLabel(lastRun.profile || lastRun.requested_profile || "adaptive") }}
           · {{ formatDuration(lastRun.duration_ms) }}
         </span>
       </div>
@@ -133,9 +134,9 @@
         <span>{{ stepLabel(step.step_id) }}</span>
         <strong :class="statusTone(step.status)">{{ statusLabel(step.status) }}</strong>
         <em>{{ formatDuration(step.duration_ms) }}</em>
-        <small v-if="step.reason">{{ step.reason }}</small>
+        <small v-if="step.reason">{{ detailLabel(step.reason) }}</small>
       </div>
-      <p v-if="lastRun.next_action" class="next-action">{{ lastRun.next_action }}</p>
+      <p v-if="lastRun.next_action" class="next-action">{{ detailLabel(lastRun.next_action) }}</p>
     </div>
   </article>
 </template>
@@ -161,9 +162,14 @@ const props = defineProps<{
 }>();
 
 const workerCatalog = [
-  { key: "control_plane", label: "Control Plane", testId: "control-plane" },
-  { key: "codex_market_pulse", label: "Codex Market Pulse", testId: "codex-market-pulse" },
-  { key: "reference_data", label: "Reference Data", testId: "reference-data" },
+  { key: "control_plane", label: "运行控制平面", testId: "control-plane" },
+  { key: "codex_market_pulse", label: "市场脉搏分析", testId: "codex-market-pulse" },
+  { key: "reference_data", label: "基础数据服务", testId: "reference-data" },
+  { key: "full_market_features", label: "全市场特征扫描", testId: "full-market-features" },
+  { key: "market_history_refresh", label: "日线增量刷新", testId: "market-history-refresh" },
+  { key: "capital_flow_refresh", label: "资金流同步", testId: "capital-flow-refresh" },
+  { key: "instrument_catalog_refresh", label: "股票目录刷新", testId: "instrument-catalog-refresh" },
+  { key: "full_market_calibration", label: "结构概率校准", testId: "full-market-calibration" },
 ] as const;
 
 const overallStatus = computed(() => props.controlPlane?.status || props.readiness?.status || "missing");
@@ -227,7 +233,112 @@ function statusTone(status: OperationalStatus) {
 }
 
 function statusLabel(status: OperationalStatus) {
-  return String(status || "unknown").replace(/_/g, " ");
+  const normalized = String(status || "unknown").toLowerCase();
+  const labels: Record<string, string> = {
+    ready: "就绪",
+    healthy: "健康",
+    completed: "已完成",
+    fresh: "新鲜",
+    current: "当前",
+    tracking: "跟踪中",
+    attention: "需关注",
+    partial: "部分可用",
+    degraded: "降级",
+    stale: "已过期",
+    insufficient_data: "数据不足",
+    insufficient_samples: "样本不足",
+    blocked: "已阻断",
+    failed: "失败",
+    invalid: "数据无效",
+    missing: "暂无数据",
+    unknown: "未知",
+    empty: "暂无数据",
+    available: "可用",
+    unavailable: "不可用",
+    running: "运行中",
+    pending: "等待中",
+    skipped: "已跳过",
+  };
+  return labels[normalized] ?? normalized.replace(/_/g, " ");
+}
+
+function profileLabel(profile?: string | null) {
+  const labels: Record<string, string> = {
+    adaptive: "自适应流程",
+    pulse: "市场脉搏",
+    training: "训练流程",
+    maintenance: "维护流程",
+    full: "完整流程",
+  };
+  const normalized = String(profile || "adaptive").toLowerCase();
+  return labels[normalized] ?? normalized;
+}
+
+function detailLabel(value?: string | null) {
+  const text = String(value || "").trim();
+  if (!text) return "--";
+  if (/failed to fetch|networkerror|load failed/i.test(text)) return "无法连接数据服务";
+  const normalized = text.toLowerCase();
+  const labels: Record<string, string> = {
+    training_feedback_insufficient_samples: "训练反馈样本不足",
+    insufficient_resolved_market_samples: "已成熟市场样本不足",
+    control_plane_heartbeat_degraded: "控制平面心跳降级",
+    control_plane_heartbeat_stale: "控制平面心跳已过期",
+    codex_market_pulse_heartbeat_degraded: "市场脉搏心跳降级",
+    reference_data_heartbeat_degraded: "基础数据心跳降级",
+    full_market_features_heartbeat_degraded: "全市场特征扫描心跳降级",
+    full_market_features_heartbeat_stale: "全市场特征扫描心跳已过期",
+    market_history_refresh_heartbeat_running: "日线增量刷新正在运行",
+    market_history_refresh_heartbeat_missing: "日线增量刷新心跳暂缺",
+    market_history_refresh_heartbeat_degraded: "日线增量刷新心跳降级",
+    market_history_refresh_heartbeat_stale: "日线增量刷新心跳已过期",
+    capital_flow_refresh_heartbeat_running: "资金流同步正在运行",
+    capital_flow_refresh_heartbeat_missing: "资金流同步心跳暂缺",
+    capital_flow_refresh_heartbeat_degraded: "资金流数据源暂时降级",
+    capital_flow_refresh_heartbeat_stale: "资金流同步心跳已过期",
+    instrument_catalog_refresh_heartbeat_running: "股票目录刷新正在运行",
+    instrument_catalog_refresh_heartbeat_missing: "股票目录刷新心跳暂缺",
+    instrument_catalog_refresh_heartbeat_degraded: "股票目录刷新心跳降级",
+    instrument_catalog_refresh_heartbeat_stale: "股票目录刷新心跳已过期",
+    full_market_calibration_heartbeat_running: "结构概率校准正在运行",
+    full_market_calibration_heartbeat_missing: "结构概率校准心跳暂缺",
+    full_market_calibration_heartbeat_degraded: "结构概率校准心跳降级",
+    full_market_calibration_heartbeat_stale: "结构概率校准心跳已过期",
+    decision_snapshot_missing: "决策快照暂缺",
+    market_data_stale: "市场数据已过期",
+    no_action: "暂不操作",
+    ma_breakdown: "跌破均线",
+    volume_abnormal: "成交量异常",
+    high_volatility: "高波动",
+    a_kill_repair: "A杀修复期",
+  };
+  if (labels[normalized]) return labels[normalized];
+  if (/[\u3400-\u9fff]/.test(text)) return text;
+  return text
+    .replace(/control[_ ]plane/gi, "控制平面")
+    .replace(/market[_ ]pulse/gi, "市场脉搏")
+    .replace(/reference[_ ]data/gi, "基础数据")
+    .replace(/instrument[_ ]catalog[_ ]refresh/gi, "股票目录刷新")
+    .replace(/full[_ ]market[_ ]calibration/gi, "结构概率校准")
+    .replace(/decision[_ ]snapshot/gi, "决策快照")
+    .replace(/training[_ ]feedback/gi, "训练反馈")
+    .replace(/heartbeat/gi, "心跳")
+    .replace(/degraded/gi, "降级")
+    .replace(/stale/gi, "已过期")
+    .replace(/missing/gi, "暂缺")
+    .replace(/failed/gi, "失败")
+    .replace(/blocked/gi, "已阻断")
+    .replace(/ma[_ ]breakdown/gi, "跌破均线")
+    .replace(/high[_ ]volatility/gi, "高波动")
+    .replace(/volume[_ ]abnormal/gi, "成交量异常")
+    .replace(/insufficient[_ ]samples/gi, "样本不足")
+    .replace(/insufficient[_ ]data/gi, "数据不足")
+    .replace(/freshness/gi, "新鲜度")
+    .replace(/unavailable/gi, "不可用")
+    .replace(/unknown/gi, "未知")
+    .replace(/timeout/gi, "超时")
+    .replace(/errors?/gi, "错误")
+    .replace(/_/g, " ");
 }
 
 function ageLabel(ageSeconds?: number | null, completedAt?: string | null) {
@@ -260,17 +371,17 @@ function formatHours(value: number) {
 function formatDuration(value?: number) {
   if (value == null || !Number.isFinite(Number(value))) return "--";
   const milliseconds = Number(value);
-  return milliseconds < 1000 ? `${milliseconds}ms` : `${(milliseconds / 1000).toFixed(1)}s`;
+  return milliseconds < 1000 ? `${milliseconds}毫秒` : `${(milliseconds / 1000).toFixed(1)}秒`;
 }
 
 function stepLabel(stepId: string) {
   return {
-    market_pulse: "Market Pulse",
-    market_data_refresh: "Market Data",
-    decision_snapshot: "Decision Snapshot",
-    simulation_cycle: "Simulation Cycle",
-    forecast_feedback: "Forecast Feedback",
-    training_feedback: "Training Feedback",
+    market_pulse: "市场脉搏",
+    market_data_refresh: "市场数据刷新",
+    decision_snapshot: "决策快照",
+    simulation_cycle: "模拟循环",
+    forecast_feedback: "预测反馈",
+    training_feedback: "训练反馈",
   }[stepId] || stepId;
 }
 </script>
@@ -356,6 +467,13 @@ function stepLabel(stepId: string) {
 .worker-list {
   display: grid;
   gap: 6px;
+}
+
+.calibration-note {
+  margin: 1px 2px 0;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .worker-row {

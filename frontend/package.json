@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "vue-tsc --noEmit",
+    "test": "vue-tsc --noEmit && node --test scripts/ui-contract.test.mjs",
     "build": "vue-tsc && vite build",
     "preview": "vite preview",
     "smoke": "node scripts/smoke.mjs",

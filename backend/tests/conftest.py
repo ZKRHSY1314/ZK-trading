@@ -69,6 +69,23 @@ class MockProvider(MarketDataProvider):
         )
 
 
+@pytest.fixture(autouse=True)
+def _never_reach_the_local_tonghuashun_client(monkeypatch):
+    """Keep the suite off the live 同花顺 client.
+
+    DAILY_BAR_SOURCE_POLICY now defaults to ``tonghuasun_first``, and the
+    adapter talks to a real desktop client on loopback. Any test that exercises
+    a source chain without pinning a policy would therefore reach it and get
+    live bars: that is how this fixture came to exist - four source-chain tests
+    started asserting stub dates against today's real quotes.
+
+    Tests that mean to exercise the local adapter pass ``source_policy``
+    explicitly, which overrides this default and is unaffected.
+    """
+
+    monkeypatch.setattr(settings, "daily_bar_source_policy", "akshare_first")
+
+
 @pytest.fixture(scope="session")
 def test_db():
     temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".sqlite3")

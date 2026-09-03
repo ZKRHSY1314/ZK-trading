@@ -18,3 +18,8 @@ def test_limit_up_threshold():
     assert limit_up_threshold("bse") == 29.0
     assert limit_up_threshold("unknown") == 9.8
     assert limit_up_threshold("main", {"main": 9.7}) == 9.7
+
+
+def test_new_chinext_302_prefix_uses_twenty_percent_board_rules():
+    assert infer_board_type("SZ302132", "中航成飞") == "chinext"
+    assert limit_up_threshold(infer_board_type("SZ302132", "中航成飞")) == 19.5

@@ -11,7 +11,12 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
+from app.candidates.full_market_score_calibration import (
+    FullMarketScoreCalibrationService,
+)
 from app.config import PROJECT_ROOT, settings
+from app.data.fundamentals import FundamentalResolver
+from app.data.market_history import MarketHistoryStore
 from app.data.trading_calendar import trading_session_age
 from app.forecasting import ForecastLedger
 from app.learning.structure_scoring import ObservableStructureScorer
@@ -57,9 +62,19 @@ class StrategySelectionV2Service:
 
     def __init__(self, store: SQLiteStore | None = None, config_path: Path | None = None) -> None:
         self.store = store or SQLiteStore(settings.database_path)
-        self.store.init()
-        self._sector_exposure = SectorExposureResolver(self.store)
+        if store is None:
+            # Standalone scripts still bootstrap their own database, while
+            # API/control-plane callers reuse the store initialized during app
+            # lifespan. Re-running schema migrations on every read request can
+            # otherwise contend with the reference-data writer and return 500.
+            self.store.init()
+        self._sector_exposure = SectorExposureResolver(self.store, initialize_store=False)
+        self._full_market_calibration = FullMarketScoreCalibrationService(
+            store=self.store,
+            history_store=MarketHistoryStore(),
+        )
         self.config = self._load_config(config_path or CONFIG_PATH)
+        self._fundamentals: FundamentalResolver | None = None
 
     def run(
         self,
@@ -201,7 +216,8 @@ class StrategySelectionV2Service:
             "execution_allowed": False,
             "source": (
                 "candidate_lifecycle+stock_profiles+auto_discovered_candidates+"
-                "potential_search_items+candidate_scores+daily_bar_cache+realtime_market_events+"
+                "full_market_feature_state+potential_search_items+candidate_scores+"
+                "daily_bar_cache+realtime_market_events+"
                 "public_opinion_sector_signals"
             ),
             "config_version": self.config.get("version", "1.0"),
@@ -473,6 +489,83 @@ class StrategySelectionV2Service:
             merged["symbol"] = symbol
             merged["profile_raw"] = profile_raw
 
+        if historical_replay:
+            full_market_rows: list[dict[str, Any]] = []
+            if self.store.fetch_one(
+                "SELECT 1 AS present FROM full_market_feature_state LIMIT 1"
+            ):
+                self._mark_pit_degraded(
+                    point_in_time,
+                    source="full_market_feature_state",
+                    reason="mutable full-market derived state excluded from historical replay",
+                    excluded=True,
+                )
+        else:
+            full_market_rows = self.store.fetch_all(
+                """
+                SELECT symbol, name, trade_date, current_price, pct_change,
+                       volume, amount, score AS structure_score, tier,
+                       discovery_type, source, reasons_json, features_json,
+                       updated_at
+                FROM full_market_feature_state
+                WHERE is_candidate = 1
+                  AND date(trade_date) <= date(?)
+                  AND datetime(updated_at) <= datetime(?)
+                ORDER BY score DESC, symbol
+                LIMIT ?
+                """,
+                (as_of_date, as_of, limit),
+            )
+
+        for row in full_market_rows:
+            symbol = self._normalize_symbol(row.get("symbol"))
+            if not symbol:
+                continue
+            structure_score = self._float(row.get("structure_score")) or 0.0
+            merged = by_symbol.setdefault(symbol, {"symbol": symbol})
+            merged.setdefault("_evidence_sources", []).append(
+                "full_market_feature_state"
+            )
+            merged.setdefault("_source_scores", {})[
+                "full_market_feature_state"
+            ] = structure_score
+            for key in (
+                "name",
+                "trade_date",
+                "current_price",
+                "pct_change",
+                "volume",
+                "amount",
+                "source",
+                "updated_at",
+            ):
+                if row.get(key) is not None and merged.get(key) is None:
+                    merged[key] = row[key]
+            if merged.get("score") is None:
+                merged["score"] = structure_score
+            if merged.get("rating") is None:
+                merged["rating"] = row.get("tier")
+            merged["symbol"] = symbol
+            calibration = self._full_market_calibration.map_score(structure_score)
+            merged["full_market_scan"] = {
+                "score": structure_score,
+                "score_semantics": "uncalibrated_structure_score",
+                "probability_semantics": "limited_historical_calibration",
+                "calibrated_probability": (
+                    calibration.get("probability")
+                    if calibration.get("status") == "ready"
+                    else None
+                ),
+                "calibration": calibration,
+                "tier": row.get("tier"),
+                "discovery_type": row.get("discovery_type"),
+                "trade_date": row.get("trade_date"),
+                "reasons": self._json(row.get("reasons_json"), default=[]),
+                "features": self._json(row.get("features_json"), default={}),
+                "source": row.get("source"),
+                "updated_at": row.get("updated_at"),
+            }
+
         for row in self.store.fetch_all(
             """
             SELECT adc.symbol, adc.name, adc.trade_date, adc.current_price,
@@ -699,6 +792,7 @@ class StrategySelectionV2Service:
               AND trade_date != 'ERROR'
               AND date(trade_date) <= date(?)
               AND close IS NOT NULL
+              AND (quality_status IS NULL OR LOWER(quality_status) IN ('ready', 'ok', 'valid'))
             """,
             (*unique, as_of_date),
         )
@@ -751,6 +845,7 @@ class StrategySelectionV2Service:
                 WHERE symbol IN ({placeholders})
                   AND trade_date != 'ERROR'
                   AND date(trade_date) <= date(?)
+                  AND (quality_status IS NULL OR LOWER(quality_status) IN ('ready', 'ok', 'valid'))
             ),
             basis AS (
                 SELECT symbol
@@ -1106,6 +1201,24 @@ class StrategySelectionV2Service:
         if market_cap and market_cap > 10000:
             market_cap = round(market_cap / 100000000, 2)
         pb = self._float(row.get("pb"))
+        # stock_profiles is empty in practice, which left every market-cap and
+        # PB gate below permanently dark. Fall back to the same snapshot source
+        # the backtest uses so the two paths gate on identical inputs.
+        if market_cap is None or pb is None:
+            if self._fundamentals is None:
+                self._fundamentals = FundamentalResolver(self.store)
+            latest_close = closes[-1] if closes else None
+            feature_symbol = str(row.get("symbol") or "")
+            if latest_close and feature_symbol:
+                resolved = self._fundamentals.resolve(
+                    feature_symbol,
+                    latest_close,
+                    as_of=as_of,
+                )
+                if market_cap is None:
+                    market_cap = resolved.market_cap_billion
+                if pb is None:
+                    pb = resolved.pb
         cost_price = self._float(row.get("avg_cost") or raw_profile.get("avg_cost"))
         if cost_price is None and len(closes) >= 20:
             cost_price = mean(closes[-60:] if len(closes) >= 60 else closes)
@@ -1782,6 +1895,7 @@ class StrategySelectionV2Service:
             "code": code,
             "name": row.get("name"),
             "evidence_sources": list(row.get("evidence_sources") or []),
+            "full_market_scan": row.get("full_market_scan"),
             "strategy_id": strategy_id,
             "strategy_candidates": strategies,
             "position_class": position_class,

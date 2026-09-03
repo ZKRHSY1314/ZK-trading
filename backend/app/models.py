@@ -34,6 +34,45 @@ class MarketSnapshot(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class CapitalFlowSnapshot(BaseModel):
+    symbol: str | None = None
+    status: str = "unavailable"
+    scope: str = "symbol"
+    source: str = "unavailable"
+    provider: str | None = None
+    upstream: str | None = None
+    endpoint: str | None = None
+    source_url: str | None = None
+    source_semantics: str | None = None
+    as_of: str | None = None
+    retrieved_at: str | None = None
+    freshness: str = "unavailable"
+    quality_status: str = "unavailable"
+    trading_calendar_source: str | None = None
+    last_known: bool = False
+    unit: str | None = None
+    net_inflow: float | None = None
+    main_inflow: float | None = None
+    main_outflow: float | None = None
+    retail_inflow: float | None = None
+    retail_outflow: float | None = None
+    main_net_inflow: float | None = None
+    main_net_inflow_ratio: float | None = None
+    super_large_order_net: float | None = None
+    super_large_order_net_ratio: float | None = None
+    large_order_net: float | None = None
+    large_order_net_ratio: float | None = None
+    medium_order_net: float | None = None
+    medium_order_net_ratio: float | None = None
+    small_order_net: float | None = None
+    small_order_net_ratio: float | None = None
+    content_hash: str | None = None
+    reason: str | None = None
+    review_only: bool = True
+    simulation_only: bool = True
+    live_trading_enabled: bool = False
+
+
 class RuleHit(BaseModel):
     rule_id: str
     name: str
@@ -48,6 +87,8 @@ class RuleHit(BaseModel):
     layer: str = "rules"
     trigger_level: str = "soft"
     source: str = "rules"
+    evaluation: str = "pass"
+    missing_inputs: list[str] = Field(default_factory=list)
 
 
 class RiskBlockCause(BaseModel):
@@ -73,6 +114,8 @@ class CandidateDecision(BaseModel):
     tier: CandidateTier
     blocked: bool
     hits: list[RuleHit]
+    unknown_rule_ids: list[str] = Field(default_factory=list)
+    missing_inputs: list[str] = Field(default_factory=list)
 
 
 class KnowledgeContext(BaseModel):
@@ -129,6 +172,25 @@ class SimulationPositionView(BaseModel):
     quantity: int
     sellable_quantity: int
     avg_cost: float
+    mark_price: float | None = None
+    previous_close: float | None = None
+    market_value: float | None = None
+    unrealized_pnl: float | None = None
+    today_pnl: float | None = None
+    mark_source: str = "unavailable"
+    mark_as_of: str | None = None
+    freshness: str = "unavailable"
+
+
+class SimulationScreenPositionView(BaseModel):
+    symbol: str
+    name: str | None = None
+    quantity: int
+    sellable_quantity: int | None = None
+    avg_cost: float | None = None
+    mark_price: float | None = None
+    market_value: float | None = None
+    today_pnl: float | None = None
 
 
 class SimulationAccountView(BaseModel):
@@ -137,6 +199,23 @@ class SimulationAccountView(BaseModel):
     cash: float
     initial_cash: float
     positions: list[SimulationPositionView] = Field(default_factory=list)
+    total_assets: float | None = None
+    market_value: float | None = None
+    unrealized_pnl: float | None = None
+    today_pnl: float | None = None
+    today_pnl_scope: str = "open_positions_mark_to_previous_close"
+    position_ratio: float | None = None
+    valuation_status: str = "unavailable"
+    valuation_as_of: str | None = None
+    freshness: str = "unavailable"
+    valuation_warnings: list[str] = Field(default_factory=list)
+    screen_snapshot_status: str = "unavailable"
+    screen_snapshot_reason: str | None = None
+    screen_snapshot_scope: str | None = None
+    screen_snapshot_as_of: str | None = None
+    screen_positions: list[SimulationScreenPositionView] = Field(default_factory=list)
+    simulation_only: bool = True
+    live_trading_enabled: bool = False
 
 
 class SimulationPlan(BaseModel):
@@ -419,6 +498,8 @@ class DailyBarCache(BaseModel):
     volume: float | None = None
     amount: float | None = None
     source: str
+    adjustment_mode: str = "unknown"
+    volume_unit: str = "unknown"
     quality_status: str
     created_at: str | None = None
     updated_at: str | None = None

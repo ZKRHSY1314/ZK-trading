@@ -148,6 +148,69 @@ def test_cycle_exception_is_recorded_and_does_not_abort_the_next_cycle(
     assert final_payload["status"] == "completed"
 
 
+def test_unsuccessful_reference_cycle_retries_before_regular_interval(
+    tmp_path,
+) -> None:
+    heartbeat = tmp_path / "reference-data-heartbeat.json"
+    sleeps: list[float] = []
+
+    class _PartialThenCompleteService:
+        calls = 0
+
+        def run(self, **_):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                return {
+                    **_completed_result(),
+                    "status": "partial",
+                    "sectors": {
+                        "status": "partial",
+                        "membership_records_written": 0,
+                    },
+                }
+            return _completed_result()
+
+    exit_code = reference_data_loop.main(
+        ["--max-cycles", "2", "--interval-seconds", "14400", "--skip-sox"],
+        service_factory=_PartialThenCompleteService,
+        heartbeat_path=heartbeat,
+        sleep_fn=sleeps.append,
+    )
+
+    assert exit_code == 1
+    assert _PartialThenCompleteService.calls == 2
+    assert sleeps == [900]
+    final_payload = json.loads(heartbeat.read_text(encoding="utf-8"))
+    assert final_payload["status"] == "completed"
+    assert final_payload["next_interval_seconds"] == 14400
+
+
+def test_reference_summary_keeps_section_error_evidence() -> None:
+    result = _completed_result()
+    result["status"] = "partial"
+    result["sectors"] = {
+        "status": "partial",
+        "membership_records_written": 2,
+        "errors": [
+            {
+                "source": "akshare.stock_board_industry_cons_em",
+                "error": "upstream timed out",
+            }
+        ],
+    }
+
+    summary = reference_data_loop._result_summary(result)
+
+    assert summary["source_errors"] == {
+        "sectors": [
+            {
+                "source": "akshare.stock_board_industry_cons_em",
+                "error": "upstream timed out",
+            }
+        ]
+    }
+
+
 def test_blocked_finite_worker_returns_nonzero_without_calling_service(
     tmp_path,
     monkeypatch,

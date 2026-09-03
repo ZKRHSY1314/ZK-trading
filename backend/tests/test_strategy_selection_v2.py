@@ -34,6 +34,17 @@ def _reset(store) -> None:
             conn.execute(f"DELETE FROM {table}")
 
 
+def _insert_potential_run(connection) -> int:
+    cursor = connection.execute(
+        """
+        INSERT INTO potential_search_runs(status, source)
+        VALUES ('completed', 'pytest')
+        """
+    )
+    assert cursor.lastrowid is not None
+    return int(cursor.lastrowid)
+
+
 def _insert_profile(
     store,
     symbol: str,
@@ -326,6 +337,7 @@ def test_strategy_selection_v2_uses_potential_items_and_filters_unit_test_only_p
         test_db, "SZ300007", [12.6 + (i % 4) * 0.05 for i in range(211)], last_volume_ratio=1.0
     )
     with test_db.connect() as conn:
+        run_id = _insert_potential_run(conn)
         conn.execute(
             """
             INSERT INTO potential_search_items(
@@ -333,9 +345,10 @@ def test_strategy_selection_v2_uses_potential_items_and_filters_unit_test_only_p
                 amount, lifecycle_state, potential_score, reasons_json,
                 components_json, source, raw_json
             )
-            VALUES (1, 'SH600000', 'real-candidate', 10.5, 6.2, 3.1,
+            VALUES (?, 'SH600000', 'real-candidate', 10.5, 6.2, 3.1,
                     120000000, 'pending_review', 88, '[]', '{}', 'fixture', '{}')
-            """
+            """,
+            (run_id,),
         )
 
     result = StrategySelectionV2Service(store=test_db).run(mode="balanced", limit=20)
@@ -350,6 +363,7 @@ def test_strategy_selection_v2_uses_potential_items_and_filters_unit_test_only_p
 def test_strategy_selection_v2_quarantines_candidates_without_market_basis(test_db):
     _reset(test_db)
     with test_db.connect() as conn:
+        run_id = _insert_potential_run(conn)
         conn.execute(
             """
             INSERT INTO potential_search_items(
@@ -357,9 +371,10 @@ def test_strategy_selection_v2_quarantines_candidates_without_market_basis(test_
                 amount, lifecycle_state, potential_score, reasons_json,
                 components_json, source, raw_json
             )
-            VALUES (1, 'SZ301010', 'active-candidate', 18, 3.0, 2.2,
+            VALUES (?, 'SZ301010', 'active-candidate', 18, 3.0, 2.2,
                     90000000, 'pending_review', 82, '[]', '{}', 'pytest', '{}')
-            """
+            """,
+            (run_id,),
         )
         conn.execute(
             """
@@ -372,6 +387,18 @@ def test_strategy_selection_v2_quarantines_candidates_without_market_basis(test_
                 'SH600111', 'no-market-basis', 95, 12, 12,
                 15, 12, 8, 2, 'review', 'pending_review',
                 'pytest_gap', '["cached score only"]', '{}', '{}'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_bar_cache(
+                symbol, trade_date, open, high, low, close, volume,
+                source, adjustment_mode, volume_unit, quality_status
+            ) VALUES (
+                'SH600111', '2026-07-14', 10, 10.2, 9.8, 10.1, 1000,
+                'sina.cn.kline_daily_fallback', 'unknown', 'share',
+                'review_only_unknown_adjustment'
             )
             """
         )

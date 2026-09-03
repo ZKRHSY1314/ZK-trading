@@ -53,6 +53,9 @@ Invoke-RestMethod http://127.0.0.1:8000/api/control-plane/status
 - Control Plane 心跳：`backend/logs/control_plane_heartbeat.json`
 - 参考数据心跳：`backend/logs/reference_data_heartbeat.json`
 - Codex 舆情心跳：`backend/logs/codex_market_pulse_heartbeat.json`
+- Codex 决策复核心跳：`backend/logs/codex_decision_review_heartbeat.json`
+
+常驻 Codex 市场脉冲和候选决策复核固定使用 `gpt-5.5` 与 `medium` 推理强度，不继承或回退到全局 coding 模型；模型与推理强度同时写入进程元数据和心跳，`ensure_stack.ps1` 发现旧 worker 配置漂移时会按现有安全流程重启整套受控进程。决策复核只读取结构化候选与阶段回放，输出仍受确定性规则最终否决，不能生成或执行订单。代码开发仍使用用户级 Codex 配置的 `gpt-5.6-sol` 与 `xhigh`，项目运行脚本不会修改该全局配置。
 
 停止整套进程：
 
@@ -167,6 +170,8 @@ Windows Scheduled Task 是可选安装项，不会因拉取代码自动安装：
 # 卸载任务；不会修改交易配置
 .\scripts\control_plane_task.ps1 -Action Uninstall
 ```
+
+任务以当前用户、`Limited` 权限运行；重复触发没有结束时间，允许在电池供电时启动并继续运行，且使用 `IgnoreNew` 避免重叠执行。再次执行 `Install` 会迁移本项目早期的布尔参数或旧调度设置。`Status` 中的 `definition_valid=true`、`configuration_matches=true` 表示动作、间隔、身份和持续运行设置符合本次请求；`operational_ok=true` 进一步表示最近执行成功且下次触发时间正常。
 
 安装或触发后仍应核验：
 

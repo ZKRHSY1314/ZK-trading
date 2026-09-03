@@ -166,7 +166,8 @@ class CodexPublicOpinionService:
         sources: list[PublicOpinionSource] | None = None,
     ) -> None:
         self.store = store or SQLiteStore(settings.database_path)
-        self.store.init()
+        if store is None:
+            self.store.init()
         self.sources = sources or list(DEFAULT_SOURCES)
 
     def capabilities(self) -> dict[str, Any]:

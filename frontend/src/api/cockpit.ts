@@ -21,6 +21,8 @@ export type RuntimeWorkerSnapshot = {
   cycle?: number | null;
   last_status?: OperationalStatus | null;
   completed_at?: string | null;
+  timeout_seconds?: number | null;
+  deadline_seconds?: number | null;
 };
 
 export type ReadinessSnapshot = {
@@ -28,7 +30,17 @@ export type ReadinessSnapshot = {
   checked_at?: string;
   live_trading_enabled: boolean;
   workers?: Partial<
-    Record<"control_plane" | "codex_market_pulse" | "reference_data", RuntimeWorkerSnapshot>
+    Record<
+      | "control_plane"
+      | "codex_market_pulse"
+      | "reference_data"
+      | "full_market_features"
+      | "market_history_refresh"
+      | "instrument_catalog_refresh"
+      | "full_market_calibration"
+      | "capital_flow_refresh",
+      RuntimeWorkerSnapshot
+    >
   >;
   blockers?: string[];
   attention?: string[];

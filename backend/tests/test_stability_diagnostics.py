@@ -1,6 +1,10 @@
 from datetime import date, timedelta
 import json
 
+from app.config import settings
+from app.diagnostics.stability import V1StabilityDiagnosticsService
+from app.sim_cockpit.service import SimCockpitService
+
 
 def recent_date(days_ago: int = 1) -> str:
     return (date.today() - timedelta(days=days_ago)).isoformat()
@@ -192,9 +196,14 @@ def test_v1_stability_flags_backtest_rerun_when_current_benchmark_cache_is_ready
             """
             INSERT INTO sim_cockpit_window_verifications(
                 status, blocked_reasons_json, verified_by, confidence,
-                simulation_mode_detected, real_trading_blocked, live_trading_enabled
+                simulation_mode_detected, real_trading_blocked, live_trading_enabled,
+                raw_payload_json
             )
-            VALUES ('verified', '[]', 'desktop_adapter', 1.0, 1, 1, 0)
+            VALUES (
+                'verified', '[]', 'desktop_adapter', 1.0, 1, 1, 0,
+                '{"source":"desktop_adapter","detection_status":"verified",' ||
+                '"window":{"hwnd":1,"pid":101,"rect":{"left":0,"top":0,"width":800,"height":600}}}'
+            )
             """
         )
 
@@ -389,9 +398,14 @@ def test_v1_stability_accepts_conservative_no_trade_gate_when_only_strategy_atte
             """
             INSERT INTO sim_cockpit_window_verifications(
                 status, blocked_reasons_json, verified_by, confidence,
-                simulation_mode_detected, real_trading_blocked, live_trading_enabled
+                simulation_mode_detected, real_trading_blocked, live_trading_enabled,
+                raw_payload_json
             )
-            VALUES ('verified', '[]', 'desktop_adapter', 1.0, 1, 1, 0)
+            VALUES (
+                'verified', '[]', 'desktop_adapter', 1.0, 1, 1, 0,
+                '{"source":"desktop_adapter","detection_status":"verified",' ||
+                '"window":{"hwnd":1,"pid":101,"rect":{"left":0,"top":0,"width":800,"height":600}}}'
+            )
             """
         )
 
@@ -407,3 +421,52 @@ def test_v1_stability_accepts_conservative_no_trade_gate_when_only_strategy_atte
     assert data["release_gate"]["ready_for_v1_review"] is True
     assert data["release_gate"]["sim_cockpit_verified"] is True
     assert data["safety"]["real_order_execution_enabled"] is False
+
+
+def test_v1_stability_does_not_treat_expired_window_verification_as_ready(test_db):
+    with test_db.connect() as conn:
+        conn.execute("DELETE FROM sim_cockpit_window_verifications")
+        conn.execute(
+            """
+            INSERT INTO sim_cockpit_window_verifications(
+                status, blocked_reasons_json, verified_by, confidence,
+                simulation_mode_detected, real_trading_blocked, live_trading_enabled,
+                raw_payload_json, created_at
+            )
+            VALUES (
+                'verified', '[]', 'desktop_adapter', 1.0, 1, 1, 0,
+                '{"source":"desktop_adapter","detection_status":"verified",' ||
+                '"window":{"hwnd":1,"pid":101,"rect":{"left":0,"top":0,"width":800,"height":600}}}',
+                datetime('now', '-16 minutes')
+            )
+            """
+        )
+
+    status = V1StabilityDiagnosticsService(store=test_db)._sim_cockpit()
+
+    assert status["status"] == "needs_verification"
+    assert status["simulation_actions_allowed"] is False
+    assert status["verification_freshness"]["fresh"] is False
+    assert "window_verification_expired" in status["blocked_reasons"]
+
+
+def test_v1_stability_matches_gateway_when_live_enabled_without_verification(test_db, monkeypatch):
+    with test_db.connect() as conn:
+        conn.execute("DELETE FROM sim_cockpit_window_verifications")
+    monkeypatch.setattr(settings, "enable_live_trading", True)
+
+    gateway = SimCockpitService().status()
+    diagnostics = V1StabilityDiagnosticsService(store=test_db)._sim_cockpit()
+
+    assert gateway["status"] == "blocked"
+    assert gateway["simulation_actions_allowed"] is False
+    assert "no_window_verification" in gateway["blocked_reasons"]
+    assert "live_trading_enabled" in gateway["blocked_reasons"]
+    for field in (
+        "status",
+        "simulation_actions_allowed",
+        "blocked_reasons",
+        "verification_freshness",
+        "live_trading_enabled",
+    ):
+        assert diagnostics[field] == gateway[field]

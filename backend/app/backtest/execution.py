@@ -5,6 +5,12 @@ from math import floor
 
 from app.config import settings
 
+# daily_bar_cache stores volume in 手 (volume_unit="hand"); one 手 is 100 shares.
+SHARES_PER_HAND = 100
+
+LIQUIDITY_REPORTED = "reported_amount"
+LIQUIDITY_PROXY = "volume_price_proxy"
+
 
 @dataclass(frozen=True)
 class ExecutionDecision:
@@ -17,6 +23,7 @@ class ExecutionDecision:
     stamp_tax: float
     reject_reason: str | None = None
     liquidity_cap_amount: float | None = None
+    liquidity_basis: str | None = None
 
 
 class BacktestExecutionModel:
@@ -58,6 +65,17 @@ class BacktestExecutionModel:
             return self._rejected(side, requested_quantity, price, "one_word_limit_down")
 
         amount = float(bar.get("amount") or 0)
+        liquidity_basis = LIQUIDITY_REPORTED
+        if amount <= 0:
+            # 97.6% of cached bars come from a source without 成交额. Refusing
+            # every fill on them measures the data gap, not the strategy, so
+            # fall back to volume x typical price (median ratio to reported
+            # amount 1.007, and it under-estimates on wide-range days, which
+            # is the conservative side for a participation cap). The basis is
+            # carried on the decision so a run can report how much of its
+            # liquidity was proxied.
+            amount = self._proxy_amount(bar)
+            liquidity_basis = LIQUIDITY_PROXY if amount > 0 else None
         liquidity_cap_amount = amount * self.max_participation_rate
         if liquidity_cap_amount <= 0:
             return self._rejected(side, requested_quantity, price, "missing_liquidity_amount")
@@ -86,7 +104,21 @@ class BacktestExecutionModel:
             fee=fee,
             stamp_tax=stamp_tax,
             liquidity_cap_amount=round(liquidity_cap_amount, 4),
+            liquidity_basis=liquidity_basis,
         )
+
+    @staticmethod
+    def _proxy_amount(bar: dict) -> float:
+        try:
+            volume = float(bar.get("volume") or 0)
+            typical = (
+                float(bar.get("high") or 0) + float(bar.get("low") or 0) + float(bar.get("close") or 0)
+            ) / 3
+        except (TypeError, ValueError):
+            return 0.0
+        if volume <= 0 or typical <= 0:
+            return 0.0
+        return volume * SHARES_PER_HAND * typical
 
     def _rejected(
         self,

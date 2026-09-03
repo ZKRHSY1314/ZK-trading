@@ -139,7 +139,7 @@ class TonghuashunDesktopAdapter:
             "dry_run_supported": True,
             "screen_click_supported": sys.platform.startswith("win"),
             "screenshot_supported": sys.platform.startswith("win"),
-            "ocr_supported": False,
+            "ocr_supported": sys.platform.startswith("win"),
             "requires_desktop_verified_window": True,
             "requires_coordinate_anchors_for_click": True,
             "scan_strategy": "two_phase_candidate_enrichment",
@@ -1322,6 +1322,10 @@ except Exception as exc:
             if isinstance(item, dict)
         )
         limitation = "owner_drawn_table_not_exposed_to_uia" if owner_drawn_grid else None
+        parsed_positions = self._parse_screen_positions(snapshot, ocr) if readback_type == "positions" else []
+        explicit_empty_positions = (
+            readback_type == "positions" and self._explicit_empty_positions_ocr(ocr)
+        )
         if readback_type == "today_orders":
             if has_order_id or has_symbol:
                 status = "pending_order_detected"
@@ -1333,13 +1337,15 @@ except Exception as exc:
             else:
                 status = "screen_table_unparsed" if owner_drawn_grid else "no_fill_detected"
         elif readback_type == "positions":
-            if has_symbol and has_quantity:
-                status = "position_detected"
+            if parsed_positions:
+                status = "positions_parsed"
+            elif explicit_empty_positions:
+                status = "no_position_detected"
             else:
                 status = "screen_table_unparsed" if owner_drawn_grid else "no_position_detected"
         else:
             status = "unsupported_screen_readback_type"
-        return {
+        result = {
             "status": status,
             "readback_type": readback_type,
             "requires_visual_or_ocr_review": status == "screen_table_unparsed",
@@ -1370,6 +1376,120 @@ except Exception as exc:
             ],
             "text_hash": hashlib.sha256(combined_text.encode("utf-8")).hexdigest(),
         }
+        if readback_type == "positions":
+            result.update(
+                {
+                    "parsed": status in {"positions_parsed", "no_position_detected"},
+                    "scope": "full_account",
+                    "positions": parsed_positions,
+                }
+            )
+        return result
+
+    def _parse_screen_positions(
+        self,
+        snapshot: dict[str, Any],
+        ocr: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        lines: list[str] = []
+        for item in (ocr or {}).get("lines") or []:
+            if str(item or "").strip():
+                lines.append(str(item).strip())
+        ocr_text = str((ocr or {}).get("text") or "")
+        lines.extend(item.strip() for item in ocr_text.splitlines() if item.strip())
+        lines.extend(str(item).strip() for item in snapshot.get("texts") or [] if str(item).strip())
+
+        positions: dict[str, dict[str, Any]] = {}
+        for line in dict.fromkeys(lines):
+            tokens = re.split(r"\s+", line.replace(",", "").strip())
+            code_index = next(
+                (index for index, token in enumerate(tokens) if re.fullmatch(r"\d{6}", token)),
+                None,
+            )
+            if code_index is None:
+                continue
+            numeric_index = next(
+                (
+                    index
+                    for index in range(code_index + 1, len(tokens))
+                    if self._screen_numeric_token(tokens[index]) is not None
+                ),
+                None,
+            )
+            if numeric_index is None:
+                continue
+            name = "".join(tokens[code_index + 1 : numeric_index]).strip() or None
+            numbers = [
+                value
+                for token in tokens[numeric_index:]
+                if (value := self._screen_numeric_token(token)) is not None
+            ]
+            if len(numbers) < 8:
+                continue
+            quantity = self._screen_nonnegative_int(numbers[0])
+            sellable = self._screen_nonnegative_int(numbers[1])
+            if quantity is None or sellable is None or sellable > quantity:
+                continue
+            avg_cost, mark_price, market_value = numbers[3], numbers[4], numbers[7]
+            if any(value < 0 for value in (avg_cost, mark_price, market_value)):
+                continue
+            symbol = self._screen_a_share_symbol(tokens[code_index])
+            positions[symbol] = {
+                "symbol": symbol,
+                "name": name,
+                "quantity": quantity,
+                "sellable_quantity": sellable,
+                "avg_cost": avg_cost,
+                "mark_price": mark_price,
+                "market_value": market_value,
+                # The visible Tonghuashun column is cumulative position P/L,
+                # not necessarily today's P/L; do not relabel it.
+                "today_pnl": None,
+            }
+        return list(positions.values())
+
+    @staticmethod
+    def _explicit_empty_positions_ocr(ocr: dict[str, Any] | None) -> bool:
+        if (ocr or {}).get("status") != "ok":
+            return False
+        text = str((ocr or {}).get("text") or "")
+        has_table_header = "证券代码" in text and (
+            "股票余额" in text or "可用余额" in text
+        )
+        zero_market_value = re.search(
+            r"(?:a股市值|股票市值)\s*[:：]?\s*0(?:\.0+)?(?:\s|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        return has_table_header and zero_market_value is not None
+
+    @staticmethod
+    def _screen_numeric_token(value: str) -> float | None:
+        normalized = str(value or "").strip().rstrip("%").replace("－", "-")
+        if not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", normalized):
+            return None
+        try:
+            parsed = float(normalized)
+        except ValueError:
+            return None
+        return parsed if parsed == parsed and abs(parsed) != float("inf") else None
+
+    @staticmethod
+    def _screen_nonnegative_int(value: float) -> int | None:
+        parsed = int(value)
+        if parsed < 0 or float(parsed) != value:
+            return None
+        return parsed
+
+    @staticmethod
+    def _screen_a_share_symbol(code: str) -> str:
+        if code.startswith(("4", "8", "92")):
+            exchange = "BJ"
+        elif code.startswith(("5", "6", "9")):
+            exchange = "SH"
+        else:
+            exchange = "SZ"
+        return exchange + code
 
     def _numeric_value_in_text(self, value: float | int, text: str) -> bool:
         try:
@@ -1453,6 +1573,7 @@ except Exception as exc:
             return {"status": "skipped", "reason": "screenshot_not_found", "path": str(image_path)}
         script = r"""
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
 $null = [Windows.Storage.Streams.IRandomAccessStreamWithContentType, Windows.Storage.Streams, ContentType = WindowsRuntime]
@@ -1489,7 +1610,8 @@ try {
   }
   $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($lang)
   $result = AwaitOperation ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-  Write-Output (@{status='ok'; language=$lang.LanguageTag; text=$result.Text; languages=@($langs | ForEach-Object LanguageTag)} | ConvertTo-Json -Compress)
+  $ocrLines = @($result.Lines | ForEach-Object { $_.Text })
+  Write-Output (@{status='ok'; language=$lang.LanguageTag; text=$result.Text; lines=$ocrLines; languages=@($langs | ForEach-Object LanguageTag)} | ConvertTo-Json -Compress)
 } catch {
   Write-Output (@{status='error'; error=$_.Exception.Message; type=$_.Exception.GetType().FullName} | ConvertTo-Json -Compress)
 }
@@ -1501,6 +1623,8 @@ try {
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=15,
                 env=env,
             )

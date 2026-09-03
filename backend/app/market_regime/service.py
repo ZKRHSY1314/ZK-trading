@@ -179,8 +179,8 @@ class MarketRegimeService:
                 f"""
                 SELECT *
                 FROM daily_bar_cache
-                WHERE lower(symbol) IN ('sh000001', 'sh000300')
-                  AND quality_status = 'ready'
+                WHERE symbol IN ('SH000001', 'sh000001', 'SH000300', 'sh000300')
+                  AND +quality_status = 'ready'
                   {date_filter}
                 ORDER BY trade_date DESC
                 LIMIT 40

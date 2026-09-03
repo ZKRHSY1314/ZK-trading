@@ -677,9 +677,9 @@
         <div v-if="backtestRuns.length" class="score-list">
           <div v-for="run in backtestRuns.slice(0, 3)" :key="run.id" class="score-item">
             <strong>鍥炴祴 #{{ run.id }} / {{ run.status }}</strong>
-            <span>鏀剁泭 {{ ((run.metrics?.total_return ?? 0) * 100).toFixed(2) }}% / 鍥炴挙 {{ ((run.metrics?.max_drawdown ?? 0) * 100).toFixed(2) }}%</span>
-            <small>鎴愪氦 {{ run.metrics?.trade_count ?? 0 }} / 骞充粨 {{ run.metrics?.closed_trade_count ?? 0 }} / 鏈熸湜 {{ (run.metrics?.expectancy ?? 0).toFixed(2) }}</small>
-            <small>鍩哄噯 {{ run.benchmark?.symbol ?? run.benchmark_symbol ?? "SH000300" }} / 瓒呴 {{ ((run.metrics?.excess_return ?? 0) * 100).toFixed(2) }}%</small>
+            <span>鏀剁泭 {{ formatPercent(run.metrics?.total_return) }} / 鍥炴挙 {{ formatPercent(run.metrics?.max_drawdown) }}</span>
+            <small>鎴愪氦 {{ run.metrics?.trade_count ?? 0 }} / 骞充粨 {{ run.metrics?.closed_trade_count ?? 0 }} / 鏈熸湜 {{ formatNumber(run.metrics?.expectancy) }}</small>
+            <small>鍩哄噯 {{ run.benchmark?.symbol ?? run.benchmark_symbol ?? "SH000300" }} / 瓒呴 {{ formatPercent(run.metrics?.excess_return) }}</small>
           </div>
         </div>
         <div v-if="backtestDetail" class="score-list">
@@ -925,8 +925,8 @@
           </div>
           <div class="score-item">
             <strong>Backtest / {{ offhourResearchLatest.backtest?.status ?? "skipped" }}</strong>
-            <span>收益 {{ (Number(offhourResearchLatest.backtest?.metrics?.total_return ?? 0) * 100).toFixed(2) }}% / 回撤 {{ (Number(offhourResearchLatest.backtest?.metrics?.max_drawdown ?? 0) * 100).toFixed(2) }}%</span>
-            <small>胜率 {{ (Number(offhourResearchLatest.backtest?.metrics?.win_rate ?? 0) * 100).toFixed(2) }}% / run #{{ offhourResearchLatest.backtest?.run_id ?? "none" }}</small>
+            <span>收益 {{ formatPercent(offhourResearchLatest.backtest?.metrics?.total_return) }} / 回撤 {{ formatPercent(offhourResearchLatest.backtest?.metrics?.max_drawdown) }}</span>
+            <small>胜率 {{ formatPercent(offhourResearchLatest.backtest?.metrics?.win_rate) }} / run #{{ offhourResearchLatest.backtest?.run_id ?? "none" }}</small>
           </div>
           <div class="score-item">
             <strong>Sandbox</strong>
@@ -15774,7 +15774,7 @@ type BacktestRunItem = {
   status: string;
   data_source: string;
   benchmark_symbol?: string;
-  metrics: Record<string, number>;
+  metrics: Record<string, any>;
   benchmark?: Record<string, any>;
   execution_warnings?: string[];
 };
@@ -17043,6 +17043,11 @@ async function loadV1Stability() {
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "N/A";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatNumber(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "N/A";
+  return value.toFixed(digits);
 }
 
 function formatPctValue(value: number | null | undefined): string {

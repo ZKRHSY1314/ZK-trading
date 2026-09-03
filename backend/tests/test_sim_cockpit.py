@@ -1,4 +1,6 @@
 import json
+import sys
+from types import SimpleNamespace
 
 from app.sim_cockpit.service import SimCockpitService
 from app.sim_cockpit.desktop_adapter import TonghuashunDesktopAdapter
@@ -16,13 +18,39 @@ def _reset_sim_cockpit(store) -> None:
         conn.execute("DELETE FROM offhour_research_runs")
 
 
+def _desktop_verification_payload() -> dict:
+    return {
+        "source": "desktop_adapter",
+        "provider": "pytest_win32_adapter",
+        "detection_status": "verified",
+        "window": {
+            "hwnd": 1,
+            "pid": 101,
+            "title": "Tonghuashun hexin mncg simulation window",
+            "process_name": "hexin.exe",
+            "rect": {"left": 0, "top": 0, "width": 800, "height": 600},
+        },
+    }
+
+
 def _verify_simulation_window(service: SimCockpitService) -> dict:
     return service.verify_window(
         window_title="Tonghuashun hexin mncg simulation window",
         visible_text="mncg simulation \u6a21\u62df\u7092\u80a1 \u6a21\u62df\u4e70\u5165 \u6a21\u62df\u5356\u51fa",
-        raw_payload={"process_name": "hexin.exe", "window_class": "Tonghuashun"},
+        raw_payload=_desktop_verification_payload(),
         detected_items=[{"type": "mode", "value": "mncg"}],
         verified_by="pytest",
+        confidence=0.95,
+    )
+
+
+def _verify_manual_simulation_window(service: SimCockpitService) -> dict:
+    return service.verify_window(
+        window_title="Tonghuashun hexin mncg simulation window",
+        visible_text="mncg simulation 模拟炒股 模拟买入 模拟卖出",
+        raw_payload={"process_name": "hexin.exe", "window_class": "Tonghuashun"},
+        detected_items=[{"type": "mode", "value": "mncg"}],
+        verified_by="pytest_manual",
         confidence=0.95,
     )
 
@@ -79,6 +107,78 @@ def test_verify_window_accepts_mncg_simulation_and_blocks_real_terms(test_db):
     status = service.status()
     assert status["status"] == "blocked"
     assert status["simulation_actions_allowed"] is False
+
+
+def test_expired_window_verification_is_not_reported_or_used_as_ready(test_db):
+    _reset_sim_cockpit(test_db)
+    service = SimCockpitService()
+    verification = _verify_simulation_window(service)
+    with test_db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE sim_cockpit_window_verifications
+            SET created_at = datetime('now', '-16 minutes')
+            WHERE id = ?
+            """,
+            (verification["id"],),
+        )
+
+    status = service.status()
+
+    assert status["status"] == "needs_verification"
+    assert status["simulation_actions_allowed"] is False
+    assert status["verification_freshness"]["fresh"] is False
+    assert "window_verification_expired" in status["blocked_reasons"]
+
+    action = service.buy(
+        symbol="SZ002081",
+        price=10.0,
+        quantity=100,
+        signal_source="pytest",
+        risk_result={"simulation_allowed": True, "all_gates_passed": True},
+        window_verification_id=verification["id"],
+    )
+    assert action["status"] == "blocked"
+    assert "window_verification_expired" in action["blocked_reasons"]
+
+
+def test_status_requires_fresh_desktop_verification_without_running_detection(test_db, monkeypatch):
+    _reset_sim_cockpit(test_db)
+    service = SimCockpitService()
+    manual_verification = _verify_manual_simulation_window(service)
+
+    manual_status = service.status()
+    assert manual_status["simulation_actions_allowed"] is False
+    assert "screen_click_requires_desktop_adapter_verification" in manual_status["blocked_reasons"]
+    manual_action = service.buy(
+        symbol="SZ002081",
+        price=10.0,
+        quantity=100,
+        signal_source="pytest",
+        risk_result={"simulation_allowed": True, "all_gates_passed": True},
+        window_verification_id=manual_verification["id"],
+    )
+    assert manual_action["status"] == "blocked"
+    assert "screen_click_requires_desktop_adapter_verification" in manual_action["blocked_reasons"]
+
+    service.verify_window(
+        window_title="Tonghuashun hexin mncg simulation window",
+        visible_text="mncg simulation 模拟炒股 模拟买入",
+        raw_payload=_desktop_verification_payload(),
+        detected_items=[{"type": "mode", "value": "mncg"}],
+        verified_by="pytest_desktop",
+        confidence=0.98,
+    )
+
+    def fail_if_detected(*args, **kwargs):
+        raise AssertionError("status must not perform active desktop detection")
+
+    monkeypatch.setattr(service.desktop_adapter, "detect", fail_if_detected)
+    desktop_status = service.status()
+    assert desktop_status["status"] == "verified"
+    assert desktop_status["simulation_actions_allowed"] is True
+    assert desktop_status["blocked_reasons"] == []
+    assert desktop_status["verification_freshness"]["fresh"] is True
 
 
 def test_buy_sell_cancel_payload_validation_and_audit(test_db):
@@ -153,7 +253,7 @@ def test_sim_cockpit_api_smoke_and_dataset2_dry_run(client, test_db):
         json={
             "window_title": "Tonghuashun hexin mncg simulation window",
             "visible_text": "mncg simulation \u6a21\u62df\u7092\u80a1",
-            "raw_payload": {"process_name": "hexin.exe"},
+            "raw_payload": _desktop_verification_payload(),
             "verified_by": "pytest",
             "confidence": 0.95,
         },
@@ -636,6 +736,80 @@ class MissingMncgDesktopAdapter:
         }
 
 
+class NoBestWindowDesktopAdapter:
+    def capabilities(self):
+        return {}
+
+    def detect(self, target_title=None):
+        return {
+            "schema_version": "sim_cockpit_desktop_detection.v1",
+            "status": "verified",
+            "provider": "pytest_win32_adapter",
+            "target_title": target_title,
+            "best_window": None,
+            "windows": [],
+            "blocked_reasons": [],
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+
+class MissingSimulationWindowDesktopAdapter:
+    def capabilities(self):
+        return {}
+
+    def detect(self, target_title=None):
+        return {
+            "schema_version": "sim_cockpit_desktop_detection.v1",
+            "status": "needs_simulation_window",
+            "provider": "pytest_win32_adapter",
+            "target_title": target_title,
+            "best_window": None,
+            "windows": [],
+            "blocked_reasons": ["tonghuashun_window_not_found"],
+            "simulation_only": True,
+            "live_trading_enabled": False,
+        }
+
+
+def test_missing_desktop_window_metadata_is_not_simulation_evidence(test_db):
+    _reset_sim_cockpit(test_db)
+    service = SimCockpitService()
+    service.desktop_adapter = MissingSimulationWindowDesktopAdapter()
+
+    result = service.detect_desktop_window(record=True)
+
+    verification = result["verification"]
+    assert verification["status"] == "blocked"
+    assert verification["simulation_mode_detected"] is False
+    assert verification["positive_terms"] == []
+    assert "missing_mncg_or_simulation_marker" in verification["blocked_reasons"]
+
+
+def test_desktop_detection_does_not_use_target_title_as_window_evidence(test_db):
+    _reset_sim_cockpit(test_db)
+    service = SimCockpitService()
+    service.desktop_adapter = NoBestWindowDesktopAdapter()
+
+    result = service.detect_desktop_window(
+        target_title="Tonghuashun hexin mncg simulation window",
+        record=True,
+    )
+
+    verification = result["verification"]
+    assert service._verification_window_payload({}) == {}
+    assert verification["status"] == "blocked"
+    assert verification["window_title"] is None
+    assert verification["raw_payload"]["window"] == {}
+    assert "missing_window_or_page_text" in verification["blocked_reasons"]
+    assert "missing_mncg_or_simulation_marker" in verification["blocked_reasons"]
+    assert "missing_tonghuashun_process_marker" in verification["blocked_reasons"]
+
+    status = service.status()
+    assert status["simulation_actions_allowed"] is False
+    assert "screen_click_requires_detected_window" in status["blocked_reasons"]
+
+
 def test_desktop_detection_does_not_verify_from_missing_marker_reason(test_db):
     _reset_sim_cockpit(test_db)
     service = SimCockpitService()
@@ -649,6 +823,37 @@ def test_desktop_detection_does_not_verify_from_missing_marker_reason(test_db):
     assert "missing_mncg_or_simulation_marker" in result["verification"]["blocked_reasons"]
     assert result["verification"]["simulation_mode_detected"] is False
     assert result["verification"]["raw_payload"]["blocked_reason_count"] == 1
+
+
+def test_readiness_requires_complete_desktop_window_identity(test_db):
+    _reset_sim_cockpit(test_db)
+    service = SimCockpitService()
+    cases = [
+        ("detection_status", None, "desktop_detection_not_verified"),
+        ("hwnd", None, "desktop_window_hwnd_invalid"),
+        ("pid", 0, "desktop_window_pid_invalid"),
+        ("rect", {"width": 800, "height": 600}, "desktop_window_rect_invalid"),
+    ]
+
+    for field, value, expected_reason in cases:
+        raw_payload = json.loads(json.dumps(_desktop_verification_payload()))
+        if field == "detection_status":
+            raw_payload.pop(field)
+        else:
+            raw_payload["window"][field] = value
+        verification = service.verify_window(
+            window_title="Tonghuashun hexin mncg simulation window",
+            visible_text="mncg simulation 模拟炒股 模拟买入",
+            raw_payload=raw_payload,
+            detected_items=[{"type": "mode", "value": "mncg"}],
+            verified_by="pytest_incomplete_desktop_evidence",
+            confidence=0.98,
+        )
+
+        assert verification["status"] == "verified"
+        status = service.status()
+        assert status["simulation_actions_allowed"] is False
+        assert expected_reason in status["blocked_reasons"]
 
 
 def test_uia_coordinate_anchors_build_ready_buy_plan():
@@ -713,6 +918,12 @@ def test_uia_coordinate_anchors_build_ready_buy_plan():
     assert plan["steps"][1]["value"] == "002081"
     assert plan["steps"][2]["automation_id"] == "1033"
     assert plan["steps"][3]["automation_id"] == "1034"
+
+
+def test_desktop_adapter_reports_windows_ocr_capability():
+    capabilities = TonghuashunDesktopAdapter().capabilities()
+
+    assert capabilities["ocr_supported"] is sys.platform.startswith("win")
 
 
 def test_uia_coordinate_anchors_accept_normal_chinese_names():
@@ -826,7 +1037,7 @@ def test_desktop_adapter_enriches_only_identity_candidates():
 def test_screen_click_requires_desktop_adapter_verification(test_db):
     _reset_sim_cockpit(test_db)
     service = SimCockpitService()
-    verification = _verify_simulation_window(service)
+    verification = _verify_manual_simulation_window(service)
 
     blocked = service.buy(
         symbol="SZ002081",
@@ -858,11 +1069,7 @@ def test_screen_click_first_test_order_uses_three_percent_cash_cap(test_db):
     verification = service.verify_window(
         window_title="Tonghuashun hexin mncg simulation window",
         visible_text="mncg simulation \u6a21\u62df\u7092\u80a1 \u6a21\u62df\u4e70\u5165",
-        raw_payload={
-            "source": "desktop_adapter",
-            "process_name": "hexin.exe",
-            "window": {"hwnd": 1, "rect": {"left": 0, "top": 0, "width": 800, "height": 600}},
-        },
+        raw_payload=_desktop_verification_payload(),
         detected_items=[{"type": "mode", "value": "mncg"}],
         verified_by="pytest_desktop",
         confidence=0.98,
@@ -898,11 +1105,7 @@ def test_screen_click_executes_only_with_desktop_verification_and_readback(test_
     verification = service.verify_window(
         window_title="Tonghuashun hexin mncg simulation window",
         visible_text="mncg simulation \u6a21\u62df\u7092\u80a1 \u6a21\u62df\u4e70\u5165",
-        raw_payload={
-            "source": "desktop_adapter",
-            "process_name": "hexin.exe",
-            "window": {"hwnd": 1, "rect": {"left": 0, "top": 0, "width": 800, "height": 600}},
-        },
+        raw_payload=_desktop_verification_payload(),
         detected_items=[{"type": "mode", "value": "mncg"}],
         verified_by="pytest_desktop",
         confidence=0.98,
@@ -941,11 +1144,7 @@ def test_confirm_buy_uses_guarded_simulation_dialog_and_readback(test_db):
     verification = service.verify_window(
         window_title="Tonghuashun hexin mncg simulation window",
         visible_text="mncg simulation \u6a21\u62df\u7092\u80a1 \u6a21\u62df\u4e70\u5165",
-        raw_payload={
-            "source": "desktop_adapter",
-            "process_name": "hexin.exe",
-            "window": {"hwnd": 1, "rect": {"left": 0, "top": 0, "width": 800, "height": 600}},
-        },
+        raw_payload=_desktop_verification_payload(),
         detected_items=[{"type": "mode", "value": "mncg"}],
         verified_by="pytest_desktop",
         confidence=0.98,
@@ -1033,25 +1232,137 @@ def test_desktop_adapter_uses_ocr_text_for_owner_drawn_pending_order():
     assert "windows_ocr" in result["evidence_sources"]
 
 
+def test_desktop_adapter_decodes_ocr_as_utf8_and_preserves_lines(tmp_path, monkeypatch):
+    image = tmp_path / "screen.png"
+    image.write_bytes(b"fixture")
+    captured: dict = {}
+
+    def fake_run(*args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "status": "ok",
+                    "language": "zh-Hans-CN",
+                    "text": "证券代码 300166",
+                    "lines": ["证券代码 300166"],
+                },
+                ensure_ascii=False,
+            ),
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr("app.sim_cockpit.desktop_adapter.subprocess.run", fake_run)
+
+    result = TonghuashunDesktopAdapter()._ocr_screenshot(str(image))
+
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+    assert result["status"] == "ok"
+    assert result["lines"] == ["证券代码 300166"]
+
+
+def test_desktop_adapter_parses_full_account_positions_from_ocr_lines():
+    adapter = TonghuashunDesktopAdapter()
+
+    result = adapter._interpret_screen_readback(
+        {
+            "status": "available",
+            "root_name": "网上股票交易系统5.0",
+            "texts": ["mncg109", "资金股票"],
+            "controls": [{"name": "HexinScrollWnd", "control_type": "PaneControl"}],
+        },
+        readback_type="positions",
+        symbol=None,
+        price=None,
+        quantity=None,
+        order_id=None,
+        ocr={
+            "status": "ok",
+            "language": "zh-Hans-CN",
+            "text": "证券代码 证券名称 股票余额 可用余额 冻结数量 成本价 市价 盈亏 盈亏比例 市值\n"
+            "300166 东方国信 100 100 0 18.700 19.200 50.00 2.67 1920.00",
+            "lines": [
+                "证券代码 证券名称 股票余额 可用余额 冻结数量 成本价 市价 盈亏 盈亏比例 市值",
+                "300166 东方国信 100 100 0 18.700 19.200 50.00 2.67 1920.00",
+            ],
+        },
+    )
+
+    assert result["status"] == "positions_parsed"
+    assert result["parsed"] is True
+    assert result["requires_visual_or_ocr_review"] is False
+    assert result["scope"] == "full_account"
+    assert result["positions"] == [
+        {
+            "symbol": "SZ300166",
+            "name": "东方国信",
+            "quantity": 100,
+            "sellable_quantity": 100,
+            "avg_cost": 18.7,
+            "mark_price": 19.2,
+            "market_value": 1920.0,
+            "today_pnl": None,
+        }
+    ]
+
+
+def test_desktop_adapter_marks_explicit_zero_market_value_table_as_empty_positions():
+    adapter = TonghuashunDesktopAdapter()
+
+    result = adapter._interpret_screen_readback(
+        {
+            "status": "available",
+            "root_name": "网上股票交易系统5.0",
+            "texts": ["mncg109", "资金股票"],
+            "controls": [{"name": "HexinScrollWnd", "control_type": "PaneControl"}],
+        },
+        readback_type="positions",
+        symbol=None,
+        price=None,
+        quantity=None,
+        order_id=None,
+        ocr={
+            "status": "ok",
+            "language": "zh-Hans-CN",
+            "text": "A股市值 0.00\n证券代码 证券名称 股票余额 可用余额 市值",
+            "lines": ["A股市值 0.00", "证券代码 证券名称 股票余额 可用余额 市值"],
+        },
+    )
+
+    assert result["status"] == "no_position_detected"
+    assert result["parsed"] is True
+    assert result["requires_visual_or_ocr_review"] is False
+    assert result["positions"] == []
+
+
 def test_screen_readback_records_pending_order_evidence(test_db):
     _reset_sim_cockpit(test_db)
     service = SimCockpitService()
     verification = service.verify_window(
         window_title="Tonghuashun hexin mncg simulation window",
         visible_text="mncg simulation \u6a21\u62df\u7092\u80a1 \u6a21\u62df\u4e70\u5165",
-        raw_payload={
-            "source": "desktop_adapter",
-            "process_name": "hexin.exe",
-            "window": {"hwnd": 1, "rect": {"left": 0, "top": 0, "width": 800, "height": 600}},
-        },
+        raw_payload=_desktop_verification_payload(),
         detected_items=[{"type": "mode", "value": "mncg"}],
         verified_by="pytest_desktop",
         confidence=0.98,
     )
     service.desktop_adapter = FakeDesktopAdapter()
+    with test_db.connect() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO sim_cockpit_actions(
+                verification_id, action_type, status, symbol, price, quantity,
+                signal_source
+            ) VALUES (?, 'buy', 'pending', 'SZ300166', 18.7, 100, 'pytest')
+            """,
+            (verification["id"],),
+        )
+        action_id = int(cursor.lastrowid)
 
     readback = service.record_screen_readback(
-        action_id=22,
+        action_id=action_id,
         readback_type="today_orders",
         symbol="SZ300166",
         price=18.7,
@@ -1066,6 +1377,68 @@ def test_screen_readback_records_pending_order_evidence(test_db):
     assert readback["readback_type"] == "screen_today_orders"
     assert readback["payload"]["screen_readback"]["real_screen_click_executed"] is True
     assert readback["payload"]["screen_readback"]["interpretation"]["matched"]["order_id"] is True
+
+
+def test_screen_positions_readback_reaches_simulation_account_contract(client, test_db):
+    _reset_sim_cockpit(test_db)
+    service = SimCockpitService()
+    verification = _verify_simulation_window(service)
+
+    class ParsedPositionsDesktopAdapter:
+        def read_screen_readback(self, *args, **kwargs):
+            return {
+                "status": "positions_parsed",
+                "reason": None,
+                "real_screen_click_executed": True,
+                "interpretation": {
+                    "status": "positions_parsed",
+                    "readback_type": "positions",
+                    "parsed": True,
+                    "requires_visual_or_ocr_review": False,
+                    "scope": "full_account",
+                    "positions": [
+                        {
+                            "symbol": "SZ300166",
+                            "name": "东方国信",
+                            "quantity": 100,
+                            "sellable_quantity": 100,
+                            "avg_cost": 18.7,
+                            "mark_price": 19.2,
+                            "market_value": 1920.0,
+                            "today_pnl": None,
+                        }
+                    ],
+                },
+                "simulation_only": True,
+                "live_trading_enabled": False,
+            }
+
+    service.desktop_adapter = ParsedPositionsDesktopAdapter()
+    readback = service.record_screen_readback(
+        action_id=None,
+        readback_type="positions",
+        window_verification_id=verification["id"],
+        screen_confirmation="SIMULATION_SCREEN_CLICK",
+        recorded_by="pytest",
+    )
+
+    assert readback["status"] == "positions_parsed"
+    account = client.get("/api/simulation/account").json()
+    assert account["screen_snapshot_status"] == "available"
+    assert account["screen_snapshot_reason"] is None
+    assert account["screen_snapshot_scope"] == "full_account"
+    assert account["screen_positions"] == [
+        {
+            "symbol": "SZ300166",
+            "name": "东方国信",
+            "quantity": 100,
+            "sellable_quantity": 100,
+            "avg_cost": 18.7,
+            "mark_price": 19.2,
+            "market_value": 1920.0,
+            "today_pnl": None,
+        }
+    ]
 
 
 def test_window_detection_api_is_safe_when_no_window_found(client, test_db):

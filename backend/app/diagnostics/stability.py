@@ -7,6 +7,7 @@ from typing import Any
 from app.config import settings
 from app.diagnostics.backtest import BacktestRiskDiagnosticsService
 from app.diagnostics.data_freshness import DataFreshnessDiagnosticsService
+from app.sim_cockpit.service import simulation_window_readiness
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -400,7 +401,7 @@ class V1StabilityDiagnosticsService:
             """
             SELECT id, status, blocked_reasons_json, verified_by, confidence,
                    simulation_mode_detected, real_trading_blocked,
-                   live_trading_enabled, created_at
+                   live_trading_enabled, raw_payload_json, created_at
             FROM sim_cockpit_window_verifications
             ORDER BY id DESC
             LIMIT 1
@@ -411,10 +412,15 @@ class V1StabilityDiagnosticsService:
         fill_count = self._table_count("simulation_fills")
         position_count = self._table_count("simulation_positions")
         if not verification:
+            readiness = simulation_window_readiness(
+                None,
+                live_trading_enabled=settings.enable_live_trading,
+            )
             return {
-                "status": "needs_verification",
+                "status": readiness["status"],
                 "simulation_actions_allowed": False,
-                "blocked_reasons": ["no_window_verification"],
+                "blocked_reasons": readiness["blocked_reasons"],
+                "verification_freshness": readiness["freshness"],
                 "action_count": action_count,
                 "readback_count": readback_count,
                 "simulation_fill_count": fill_count,
@@ -422,12 +428,24 @@ class V1StabilityDiagnosticsService:
                 "live_trading_enabled": settings.enable_live_trading,
             }
         blocked_reasons = self._json_loads(verification.get("blocked_reasons_json"), [])
-        verified = verification.get("status") == "verified" and not settings.enable_live_trading
+        readiness = simulation_window_readiness(
+            {
+                **verification,
+                "blocked_reasons": blocked_reasons,
+                "raw_payload": self._json_loads(verification.get("raw_payload_json"), {}),
+                "simulation_mode_detected": bool(verification.get("simulation_mode_detected")),
+                "real_trading_blocked": bool(verification.get("real_trading_blocked")),
+                "live_trading_enabled": bool(verification.get("live_trading_enabled")),
+            },
+            live_trading_enabled=settings.enable_live_trading,
+        )
+        verified = bool(readiness["ready"])
         return {
             "latest_verification_id": verification.get("id"),
-            "status": verification.get("status"),
-            "simulation_actions_allowed": bool(verified),
-            "blocked_reasons": blocked_reasons,
+            "status": readiness["status"],
+            "simulation_actions_allowed": verified,
+            "blocked_reasons": readiness["blocked_reasons"],
+            "verification_freshness": readiness["freshness"],
             "verified_by": verification.get("verified_by"),
             "confidence": verification.get("confidence"),
             "simulation_mode_detected": bool(verification.get("simulation_mode_detected")),
@@ -436,7 +454,7 @@ class V1StabilityDiagnosticsService:
             "readback_count": readback_count,
             "simulation_fill_count": fill_count,
             "simulation_position_count": position_count,
-            "live_trading_enabled": bool(verification.get("live_trading_enabled")),
+            "live_trading_enabled": settings.enable_live_trading,
             "created_at": verification.get("created_at"),
         }
 

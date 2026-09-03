@@ -46,9 +46,10 @@ def membership_hash(symbols: list[str] | tuple[str, ...] | set[str]) -> str:
 class SectorExposureResolver:
     """Resolve legacy intervals and immutable full-member snapshots point in time."""
 
-    def __init__(self, store: SQLiteStore) -> None:
+    def __init__(self, store: SQLiteStore, *, initialize_store: bool = True) -> None:
         self.store = store
-        self.store.init()
+        if initialize_store:
+            self.store.init()
 
     def record(self, membership: SectorMembership) -> dict[str, Any]:
         """Record a legacy interval membership for backward-compatible imports."""
