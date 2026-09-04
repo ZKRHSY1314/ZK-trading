@@ -8,7 +8,29 @@ decision_priority:
 
 candidate_tiers:
   strong_min_score: 80
-  watch_min_score: 60
+  # Strategy weights total 45 (25 + 20), and the score is normalized to 0-100.
+  # At 60 the only reachable score was 100 - both rules on the same bar - so
+  # "watch" was mathematically empty and there was no middle tier at all.
+  # 50 admits the low-position limit-up on its own (25/45 = 55.6), which is
+  # exactly the ARMED state: a candidate waiting for volume confirmation.
+  watch_min_score: 50
+
+# Exit belongs to the strategy, not to the backtest engine. These used to be
+# hardcoded in app/backtest/engine.py as 8% stop / 15% full take-profit / a
+# 5-day forced close. The 5-day close is the damaging one: 灯盏 is a
+# hold-to-distribution thesis, so a fixed-horizon liquidation measures the
+# horizon rather than the strategy. Values below follow the written spec.
+exit_rules:
+  stop_loss_pct: 6.0
+  # 15% halves the position instead of closing it, so the runner survives.
+  partial_take_profit_pct: 15.0
+  partial_take_profit_ratio: 0.5
+  # Primary exit: close breaks below the MA and below the limit-up day's
+  # average price. Evaluated on the last closed bar, executed at the next open.
+  break_ma_window: 5
+  require_below_limit_up_avg: true
+  # null = hold to divergence. Set an integer only to reintroduce a hard cap.
+  max_holding_days: null
 
 rules:
   - id: constitution_no_high_position
@@ -29,6 +51,10 @@ rules:
     params:
       max_price_to_high_ratio: 0.5
       min_limit_up_pct: 9.9
+      # IDLE -> ARMED -> ENTRY. An S0 arms the symbol for this many trading
+      # bars, so the divergence that authorizes entry may arrive later instead
+      # of having to share the S0 bar. 0 restores the same-bar-only behaviour.
+      armed_window_days: 5
       max_pb: 6.0
       min_market_cap_billion: 50
       max_market_cap_billion: 200

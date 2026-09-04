@@ -3,6 +3,9 @@ from pathlib import Path
 from typing import Any
 
 
+SQLITE_BUSY_TIMEOUT_MS = 30_000
+
+
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 
@@ -274,6 +277,115 @@ CREATE TABLE IF NOT EXISTS candidate_scores (
     raw_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS full_market_feature_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL,
+    source TEXT NOT NULL,
+    feature_version TEXT NOT NULL,
+    as_of_date TEXT NOT NULL,
+    universe_snapshot_id INTEGER,
+    universe_count INTEGER NOT NULL DEFAULT 0,
+    qfq_ready_count INTEGER NOT NULL DEFAULT 0,
+    eligible_count INTEGER NOT NULL DEFAULT 0,
+    excluded_count INTEGER NOT NULL DEFAULT 0,
+    selected_count INTEGER NOT NULL DEFAULT 0,
+    strong_count INTEGER NOT NULL DEFAULT 0,
+    watch_count INTEGER NOT NULL DEFAULT 0,
+    rejected_count INTEGER NOT NULL DEFAULT 0,
+    computed_count INTEGER NOT NULL DEFAULT 0,
+    reused_count INTEGER NOT NULL DEFAULT 0,
+    error_count INTEGER NOT NULL DEFAULT 0,
+    duration_seconds REAL,
+    parameters_json TEXT NOT NULL DEFAULT '{}',
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    research_only INTEGER NOT NULL DEFAULT 1 CHECK(research_only = 1),
+    simulation_only INTEGER NOT NULL DEFAULT 1 CHECK(simulation_only = 1),
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0 CHECK(live_trading_enabled = 0),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS full_market_feature_state (
+    symbol TEXT PRIMARY KEY,
+    name TEXT,
+    exchange TEXT,
+    trade_date TEXT NOT NULL,
+    as_of_date TEXT NOT NULL,
+    current_price REAL NOT NULL,
+    pct_change REAL,
+    volume REAL,
+    amount REAL,
+    score REAL NOT NULL,
+    tier TEXT NOT NULL,
+    discovery_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    feature_version TEXT NOT NULL,
+    input_revision TEXT NOT NULL,
+    bars_count INTEGER NOT NULL,
+    is_candidate INTEGER NOT NULL DEFAULT 0 CHECK(is_candidate IN (0, 1)),
+    reasons_json TEXT NOT NULL DEFAULT '[]',
+    features_json TEXT NOT NULL DEFAULT '{}',
+    scan_run_id INTEGER NOT NULL REFERENCES full_market_feature_runs(id) ON DELETE CASCADE,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_full_market_runs_asof
+    ON full_market_feature_runs(as_of_date DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_full_market_state_score
+    ON full_market_feature_state(is_candidate, score DESC, symbol);
+CREATE INDEX IF NOT EXISTS idx_full_market_state_tier
+    ON full_market_feature_state(tier, score DESC);
+
+CREATE TABLE IF NOT EXISTS full_market_score_calibration_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL CHECK(status IN ('ready', 'insufficient_data')),
+    schema_version TEXT NOT NULL,
+    score_semantics TEXT NOT NULL,
+    probability_semantics TEXT NOT NULL,
+    as_of_date TEXT NOT NULL,
+    horizon_trading_days INTEGER NOT NULL CHECK(horizon_trading_days > 0),
+    target_return_pct REAL NOT NULL,
+    validation_start_date TEXT,
+    training_sample_count INTEGER NOT NULL DEFAULT 0 CHECK(training_sample_count >= 0),
+    validation_sample_count INTEGER NOT NULL DEFAULT 0 CHECK(validation_sample_count >= 0),
+    mapped_validation_sample_count INTEGER NOT NULL DEFAULT 0
+        CHECK(mapped_validation_sample_count >= 0),
+    parameters_json TEXT NOT NULL DEFAULT '{}',
+    result_json TEXT NOT NULL DEFAULT '{}',
+    research_only INTEGER NOT NULL DEFAULT 1 CHECK(research_only = 1),
+    simulation_only INTEGER NOT NULL DEFAULT 1 CHECK(simulation_only = 1),
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0 CHECK(live_trading_enabled = 0),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS full_market_score_calibration_bins (
+    calibration_run_id INTEGER NOT NULL
+        REFERENCES full_market_score_calibration_runs(id) ON DELETE CASCADE,
+    bin_index INTEGER NOT NULL CHECK(bin_index >= 0),
+    score_lower_inclusive REAL NOT NULL,
+    score_upper REAL NOT NULL,
+    upper_bound_inclusive INTEGER NOT NULL DEFAULT 0
+        CHECK(upper_bound_inclusive IN (0, 1)),
+    sample_count INTEGER NOT NULL DEFAULT 0 CHECK(sample_count >= 0),
+    success_count INTEGER NOT NULL DEFAULT 0 CHECK(success_count >= 0),
+    probability REAL CHECK(probability IS NULL OR (probability >= 0 AND probability <= 1)),
+    confidence_lower REAL
+        CHECK(confidence_lower IS NULL OR (confidence_lower >= 0 AND confidence_lower <= 1)),
+    confidence_upper REAL
+        CHECK(confidence_upper IS NULL OR (confidence_upper >= 0 AND confidence_upper <= 1)),
+    status TEXT NOT NULL CHECK(status IN ('ready', 'insufficient_data')),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(calibration_run_id, bin_index),
+    CHECK(success_count <= sample_count)
+);
+
+CREATE INDEX IF NOT EXISTS idx_full_market_calibration_runs_created
+    ON full_market_score_calibration_runs(id DESC);
+CREATE INDEX IF NOT EXISTS idx_full_market_calibration_bins_score
+    ON full_market_score_calibration_bins(
+        calibration_run_id, score_lower_inclusive, score_upper
+    );
 
 CREATE TABLE IF NOT EXISTS simulation_accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -548,6 +660,61 @@ CREATE INDEX IF NOT EXISTS idx_potential_items_run ON potential_search_items(run
 CREATE INDEX IF NOT EXISTS idx_potential_items_symbol ON potential_search_items(symbol);
 CREATE INDEX IF NOT EXISTS idx_potential_items_score ON potential_search_items(potential_score);
 
+CREATE TABLE IF NOT EXISTS public_opinion_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL,
+    source_count INTEGER NOT NULL DEFAULT 0,
+    item_count INTEGER NOT NULL DEFAULT 0,
+    sector_count INTEGER NOT NULL DEFAULT 0,
+    errors_json TEXT NOT NULL DEFAULT '[]',
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    review_only INTEGER NOT NULL DEFAULT 1,
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS public_opinion_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES public_opinion_runs(id) ON DELETE CASCADE,
+    source_id TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    url TEXT,
+    published_at TEXT,
+    summary TEXT,
+    matched_sectors_json TEXT NOT NULL DEFAULT '[]',
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    score REAL NOT NULL DEFAULT 0,
+    raw_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS public_opinion_sector_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES public_opinion_runs(id) ON DELETE CASCADE,
+    sector TEXT NOT NULL,
+    heat_score REAL NOT NULL DEFAULT 0,
+    item_count INTEGER NOT NULL DEFAULT 0,
+    positive_count INTEGER NOT NULL DEFAULT 0,
+    policy_count INTEGER NOT NULL DEFAULT 0,
+    market_count INTEGER NOT NULL DEFAULT 0,
+    risk_count INTEGER NOT NULL DEFAULT 0,
+    keywords_json TEXT NOT NULL DEFAULT '[]',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    suggested_action TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_public_opinion_runs_created ON public_opinion_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_public_opinion_items_run ON public_opinion_items(run_id);
+CREATE INDEX IF NOT EXISTS idx_public_opinion_items_source ON public_opinion_items(source_id);
+CREATE INDEX IF NOT EXISTS idx_public_opinion_items_score ON public_opinion_items(score);
+CREATE INDEX IF NOT EXISTS idx_public_opinion_sector_run ON public_opinion_sector_signals(run_id);
+CREATE INDEX IF NOT EXISTS idx_public_opinion_sector_heat ON public_opinion_sector_signals(heat_score);
+
 CREATE TABLE IF NOT EXISTS agent_control_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_type TEXT NOT NULL,
@@ -763,6 +930,8 @@ CREATE TABLE IF NOT EXISTS daily_bar_cache (
     volume REAL,
     amount REAL,
     source TEXT NOT NULL,
+    adjustment_mode TEXT NOT NULL DEFAULT 'unknown',
+    volume_unit TEXT NOT NULL DEFAULT 'unknown',
     quality_status TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -772,6 +941,7 @@ CREATE TABLE IF NOT EXISTS daily_bar_cache (
 CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_symbol ON daily_bar_cache(symbol);
 CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_trade_date ON daily_bar_cache(trade_date);
 CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_status ON daily_bar_cache(quality_status);
+CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_symbol_date ON daily_bar_cache(symbol, trade_date);
 
 CREATE TABLE IF NOT EXISTS realtime_market_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -796,6 +966,82 @@ CREATE INDEX IF NOT EXISTS idx_realtime_events_symbol ON realtime_market_events(
 CREATE INDEX IF NOT EXISTS idx_realtime_events_event_ts ON realtime_market_events(event_ts);
 CREATE INDEX IF NOT EXISTS idx_realtime_events_quality ON realtime_market_events(quality_status);
 CREATE INDEX IF NOT EXISTS idx_realtime_events_source ON realtime_market_events(source);
+CREATE INDEX IF NOT EXISTS idx_realtime_events_payload_event_type
+ON realtime_market_events(lower(json_extract(payload_json, '$.event_type')))
+WHERE json_valid(payload_json) = 1;
+
+CREATE TABLE IF NOT EXISTS capital_flow_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL CHECK(scope IN ('market', 'symbol')),
+    symbol TEXT NOT NULL DEFAULT '',
+    trade_date TEXT NOT NULL,
+    retrieved_at TEXT NOT NULL,
+    source TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    upstream TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    source_semantics TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    main_net_inflow REAL,
+    main_net_inflow_ratio REAL,
+    super_large_order_net REAL,
+    super_large_order_net_ratio REAL,
+    large_order_net REAL,
+    large_order_net_ratio REAL,
+    medium_order_net REAL,
+    medium_order_net_ratio REAL,
+    small_order_net REAL,
+    small_order_net_ratio REAL,
+    quality_status TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    raw_payload_json TEXT NOT NULL DEFAULT '{}',
+    normalized_payload_json TEXT NOT NULL DEFAULT '{}',
+    review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
+    simulation_only INTEGER NOT NULL DEFAULT 1 CHECK(simulation_only = 1),
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0 CHECK(live_trading_enabled = 0),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    CHECK(
+        (scope = 'market' AND symbol = '') OR
+        (scope = 'symbol' AND length(symbol) = 8)
+    ),
+    UNIQUE(scope, symbol, trade_date, source, content_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_capital_flow_snapshots_latest
+ON capital_flow_snapshots(scope, symbol, trade_date DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_capital_flow_snapshots_hash
+ON capital_flow_snapshots(content_hash);
+
+CREATE TABLE IF NOT EXISTS capital_flow_ingestion_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL CHECK(scope IN ('market', 'symbol')),
+    symbol TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT NOT NULL,
+    fetched_count INTEGER NOT NULL DEFAULT 0,
+    accepted_count INTEGER NOT NULL DEFAULT 0,
+    duplicate_count INTEGER NOT NULL DEFAULT 0,
+    rejected_count INTEGER NOT NULL DEFAULT 0,
+    latest_trade_date TEXT,
+    error_type TEXT,
+    error_message TEXT,
+    details_json TEXT NOT NULL DEFAULT '{}',
+    review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
+    simulation_only INTEGER NOT NULL DEFAULT 1 CHECK(simulation_only = 1),
+    live_trading_enabled INTEGER NOT NULL DEFAULT 0 CHECK(live_trading_enabled = 0),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    CHECK(
+        (scope = 'market' AND symbol = '') OR
+        (scope = 'symbol' AND length(symbol) = 8)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_capital_flow_runs_latest
+ON capital_flow_ingestion_runs(scope, symbol, id DESC);
 
 CREATE TABLE IF NOT EXISTS realtime_provider_health (
     provider TEXT PRIMARY KEY,
@@ -1205,6 +1451,235 @@ CREATE INDEX IF NOT EXISTS idx_experience_events_category ON experience_events(c
 CREATE INDEX IF NOT EXISTS idx_experience_reviews_period ON experience_reviews(period_type, period_start, period_end);
 CREATE INDEX IF NOT EXISTS idx_strategy_perf_strategy ON strategy_performance_snapshots(strategy_name);
 CREATE INDEX IF NOT EXISTS idx_code_evolution_status ON code_evolution_records(status);
+
+CREATE TABLE IF NOT EXISTS forecast_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK(scope IN ('sector', 'stock', 'system')),
+    subject TEXT NOT NULL,
+    decision_cutoff TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL CHECK(horizon_days IN (1, 3, 5, 10, 20)),
+    rank INTEGER,
+    score REAL,
+    probability REAL,
+    model_version TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    data_version TEXT NOT NULL,
+    features_json TEXT NOT NULL DEFAULT '{}',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    reasons_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL,
+    review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(decision_id, scope, subject, horizon_days)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_decisions_snapshot
+    ON forecast_decisions(decision_cutoff DESC, decision_id);
+CREATE INDEX IF NOT EXISTS idx_forecast_decisions_subject
+    ON forecast_decisions(scope, subject, horizon_days, decision_cutoff DESC);
+CREATE INDEX IF NOT EXISTS idx_forecast_decisions_available
+    ON forecast_decisions(available_at, decision_cutoff);
+CREATE INDEX IF NOT EXISTS idx_forecast_decisions_evaluation
+    ON forecast_decisions(scope, horizon_days, decision_cutoff, decision_id);
+
+CREATE TABLE IF NOT EXISTS forecast_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK(scope IN ('sector', 'stock', 'system')),
+    subject TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL CHECK(horizon_days IN (1, 3, 5, 10, 20)),
+    observed_at TEXT NOT NULL,
+    continuous_return REAL NOT NULL,
+    benchmark_return REAL NOT NULL,
+    sector_return REAL NOT NULL,
+    benchmark_neutral_return REAL NOT NULL,
+    sector_neutral_return REAL NOT NULL,
+    data_version TEXT NOT NULL,
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'matured' CHECK(status = 'matured'),
+    review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(decision_id, scope, subject, horizon_days),
+    FOREIGN KEY(decision_id, scope, subject, horizon_days)
+        REFERENCES forecast_decisions(decision_id, scope, subject, horizon_days)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_outcomes_matured
+    ON forecast_outcomes(status, observed_at, horizon_days);
+CREATE INDEX IF NOT EXISTS idx_forecast_outcomes_subject
+    ON forecast_outcomes(scope, subject, horizon_days, observed_at);
+
+CREATE TABLE IF NOT EXISTS forecast_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evaluation_id TEXT NOT NULL UNIQUE,
+    as_of TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK(scope IN ('sector', 'stock')),
+    horizon_days INTEGER NOT NULL CHECK(horizon_days IN (1, 3, 5, 10, 20)),
+    status TEXT NOT NULL,
+    sample_count INTEGER NOT NULL,
+    fold_count INTEGER NOT NULL,
+    coverage REAL NOT NULL,
+    precision_at_k REAL,
+    spearman_rank_ic REAL,
+    brier_score REAL,
+    metrics_json TEXT NOT NULL,
+    review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_evaluations_scope_horizon
+    ON forecast_evaluations(scope, horizon_days, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS disclosure_facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fact_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    fact_type TEXT NOT NULL CHECK(fact_type IN (
+        'balance_sheet',
+        'income_statement',
+        'cash_flow_statement',
+        'earnings_forecast',
+        'share_buyback',
+        'shareholder_reduction',
+        'share_unlock',
+        'private_placement',
+        'major_contract'
+    )),
+    period_end TEXT,
+    published_at TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    retrieved_at TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    source_tier TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    raw_hash TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision >= 1),
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(fact_id, revision),
+    UNIQUE(fact_id, raw_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_disclosure_facts_symbol_available
+    ON disclosure_facts(symbol, available_at);
+CREATE INDEX IF NOT EXISTS idx_disclosure_facts_type_available
+    ON disclosure_facts(fact_type, available_at);
+CREATE INDEX IF NOT EXISTS idx_disclosure_facts_revision
+    ON disclosure_facts(fact_id, revision DESC);
+
+CREATE TABLE IF NOT EXISTS global_market_bars (
+    symbol TEXT NOT NULL,
+    asset_class TEXT NOT NULL,
+    bar_time TEXT NOT NULL,
+    open REAL,
+    high REAL,
+    low REAL,
+    close REAL,
+    volume REAL,
+    source TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    quality_status TEXT NOT NULL,
+    UNIQUE(symbol, bar_time, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_global_market_bars_symbol_time
+    ON global_market_bars(symbol, bar_time);
+CREATE INDEX IF NOT EXISTS idx_global_market_bars_available
+    ON global_market_bars(available_at);
+
+CREATE TABLE IF NOT EXISTS symbol_fundamental_snapshot (
+    symbol TEXT NOT NULL,
+    as_of TEXT NOT NULL,
+    name TEXT,
+    price REAL,
+    market_cap_billion REAL,
+    float_cap_billion REAL,
+    pb REAL,
+    total_share_billion REAL,
+    book_value_per_share REAL,
+    source TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(symbol, as_of, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_symbol_fundamental_symbol
+    ON symbol_fundamental_snapshot(symbol, as_of DESC);
+CREATE INDEX IF NOT EXISTS idx_symbol_fundamental_available
+    ON symbol_fundamental_snapshot(available_at);
+
+CREATE TABLE IF NOT EXISTS sector_membership_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    sector TEXT NOT NULL,
+    effective_from TEXT NOT NULL,
+    effective_to TEXT,
+    source TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    UNIQUE(symbol, sector, effective_from, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sector_membership_symbol_effective
+    ON sector_membership_history(symbol, effective_from, effective_to);
+CREATE INDEX IF NOT EXISTS idx_sector_membership_sector_available
+    ON sector_membership_history(sector, available_at);
+
+CREATE TABLE IF NOT EXISTS sector_membership_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    sector TEXT NOT NULL,
+    member_hash TEXT NOT NULL,
+    member_count INTEGER NOT NULL CHECK(member_count > 0),
+    observed_at TEXT NOT NULL,
+    effective_date TEXT NOT NULL,
+    confidence REAL NOT NULL CHECK(confidence >= 0.0 AND confidence <= 1.0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source, sector, observed_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sector_membership_snapshots_asof
+    ON sector_membership_snapshots(source, sector, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sector_membership_snapshots_sector_asof
+    ON sector_membership_snapshots(sector, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS sector_membership_snapshot_members (
+    snapshot_id INTEGER NOT NULL REFERENCES sector_membership_snapshots(id),
+    symbol TEXT NOT NULL,
+    PRIMARY KEY(snapshot_id, symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sector_membership_snapshot_members_symbol
+    ON sector_membership_snapshot_members(symbol, snapshot_id);
+
+CREATE TRIGGER IF NOT EXISTS sector_membership_snapshots_no_update
+BEFORE UPDATE ON sector_membership_snapshots
+BEGIN
+    SELECT RAISE(ABORT, 'sector membership snapshots are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sector_membership_snapshots_no_delete
+BEFORE DELETE ON sector_membership_snapshots
+BEGIN
+    SELECT RAISE(ABORT, 'sector membership snapshots are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sector_membership_snapshot_members_no_update
+BEFORE UPDATE ON sector_membership_snapshot_members
+BEGIN
+    SELECT RAISE(ABORT, 'sector membership snapshot members are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sector_membership_snapshot_members_no_delete
+BEFORE DELETE ON sector_membership_snapshot_members
+BEGIN
+    SELECT RAISE(ABORT, 'sector membership snapshot members are append-only');
+END;
 """
 
 
@@ -1225,6 +1700,10 @@ KNOWLEDGE_TABLES = [
     "candidate_lifecycle",
     "candidate_lifecycle_events",
     "candidate_scores",
+    "full_market_feature_runs",
+    "full_market_feature_state",
+    "full_market_score_calibration_runs",
+    "full_market_score_calibration_bins",
     "learning_samples",
     "learning_backtests",
     "learning_reports",
@@ -1234,6 +1713,9 @@ KNOWLEDGE_TABLES = [
     "monitoring_reviews",
     "potential_search_runs",
     "potential_search_items",
+    "public_opinion_runs",
+    "public_opinion_items",
+    "public_opinion_sector_signals",
     "offhour_research_runs",
     "agent_control_tasks",
     "agent_control_events",
@@ -1247,6 +1729,8 @@ KNOWLEDGE_TABLES = [
     "agent_paper_simulation_evaluations",
     "price_readiness_reports",
     "daily_bar_cache",
+    "capital_flow_snapshots",
+    "capital_flow_ingestion_runs",
     "realtime_market_events",
     "realtime_provider_health",
     "realtime_cycle_runs",
@@ -1280,7 +1764,11 @@ class SQLiteStore:
 
     def init(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(
+            self.db_path,
+            timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000,
+        ) as conn:
+            conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
             conn.executescript(SCHEMA)
             for stmt in [
                 "ALTER TABLE agent_control_tasks ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'auto_approved'",
@@ -1335,6 +1823,62 @@ class SQLiteStore:
                     conn.execute(stmt)
                 except sqlite3.OperationalError:
                     pass
+
+            for stmt in [
+                "ALTER TABLE daily_bar_cache ADD COLUMN adjustment_mode TEXT NOT NULL DEFAULT 'unknown'",
+                "ALTER TABLE daily_bar_cache ADD COLUMN volume_unit TEXT NOT NULL DEFAULT 'unknown'",
+                "CREATE INDEX IF NOT EXISTS idx_daily_bar_cache_adjustment ON daily_bar_cache(adjustment_mode)",
+            ]:
+                try:
+                    conn.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass
+
+            # Keep startup migrations idempotent.  A single CASE update over
+            # every unknown field rewrote rows forever when only one of the two
+            # units could be classified (for example index volume units and
+            # unadjusted Sina stock prices).  Update only fields whose source
+            # gives us enough evidence to improve the stored value.
+            conn.execute(
+                """
+                UPDATE daily_bar_cache
+                SET adjustment_mode = CASE
+                        WHEN source IN ('akshare.stock_zh_a_hist', 'tencent.fqkline.qfq')
+                            THEN 'qfq'
+                        ELSE 'none'
+                    END
+                WHERE adjustment_mode = 'unknown'
+                  AND (
+                    source IN ('akshare.stock_zh_a_hist', 'tencent.fqkline.qfq')
+                    OR source LIKE 'akshare.stock_zh_index_daily%'
+                    OR source LIKE 'sina.cn.index_kline_daily_fallback%'
+                  )
+                """
+            )
+            conn.execute(
+                """
+                UPDATE daily_bar_cache
+                SET volume_unit = CASE
+                        WHEN source IN ('akshare.stock_zh_a_hist', 'tencent.fqkline.qfq')
+                            THEN 'hand'
+                        ELSE 'share'
+                    END
+                WHERE volume_unit = 'unknown'
+                  AND source IN (
+                    'akshare.stock_zh_a_hist',
+                    'tencent.fqkline.qfq',
+                    'sina.cn.kline_daily_fallback'
+                  )
+                """
+            )
+            conn.execute(
+                """
+                UPDATE daily_bar_cache
+                SET quality_status = 'review_only_unknown_adjustment'
+                WHERE source = 'sina.cn.kline_daily_fallback'
+                  AND quality_status IN ('ready', 'ok', 'valid')
+                """
+            )
             
             try:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_tasks_approval ON agent_control_tasks(approval_status)")
@@ -1342,8 +1886,13 @@ class SQLiteStore:
                 pass
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000,
+        )
         conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     def reset_knowledge(self) -> None:

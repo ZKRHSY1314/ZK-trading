@@ -1,0 +1,63 @@
+version: "1.0"
+mode_defaults:
+  strict:
+    min_final_score: 80
+    max_risk_penalty: 12
+    min_buy_maturity_score: 7
+    max_buy_plan_count: 3
+  balanced:
+    min_final_score: 50
+  exploratory:
+    min_final_score: 35
+    execution_allowed: false
+
+safety:
+  simulate_only: true
+  allow_live_order: false
+  require_human_review_for_strategy_change: true
+
+hard_filters:
+  exclude_st: true
+  exclude_delisting_risk: true
+  exclude_suspended: true
+  exclude_invalid_data: true
+  exclude_untradeable_limit_down: true
+  min_20d_avg_amount: 30000000
+
+score_weights:
+  market_sector: 12
+  limit_up_quality: 14
+  price_position: 14
+  volume_price_health: 14
+  trend_ma: 10
+  buy_maturity: 10
+  market_cap_liquidity: 8
+  valuation_finance: 6
+  cost_chip_logic: 8
+  data_explainability: 4
+
+risk_penalties:
+  HIGH_DISTRIBUTION: [10, 18]
+  VOLUME_ABNORMAL: [8, 16]
+  MA_BREAKDOWN: [8, 15]
+  SECTOR_RETREAT: [6, 12]
+  A_KILL_UNSTABLE: [10, 18]
+  PB_HIGH: [3, 8]
+  MARKET_CAP_TOO_LARGE: [2, 6]
+  LOW_LIQUIDITY: [5, 12]
+  DATA_WEAK: [5, 20]
+  CHASE_RISK: [6, 15]
+
+plan_thresholds:
+  SIM_BUY_PLAN:
+    min_final_score: 80
+    max_risk_penalty: 12
+    min_buy_maturity_score: 7
+  WAIT_PULLBACK_PLAN:
+    min_final_score: 65
+  WAIT_BREAKOUT_PLAN:
+    min_final_score: 60
+  WATCH_ONLY_PLAN:
+    min_final_score: 50
+  REJECT_SOFT:
+    min_final_score: 0

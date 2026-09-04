@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal
+
+from fastapi import APIRouter, Request
+from pydantic import BaseModel, Field, model_validator
+
+from app.config import settings
+from app.public_opinion.service import CodexPublicOpinionService
+
+
+router = APIRouter(prefix="/api/public-opinion", tags=["public-opinion"])
+
+
+class PublicOpinionRunInput(BaseModel):
+    limit: int = 60
+    persist: bool = True
+    requested_by: str = "codex"
+    source_urls: list[str] = Field(default_factory=list)
+
+
+class CodexEvidenceItemInput(BaseModel):
+    event_id: str | None = Field(default=None, min_length=1, max_length=160)
+    cluster_id: str | None = Field(default=None, min_length=1, max_length=160)
+    type: str | None = Field(default=None, min_length=1, max_length=80)
+    entities: list[str] = Field(default_factory=list, max_length=30)
+    geography: list[str] = Field(default_factory=list, max_length=20)
+    status: Literal["new", "ongoing", "updated", "resolved", "unconfirmed"] = "new"
+    direction: Literal["positive", "negative", "mixed", "neutral"] = "neutral"
+    magnitude: float = Field(default=0.0, ge=0.0, le=1.0)
+    url: str = Field(min_length=8, max_length=2048)
+    retrieved_at: datetime
+    first_seen_at: datetime | None = None
+    available_at: datetime | None = None
+    revision: int = Field(default=1, ge=1)
+    evidence_urls: list[str] = Field(default_factory=list, max_length=20)
+    raw_hash: str | None = Field(default=None, min_length=1, max_length=128)
+    published_at_status: Literal["known", "unknown"]
+    published_at: datetime | None = None
+    title: str = Field(min_length=6, max_length=160)
+    summary: str = Field(min_length=1, max_length=4000)
+    source_name: str = Field(min_length=1, max_length=200)
+    source_id: str | None = Field(default=None, max_length=120)
+    source_tier: Literal["official", "primary_media", "market_media"] = "market_media"
+    category: Literal["market", "policy", "sector"] = "market"
+    sector_hints: list[str] = Field(default_factory=list, max_length=20)
+    claims: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_publication_time(self) -> "CodexEvidenceItemInput":
+        if self.published_at_status == "known" and self.published_at is None:
+            raise ValueError("published_at is required when published_at_status=known")
+        if self.published_at_status == "unknown" and self.published_at is not None:
+            raise ValueError("published_at must be omitted when published_at_status=unknown")
+        return self
+
+
+class CodexEvidenceIngestInput(BaseModel):
+    evidence: list[CodexEvidenceItemInput] = Field(min_length=1, max_length=300)
+    persist: bool = True
+    requested_by: str = Field(default="codex", min_length=1, max_length=120)
+
+
+@router.get("/capabilities")
+def public_opinion_capabilities(request: Request) -> dict:
+    return CodexPublicOpinionService(store=request.app.state.runtime_store).capabilities()
+
+
+@router.post("/run")
+def run_public_opinion_capture(
+    request: Request,
+    input_data: PublicOpinionRunInput | None = None,
+) -> dict:
+    payload = input_data or PublicOpinionRunInput()
+    return CodexPublicOpinionService(store=request.app.state.runtime_store).run(
+        limit=payload.limit,
+        persist=payload.persist,
+        requested_by=payload.requested_by,
+        source_urls=payload.source_urls,
+    )
+
+
+@router.get("/runs/latest")
+def latest_public_opinion_run(request: Request) -> dict:
+    latest = CodexPublicOpinionService(store=request.app.state.runtime_store).latest_run()
+    if latest is None:
+        return {
+            "status": "empty",
+            "items": [],
+            "sector_signals": [],
+            "review_only": True,
+            "simulation_only": True,
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+    return latest
+
+
+@router.get("/context/latest")
+def latest_public_opinion_context(request: Request, limit: int = 8) -> dict:
+    return CodexPublicOpinionService(store=request.app.state.runtime_store).latest_context(limit=limit)
+
+
+@router.get("/runs")
+def list_public_opinion_runs(request: Request, limit: int = 20) -> list[dict]:
+    return CodexPublicOpinionService(store=request.app.state.runtime_store).list_runs(limit=limit)
+
+
+@router.post("/evidence/ingest")
+def ingest_codex_public_opinion_evidence(
+    input_data: CodexEvidenceIngestInput,
+    request: Request,
+) -> dict:
+    evidence = [item.model_dump(mode="json") for item in input_data.evidence]
+    return CodexPublicOpinionService(store=request.app.state.runtime_store).ingest_evidence(
+        evidence,
+        persist=input_data.persist,
+        requested_by=input_data.requested_by,
+    )

@@ -16,7 +16,7 @@ def infer_board_type(code: str, name: str | None = None) -> str:
     if normalized_name.startswith(("*ST", "ST", "S*ST", "SST")):
         return "st"
     
-    if code.startswith("300") or code.startswith("301"):
+    if code.startswith(("300", "301", "302")):
         return "chinext"
     
     if code.startswith("688"):

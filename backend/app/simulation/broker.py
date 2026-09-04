@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from app.config import settings
 from app.models import (
     SimulationAccountView,
@@ -6,6 +8,7 @@ from app.models import (
     SimulationPositionView,
     TradeSide,
 )
+from app.simulation.market_data import SimulationMarketDataService
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -13,7 +16,6 @@ class SimulatedBroker:
     def __init__(self, account_name: str = "default") -> None:
         self.account_name = account_name
         self.store = SQLiteStore(settings.database_path)
-        self.store.init()
 
     def execute(self, order: SimulationOrder) -> SimulationFill:
         if order.quantity % settings.min_order_lot != 0:
@@ -53,13 +55,132 @@ class SimulatedBroker:
             """,
             (account["id"],),
         )
+        market_data = SimulationMarketDataService(store=self.store)
+        screen_snapshot = market_data.screen_position_snapshot()
+        position_views: list[SimulationPositionView] = []
+        valuation_warnings: list[str] = []
+        market_values: list[float] = []
+        unrealized_values: list[float] = []
+        today_values: list[float] = []
+        valuation_times: list[str] = []
+        freshness_values: list[str] = []
+
+        for position in positions:
+            mark = market_data.mark_snapshot(str(position["symbol"]))
+            quantity = int(position["quantity"])
+            avg_cost = float(position["avg_cost"])
+            market_value = round(quantity * mark.price, 2) if mark.price is not None else None
+            unrealized_pnl = (
+                round(quantity * (mark.price - avg_cost), 2) if mark.price is not None else None
+            )
+            today_pnl = (
+                round(quantity * (mark.price - mark.previous_close), 2)
+                if mark.price is not None and mark.previous_close is not None
+                else None
+            )
+            if market_value is None:
+                valuation_warnings.append(f"missing_mark_price:{position['symbol']}")
+            else:
+                market_values.append(market_value)
+                unrealized_values.append(float(unrealized_pnl or 0.0))
+            if today_pnl is None:
+                valuation_warnings.append(f"missing_previous_close:{position['symbol']}")
+            else:
+                today_values.append(today_pnl)
+            if mark.as_of:
+                valuation_times.append(mark.as_of)
+            freshness_values.append(mark.freshness)
+            position_views.append(
+                SimulationPositionView(
+                    **position,
+                    mark_price=mark.price,
+                    previous_close=mark.previous_close,
+                    market_value=market_value,
+                    unrealized_pnl=unrealized_pnl,
+                    today_pnl=today_pnl,
+                    mark_source=mark.source,
+                    mark_as_of=mark.as_of,
+                    freshness=mark.freshness,
+                )
+            )
+
+        position_count = len(position_views)
+        priced_count = len(market_values)
+        cash = round(float(account["cash"]), 2)
+        if position_count == 0:
+            market_value_total: float | None = 0.0
+            unrealized_total: float | None = 0.0
+            today_total: float | None = 0.0
+            total_assets: float | None = cash
+            position_ratio: float | None = 0.0
+            valuation_status = "complete"
+            freshness = "not_applicable"
+        elif priced_count == position_count:
+            market_value_total = round(sum(market_values), 2)
+            unrealized_total = round(sum(unrealized_values), 2)
+            total_assets = round(cash + market_value_total, 2)
+            position_ratio = round(market_value_total / total_assets * 100, 2) if total_assets > 0 else 0.0
+            today_total = round(sum(today_values), 2) if len(today_values) == position_count else None
+            valuation_status = "complete" if today_total is not None else "partial"
+            freshness = self._aggregate_freshness(freshness_values)
+        else:
+            market_value_total = None
+            unrealized_total = None
+            today_total = None
+            total_assets = None
+            position_ratio = None
+            valuation_status = "unavailable" if priced_count == 0 else "partial"
+            freshness = self._aggregate_freshness(freshness_values)
+
         return SimulationAccountView(
             account_id=account["id"],
             name=account["name"],
-            cash=round(float(account["cash"]), 2),
+            cash=cash,
             initial_cash=float(account["initial_cash"]),
-            positions=[SimulationPositionView(**position) for position in positions],
+            positions=position_views,
+            total_assets=total_assets,
+            market_value=market_value_total,
+            unrealized_pnl=unrealized_total,
+            today_pnl=today_total,
+            today_pnl_scope="open_positions_mark_to_previous_close",
+            position_ratio=position_ratio,
+            valuation_status=valuation_status,
+            valuation_as_of=self._oldest_valuation_time(valuation_times),
+            freshness=freshness,
+            valuation_warnings=valuation_warnings,
+            screen_snapshot_status=screen_snapshot.status,
+            screen_snapshot_reason=screen_snapshot.reason,
+            screen_snapshot_scope=screen_snapshot.scope,
+            screen_snapshot_as_of=screen_snapshot.as_of,
+            screen_positions=screen_snapshot.positions,
+            simulation_only=True,
+            live_trading_enabled=False,
         )
+
+    @staticmethod
+    def _aggregate_freshness(values: list[str]) -> str:
+        unique = {value for value in values if value}
+        if not unique:
+            return "unavailable"
+        if len(unique) == 1:
+            return next(iter(unique))
+        return "mixed"
+
+    @staticmethod
+    def _oldest_valuation_time(values: list[str]) -> str | None:
+        if not values:
+            return None
+
+        def sort_key(value: str) -> datetime:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                return datetime.max.replace(tzinfo=timezone.utc)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+
+        return min(values, key=sort_key)
 
     def settle_next_day(self) -> SimulationAccountView:
         account = self._ensure_account()

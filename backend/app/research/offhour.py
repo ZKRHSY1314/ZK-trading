@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import csv
 import json
+import sqlite3
 import os
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -583,6 +584,9 @@ class OffhourResearchLoopService:
             blocked_reasons.append("insufficient_history_data" if not coverage["ready_symbols"] else "no_dataset2_strategy_matches")
         elif backtest["status"] not in {"completed", "partial", "skipped"}:
             status = "partial"
+            # Name the degradation. A bare "partial" with no reason is why the
+            # existing worker heartbeats stopped carrying information.
+            blocked_reasons.append(f"backtest_{backtest['status']}")
 
         result = {
             "schema_version": "offhour_research_run.v1",
@@ -4672,8 +4676,8 @@ class OffhourResearchLoopService:
         symbol = str(signal.get("symbol") or "")
         normalized = normalize_a_share_code(symbol) if symbol else ""
         return bool(
-            symbol.startswith(("SH688", "SZ300", "SZ301"))
-            or normalized.startswith(("SH688", "SZ300", "SZ301"))
+            symbol.startswith(("SH688", "SZ300", "SZ301", "SZ302"))
+            or normalized.startswith(("SH688", "SZ300", "SZ301", "SZ302"))
             or infer_board_type(normalized, None) in {"star", "chinext"}
         )
 
@@ -6350,7 +6354,7 @@ class OffhourResearchLoopService:
             learning.add("stop_loss_triggered")
         if action_label == "WAIT_CONFIRMATION" and pnl < 0:
             learning.add("weak_confirmation_risk")
-        if symbol.startswith(("SH688", "SZ300", "SZ301")):
+        if symbol.startswith(("SH688", "SZ300", "SZ301", "SZ302")):
             learning.add("high_volatility_board_risk")
         if tags & {"top_risk", "distribution", "big_fall", "volume_up_price_stall", "reduce"}:
             learning.add("distribution_or_stall_risk")
@@ -7341,11 +7345,6 @@ class OffhourResearchLoopService:
         if not isinstance(groups, list) or not isinstance(items, list):
             return self._phase_confidence_walk_forward_skipped("invalid_phase_similarity_payload")
 
-        group_by_key = {
-            str(group.get("key")): group
-            for group in groups
-            if isinstance(group, dict) and group.get("key")
-        }
         target_groups = [
             dict(group)
             for group in groups
@@ -8817,6 +8816,10 @@ class OffhourResearchLoopService:
             signal_optimization=signal_optimization,
             candidate_review_priority=candidate_review_priority,
         )
+        dataset1_strategy_synthesis = dict(dataset1_experience.get("strategy_synthesis") or {})
+        dataset1_strategy_synthesis.setdefault("review_only", True)
+        dataset1_strategy_synthesis.setdefault("simulation_only", True)
+        dataset1_strategy_synthesis.setdefault("live_trading_enabled", settings.enable_live_trading)
         payload = {
             "schema_version": "offhour_model_candidate.v1",
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -8828,7 +8831,7 @@ class OffhourResearchLoopService:
                 "counts": dataset1_experience.get("counts", {}),
                 "anchors": dataset1_experience.get("anchors", {}),
                 "constraints": dataset1_experience.get("constraints", []),
-                "strategy_synthesis": dataset1_experience.get("strategy_synthesis", {}),
+                "strategy_synthesis": dataset1_strategy_synthesis,
             },
             "signal_count": replay.get("signal_count", 0),
             "evaluated_count": sandbox.get("evaluated_count", 0),

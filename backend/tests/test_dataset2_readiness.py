@@ -20835,7 +20835,7 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
             "simulated_by": "api-test",
         },
     )
-    cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_runs = client.get(
+    client.get(
         "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-execution-execution-dry-runs",
         params={"limit": 3},
     )
@@ -20846,7 +20846,7 @@ def test_dataset2_readiness_api_smoke(client, tmp_path):
             "reviewed_by": "api-test",
         },
     )
-    cleanup_execution_controlled_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run_reviews = client.get(
+    client.get(
         "/api/learning/dataset2/staging/cleanup-execution-controlled-apply-execution-plan-execution-final-execution-execution-execution-execution-dry-run-reviews",
         params={"limit": 3},
     )

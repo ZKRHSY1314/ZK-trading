@@ -22,6 +22,42 @@ def test_automation_capabilities(client):
     data = resp.json()
     assert data["live_trading_enabled"] is False
 
+
+def test_automation_cycle_honors_validated_query_parameters(client, monkeypatch):
+    captured = {}
+
+    class FakeSupervisor:
+        def run_preflight(self):
+            return {
+                "status": "pass",
+                "preflight_id": "pytest-preflight",
+                "preflight_required": True,
+            }
+
+        def run_cycle(self, *, limit, monitor_limit, review_symbol):
+            captured.update(
+                {
+                    "limit": limit,
+                    "monitor_limit": monitor_limit,
+                    "review_symbol": review_symbol,
+                }
+            )
+            return {"status": "completed"}
+
+    monkeypatch.setattr("app.api.routes.AutomationSupervisor", FakeSupervisor)
+
+    response = client.post(
+        "/api/automation/cycles/run-once?limit=11&monitor_limit=7&review_symbol=sh600000"
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "limit": 11,
+        "monitor_limit": 7,
+        "review_symbol": "SH600000",
+    }
+    assert response.json()["effective_cycle_params"] == captured
+
 def test_trade_execution_gateway_capabilities(client):
     resp = client.get("/api/trade-execution-gateway/capabilities")
     assert resp.status_code == 200

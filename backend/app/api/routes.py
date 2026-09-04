@@ -1,17 +1,20 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.agent_control.service import AgentControlService
 from app.ai.weight_optimizer import WeightOptimizer
 from app.automation.supervisor import AutomationSupervisor
 from app.candidates.auto_discovery import AutoDiscoveryScanner
+from app.candidates.full_market_scan import FullMarketFeatureScanner
 from app.candidates.lifecycle import CandidateLifecycleService
 from app.candidates.local_scanner import LocalCandidateScanner
 from app.candidates.offhour_search import OffhourPotentialSearchService
 from app.candidates.scoring import CandidateScoringService
+from app.candidates.selection_v2 import StrategySelectionV2Service
 from app.config import settings
 from app.data.snapshot_builder import MarketDataError, MarketSnapshotBuilder
 from app.decision import DecisionAnalyzer
+from app.diagnostics.stability import V1StabilityDiagnosticsService
 from app.experience.code_evolution import CodeEvolutionService
 from app.experience.memory import ExperienceMemoryService
 from app.knowledge.repository import KnowledgeRepository
@@ -19,6 +22,7 @@ from app.learning.phase_matcher import PhaseSimilarityService
 from app.learning.phase_replay import MainForcePhaseReplayService, PhaseReplayError
 from app.learning.service import LearningService
 from app.models import (
+    CapitalFlowSnapshot,
     CandidateDecision,
     DecisionAnalysis,
     LearningBacktestResult,
@@ -36,6 +40,13 @@ from app.models import (
     ApprovalInput,
     CalibrationReviewInput,
 )
+from app.monitoring.service import MonitoringService
+from app.operations.readiness import OperationReadinessService
+from app.rules.engine import RuleEngine
+from app.rules.loader import load_rule_config
+from app.simulation.broker import SimulatedBroker
+from app.simulation.planner import SimulationPlanner
+from app.storage.sqlite_store import SQLiteStore
 
 
 class Dataset2TrainingReadinessService:
@@ -53,13 +64,6 @@ class Dataset2TrainingReadinessService:
 
         return _Dataset2TrainingReadinessService(*args, **kwargs)
 
-
-from app.monitoring.service import MonitoringService
-from app.rules.engine import RuleEngine
-from app.rules.loader import load_rule_config
-from app.simulation.broker import SimulatedBroker
-from app.simulation.planner import SimulationPlanner
-from app.storage.sqlite_store import SQLiteStore
 
 router = APIRouter(prefix="/api")
 
@@ -156,6 +160,19 @@ class SimCockpitReadbackInput(BaseModel):
     recorded_by: str = "operator"
 
 
+class SimCockpitScreenReadbackInput(BaseModel):
+    action_id: int | None = None
+    readback_type: str = "today_orders"
+    symbol: str | None = None
+    price: float | None = None
+    quantity: int | None = None
+    order_id: str | None = None
+    window_verification_id: int | None = None
+    screen_confirmation: str | None = None
+    recorded_by: str = "operator"
+    note: str | None = None
+
+
 class Dataset2SimpleTrainingDryRunInput(BaseModel):
     limit: int = 200
     requested_by: str = "operator"
@@ -164,15 +181,6 @@ class Dataset2TrainingRunInput(BaseModel):
     limit: int = 200
     requested_by: str = "operator"
     min_samples: int = 4
-
-
-class OffhourResearchRunInput(BaseModel):
-    limit: int = 100
-    strategy_limit: int = 50
-    history_days: int = 240
-    write_artifact: bool = True
-    refresh_history: bool = False
-    requested_by: str = "codex"
 
 
 class ScreenFixtureReplayInput(BaseModel):
@@ -1263,6 +1271,16 @@ def capabilities() -> dict[str, object]:
     }
 
 
+@router.get("/system/v1-stability")
+def v1_stability_diagnostics() -> dict:
+    return V1StabilityDiagnosticsService().report()
+
+
+@router.get("/system/operation-readiness")
+def operation_readiness(selection_limit: int = 80) -> dict:
+    return OperationReadinessService().report(selection_limit=selection_limit)
+
+
 @router.get("/trade-execution-gateway/capabilities")
 def trade_execution_gateway_capabilities() -> dict:
     return TradeExecutionGatewayService().capabilities()
@@ -1703,9 +1721,9 @@ def automation_cycle_run_once(
         return preflight
 
     effective_cycle_params = {
-        "limit": CYCLE_LIMIT,
-        "monitor_limit": CYCLE_MONITOR_LIMIT,
-        "review_symbol": CYCLE_REVIEW_SYMBOL,
+        "limit": max(1, min(int(limit), 120)),
+        "monitor_limit": max(1, min(int(monitor_limit), 20)),
+        "review_symbol": str(review_symbol).strip().upper() or CYCLE_REVIEW_SYMBOL,
     }
     cycle = supervisor.run_cycle(
         limit=effective_cycle_params["limit"],
@@ -1763,7 +1781,7 @@ def automation_record_event(run_id: int, event: AutomationEventInput) -> dict:
             event.payload,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/automation/runs/{run_id}/finish")
@@ -1775,7 +1793,7 @@ def automation_finish_external_run(run_id: int, finish: AutomationFinishInput) -
             finish.summary,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/knowledge/summary")
@@ -4632,7 +4650,7 @@ def experience_code_evolution_detail(record_id: int) -> dict:
     try:
         return CodeEvolutionService().get_record(record_id)
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/experience/code-evolution/{record_id}/validation")
@@ -4671,7 +4689,7 @@ def reject_code_evolution_record(record_id: int, input_data: CodeEvolutionReview
             note=input_data.note,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/learning/reports/latest", response_model=LearningReport)
@@ -4856,68 +4874,111 @@ def market_snapshot(symbol: str, name: str | None = None) -> MarketSnapshot:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/market/flow", response_model=CapitalFlowSnapshot)
+def market_capital_flow(
+    request: Request,
+    symbol: str | None = None,
+) -> CapitalFlowSnapshot:
+    from app.data.capital_flow import CapitalFlowService
+
+    try:
+        return CapitalFlowService(store=request.app.state.runtime_store).latest(
+            scope="symbol" if symbol else "market",
+            symbol=symbol,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/market/capital-flow/{symbol}", response_model=CapitalFlowSnapshot)
+def symbol_capital_flow(request: Request, symbol: str) -> CapitalFlowSnapshot:
+    from app.data.capital_flow import CapitalFlowService
+
+    try:
+        return CapitalFlowService(store=request.app.state.runtime_store).latest(
+            scope="symbol",
+            symbol=symbol,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/realtime/capabilities")
-def realtime_capabilities() -> dict:
+def realtime_capabilities(request: Request) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().capabilities()
+    return RealtimeMarketService(store=request.app.state.runtime_store).capabilities()
 
 
 @router.get("/realtime/scheduler-plan")
-def realtime_scheduler_plan() -> dict:
+def realtime_scheduler_plan(request: Request) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().scheduler_plan()
+    return RealtimeMarketService(store=request.app.state.runtime_store).scheduler_plan()
 
 
 @router.get("/realtime/automation-proposal")
-def realtime_automation_proposal() -> dict:
+def realtime_automation_proposal(request: Request) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().automation_proposal()
+    return RealtimeMarketService(store=request.app.state.runtime_store).automation_proposal()
 
 
 @router.get("/realtime/provider-health")
-def realtime_provider_health() -> list[dict]:
+def realtime_provider_health(request: Request) -> list[dict]:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().provider_health()
+    return RealtimeMarketService(store=request.app.state.runtime_store).provider_health()
 
 
 @router.get("/realtime/snapshot/{symbol}")
-def realtime_snapshot(symbol: str) -> dict:
+def realtime_snapshot(symbol: str, request: Request) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().latest_snapshot(symbol)
+    return RealtimeMarketService(store=request.app.state.runtime_store).latest_snapshot(symbol)
 
 
 @router.get("/realtime/events")
-def realtime_events(symbol: str | None = None, limit: int = 50) -> list[dict]:
+def realtime_events(
+    request: Request,
+    symbol: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().list_events(symbol=symbol, limit=limit)
+    return RealtimeMarketService(store=request.app.state.runtime_store).list_events(
+        symbol=symbol,
+        limit=limit,
+    )
 
 
 @router.get("/realtime/cycles")
-def realtime_cycles(limit: int = 20) -> list[dict]:
+def realtime_cycles(request: Request, limit: int = 20) -> list[dict]:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().list_cycle_runs(limit=limit)
+    return RealtimeMarketService(store=request.app.state.runtime_store).list_cycle_runs(limit=limit)
 
 
 @router.get("/realtime/cycles/latest")
-def realtime_latest_cycle() -> dict:
+def realtime_latest_cycle(request: Request) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().latest_cycle_run()
+    return RealtimeMarketService(store=request.app.state.runtime_store).latest_cycle_run()
 
 
 @router.post("/realtime/refresh")
-def realtime_refresh(symbols: str = "SZ002081,SZ002115", limit: int = 20) -> dict:
+def realtime_refresh(
+    request: Request,
+    symbols: str = "SZ002081,SZ002115",
+    limit: int = 20,
+) -> dict:
     from app.realtime.service import RealtimeMarketService
 
     symbol_list = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
-    return RealtimeMarketService().refresh_symbols(symbols=symbol_list, limit=limit)
+    return RealtimeMarketService(store=request.app.state.runtime_store).refresh_symbols(
+        symbols=symbol_list,
+        limit=limit,
+    )
 
 
 @router.post("/realtime/monitoring-sync")
@@ -4929,6 +4990,7 @@ def realtime_monitoring_sync(limit: int = 100) -> dict:
 
 @router.post("/realtime/cycle")
 def realtime_cycle(
+    request: Request,
     symbols: str = "SZ002081,SZ002115",
     refresh_limit: int = 20,
     sync_limit: int = 100,
@@ -4937,7 +4999,7 @@ def realtime_cycle(
     from app.realtime.service import RealtimeMarketService
 
     symbol_list = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
-    return RealtimeMarketService().run_cycle(
+    return RealtimeMarketService(store=request.app.state.runtime_store).run_cycle(
         symbols=symbol_list,
         refresh_limit=refresh_limit,
         sync_limit=sync_limit,
@@ -4946,10 +5008,17 @@ def realtime_cycle(
 
 
 @router.post("/realtime/replay")
-def realtime_replay(symbol: str | None = None, limit: int = 100) -> dict:
+def realtime_replay(
+    request: Request,
+    symbol: str | None = None,
+    limit: int = 100,
+) -> dict:
     from app.realtime.service import RealtimeMarketService
 
-    return RealtimeMarketService().replay(symbol=symbol, limit=limit)
+    return RealtimeMarketService(store=request.app.state.runtime_store).replay(
+        symbol=symbol,
+        limit=limit,
+    )
 
 
 @router.get("/screen-monitoring/capabilities")
@@ -5170,7 +5239,7 @@ def screen_monitoring_provider_config_proposal_approve(
             note=payload.note,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/screen-monitoring/provider-config-proposals/{proposal_id}/reject")
@@ -5189,7 +5258,7 @@ def screen_monitoring_provider_config_proposal_reject(
             note=payload.note,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/screen-monitoring/sessions")
@@ -5255,7 +5324,7 @@ def screen_monitoring_artifact_review_approve(
             note=payload.note,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/screen-monitoring/artifact-reviews/{review_id}/reject")
@@ -5274,7 +5343,7 @@ def screen_monitoring_artifact_review_reject(
             note=payload.note,
         )
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/screen-monitoring/observations/mock")
@@ -5375,6 +5444,27 @@ def sim_cockpit_buy(input_data: SimCockpitActionInput | None = None) -> dict:
     )
 
 
+@router.post("/sim-cockpit/actions/confirm-buy")
+def sim_cockpit_confirm_buy(input_data: SimCockpitActionInput | None = None) -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    payload = input_data or SimCockpitActionInput()
+    return SimCockpitService().confirm_buy(
+        symbol=payload.symbol,
+        price=payload.price,
+        quantity=payload.quantity,
+        signal_source=payload.signal_source,
+        risk_result=payload.risk_result,
+        window_verification_id=payload.window_verification_id,
+        requested_by=payload.requested_by,
+        note=payload.note,
+        dry_run=payload.dry_run,
+        execution_mode=payload.execution_mode,
+        screen_confirmation=payload.screen_confirmation,
+        screen_coordinates=payload.screen_coordinates,
+    )
+
+
 @router.post("/sim-cockpit/actions/sell")
 def sim_cockpit_sell(input_data: SimCockpitActionInput | None = None) -> dict:
     from app.sim_cockpit.service import SimCockpitService
@@ -5452,6 +5542,25 @@ def sim_cockpit_record_readback(input_data: SimCockpitReadbackInput | None = Non
     )
 
 
+@router.post("/sim-cockpit/screen-readback")
+def sim_cockpit_screen_readback(input_data: SimCockpitScreenReadbackInput | None = None) -> dict:
+    from app.sim_cockpit.service import SimCockpitService
+
+    payload = input_data or SimCockpitScreenReadbackInput()
+    return SimCockpitService().record_screen_readback(
+        action_id=payload.action_id,
+        readback_type=payload.readback_type,
+        symbol=payload.symbol,
+        price=payload.price,
+        quantity=payload.quantity,
+        order_id=payload.order_id,
+        window_verification_id=payload.window_verification_id,
+        screen_confirmation=payload.screen_confirmation,
+        recorded_by=payload.recorded_by,
+        note=payload.note,
+    )
+
+
 @router.post("/automation/cycles/simulation-cockpit-run")
 def automation_simulation_cockpit_run(limit: int = 5) -> dict:
     return AutomationSupervisor().simulation_cockpit_run(limit=limit)
@@ -5505,74 +5614,6 @@ def dataset2_simple_training_dry_run(input_data: Dataset2SimpleTrainingDryRunInp
     )
 
 
-@router.get("/research/offhour/capabilities")
-def offhour_research_capabilities() -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    return OffhourResearchLoopService().capabilities()
-
-
-@router.post("/research/offhour/run")
-def run_offhour_research(input_data: OffhourResearchRunInput | None = None) -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    payload = input_data or OffhourResearchRunInput()
-    return OffhourResearchLoopService().run(
-        limit=payload.limit,
-        strategy_limit=payload.strategy_limit,
-        history_days=payload.history_days,
-        write_artifact=payload.write_artifact,
-        refresh_history=payload.refresh_history,
-        requested_by=payload.requested_by,
-    )
-
-
-@router.get("/research/offhour/runs/latest")
-def latest_offhour_research_run() -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    latest = OffhourResearchLoopService().latest_run()
-    if latest is None:
-        return {
-            "status": "empty",
-            "review_only": True,
-            "simulation_only": True,
-            "live_trading_enabled": settings.enable_live_trading,
-        }
-    return latest
-
-
-@router.get("/research/offhour/runs/{run_id}")
-def get_offhour_research_run(run_id: int) -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    item = OffhourResearchLoopService().get_run(run_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Offhour research run not found")
-    return item
-
-
-@router.get("/research/offhour/model-candidates/latest")
-def latest_offhour_model_candidate() -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    return OffhourResearchLoopService().latest_model_candidate()
-
-
-@router.get("/research/offhour/simulation-review-plan/latest")
-def latest_offhour_simulation_review_plan(limit: int = 12) -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    return OffhourResearchLoopService().latest_simulation_review_plan(limit=limit)
-
-
-@router.get("/research/offhour/strategy-learning-packet/latest")
-def latest_offhour_strategy_learning_packet(limit: int = 8) -> dict:
-    from app.research.offhour import OffhourResearchLoopService
-
-    return OffhourResearchLoopService().latest_strategy_learning_packet(limit=limit)
-
-
 @router.post("/screen-monitoring/observations/fixture-replay")
 def replay_screen_monitoring_fixture(input_data: ScreenFixtureReplayInput | None = None) -> dict:
     from app.screen_monitoring.service import ScreenMonitoringService
@@ -5601,21 +5642,59 @@ def screen_monitoring_capture_stub(input_data: ScreenCaptureStubInput | None = N
 
 
 @router.post("/data/daily-bars/refresh")
-def refresh_daily_bars(limit: int = 50, days: int = 120) -> dict:
+def refresh_daily_bars(
+    request: Request,
+    limit: int = 50,
+    days: int = 120,
+    source_policy: str | None = None,
+) -> dict:
     from app.data.daily_bar_cache import DailyBarCacheService
-    return DailyBarCacheService().refresh_bars(limit=limit, days=days)
+
+    return DailyBarCacheService(store=request.app.state.runtime_store).refresh_bars(
+        limit=limit,
+        days=days,
+        source_policy=source_policy,
+    )
+
+
+@router.get("/data/tonghuasun/status")
+def get_tonghuasun_status() -> dict:
+    """Report non-secret local market-data discovery state without probing accounts."""
+    from app.data.tonghuasun_provider import TonghuasunMarketDataProvider
+
+    result = TonghuasunMarketDataProvider(
+        timeout=settings.realtime_request_timeout_seconds
+    ).status()
+    result.update(
+        {
+            "source_policy": settings.daily_bar_source_policy,
+            "enabled": settings.daily_bar_source_policy
+            in {"tonghuasun_first", "tonghuasun_only"},
+            "live_trading_enabled": settings.enable_live_trading,
+        }
+    )
+    return result
 
 
 @router.get("/data/daily-bars/coverage")
-def get_daily_bar_coverage(limit: int = 100) -> list[dict]:
+def get_daily_bar_coverage(request: Request, limit: int = 100) -> list[dict]:
     from app.data.daily_bar_cache import DailyBarCacheService
-    return DailyBarCacheService().get_coverage(limit=limit)
+
+    return DailyBarCacheService(store=request.app.state.runtime_store).get_coverage(limit=limit)
 
 
 @router.get("/data/daily-bars/{symbol}")
-def get_daily_bars_for_symbol(symbol: str, limit: int = 120) -> list[dict]:
+def get_daily_bars_for_symbol(
+    symbol: str,
+    request: Request,
+    limit: int = 120,
+) -> list[dict]:
     from app.data.daily_bar_cache import DailyBarCacheService
-    return DailyBarCacheService().get_bars(symbol=symbol, limit=limit)
+
+    return DailyBarCacheService(store=request.app.state.runtime_store).get_bars(
+        symbol=symbol,
+        limit=limit,
+    )
 
 
 @router.post("/candidates/evaluate", response_model=CandidateDecision)
@@ -5632,6 +5711,34 @@ def local_candidate_scan(limit: int = 100, persist: bool = True) -> dict:
 @router.post("/candidates/auto-discovery")
 def auto_discover_candidates(limit: int = 50, persist: bool = True) -> dict:
     return AutoDiscoveryScanner().scan(limit=limit, persist=persist)
+
+
+@router.post("/candidates/full-market-scan/run")
+def run_full_market_feature_scan(
+    request: Request,
+    candidate_limit: int = 300,
+    lookback_bars: int = 120,
+    persist: bool = True,
+    force: bool = False,
+) -> dict:
+    return FullMarketFeatureScanner(store=request.app.state.runtime_store).run(
+        limit=candidate_limit,
+        lookback=lookback_bars,
+        persist=persist,
+        force=force,
+    )
+
+
+@router.get("/candidates/full-market-scan/latest")
+def latest_full_market_feature_scan(
+    request: Request,
+    limit: int = 300,
+    tier: str | None = None,
+) -> dict:
+    return FullMarketFeatureScanner(store=request.app.state.runtime_store).latest(
+        limit=limit,
+        tier=tier,
+    )
 
 
 @router.get("/candidates/auto-discovery/latest")
@@ -5667,6 +5774,33 @@ def candidate_scores(limit: int = 50, state: str | None = None) -> list[dict]:
 @router.get("/candidates/scores/summary")
 def candidate_score_summary(limit: int = 10) -> dict:
     return CandidateScoringService().summary(limit=limit)
+
+
+@router.get("/candidates/selection-v2/summary")
+def candidate_selection_v2_summary(
+    request: Request,
+    mode: str = "balanced",
+    limit: int = 200,
+) -> dict:
+    return StrategySelectionV2Service(store=request.app.state.runtime_store).run(
+        mode=mode,
+        limit=limit,
+        write_artifacts=False,
+    )
+
+
+@router.post("/candidates/selection-v2/run")
+def run_candidate_selection_v2(
+    request: Request,
+    mode: str = "balanced",
+    limit: int = 200,
+    write_artifacts: bool = True,
+) -> dict:
+    return StrategySelectionV2Service(store=request.app.state.runtime_store).run(
+        mode=mode,
+        limit=limit,
+        write_artifacts=write_artifacts,
+    )
 
 
 @router.post("/candidates/potential-search/run")
@@ -6141,6 +6275,10 @@ class BacktestRunInput(BaseModel):
     max_positions: int = 5
     per_symbol_cap: float = 0.2
     benchmark_symbol: str = "SH000300"
+    # Off by default: the run stays point-in-time. On, market cap / PB are
+    # projected from the latest snapshot and the run reports
+    # fundamental_point_in_time=false.
+    allow_projected_fundamentals: bool = False
 
 
 @router.post("/backtest/runs")
@@ -6155,6 +6293,7 @@ def run_historical_backtest(input_data: BacktestRunInput) -> dict:
         max_positions=input_data.max_positions,
         per_symbol_cap=input_data.per_symbol_cap,
         benchmark_symbol=input_data.benchmark_symbol,
+        allow_projected_fundamentals=input_data.allow_projected_fundamentals,
     )
 
 
@@ -6216,30 +6355,6 @@ def get_backtest_run(run_id: int) -> dict:
 # ------------------------------------------------------------------
 
 
-@router.get("/ai/model/capabilities")
-def ai_model_capabilities() -> dict:
-    from app.ai.model_service import AIModelGatewayService
-
-    return AIModelGatewayService().capabilities()
-
-
-@router.post("/ai/model/explain-code-evolution/{record_id}")
-def explain_code_evolution_with_model(record_id: int) -> dict:
-    from app.ai.model_service import AIModelGatewayService
-
-    try:
-        return AIModelGatewayService().explain_code_evolution(record_id)
-    except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
-
-
-@router.get("/ai/model/audit-logs")
-def ai_model_audit_logs(operation: str | None = None, limit: int = 50) -> list[dict]:
-    from app.ai.model_service import AIModelGatewayService
-
-    return AIModelGatewayService().audit_logs(operation=operation, limit=limit)
-
-
 @router.post("/ai/review/run")
 def run_ai_review() -> dict:
     from app.ai.review_worker import AIReviewWorker
@@ -6261,7 +6376,7 @@ def validate_ai_proposal(proposal_id: int) -> dict:
     try:
         return AIReviewWorker().validate_proposal(proposal_id)
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/ai/review/proposals/{proposal_id}/approve-for-simulation")
@@ -6293,4 +6408,4 @@ def reject_ai_proposal(
     try:
         return AIReviewWorker().reject(proposal_id, reviewed_by=reviewed_by, note=note)
     except ValueError as exc:
-                raise HTTPException(status_code=404, detail="No automation cycle report has been generated yet")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

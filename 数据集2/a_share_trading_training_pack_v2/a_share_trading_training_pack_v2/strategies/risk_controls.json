@@ -1,0 +1,44 @@
+{
+  "version": "0.2.0",
+  "hard_boundaries": [
+    "禁止直接实盘下单",
+    "禁止绕过风控模块",
+    "禁止自动修改实盘交易配置",
+    "禁止自动扩大仓位、提高风险阈值或关闭熔断机制",
+    "禁止将模拟盘逻辑直接切换为实盘逻辑",
+    "禁止保存明文券商账号、密码、token、cookie、API key",
+    "任何真实交易必须经过人工确认和 Trade Execution Gateway"
+  ],
+  "training_controls": [
+    "禁止未来函数和数据泄漏",
+    "划分训练集、验证集、测试集、样本外数据",
+    "优先 walk-forward validation",
+    "回测必须纳入T+1、涨跌停、停牌、手续费、印花税、滑点、流动性约束",
+    "同时评估最大回撤、胜率、盈亏比、期望值、交易次数、换手率和极端行情表现",
+    "模型输出只能做候选评分、概率判断或辅助解释"
+  ],
+  "action_label_map": {
+    "SIM_BUY_CANDIDATE": "仅加入模拟候选/观察池，不得自动实盘下单。",
+    "HOLD_OR_TRAIL": "模拟持有或跟踪止盈，不得自动加仓。",
+    "REDUCE_OR_EXIT": "模拟减仓/退出信号，用于风控提示。",
+    "AVOID_OR_WAIT": "规避或等待确认。",
+    "WAIT_CONFIRMATION": "需要二次确认，暂不形成方向性动作。",
+    "RISK_ALERT": "风险告警，优先保护本金与停用策略。",
+    "NO_TRADE": "不参与，不生成交易候选。"
+  },
+  "activation_policy": {
+    "default_state": "disabled_until_backtested",
+    "allowed_outputs": [
+      "candidate_score",
+      "risk_warning",
+      "explanation",
+      "simulation_plan"
+    ],
+    "disallowed_outputs": [
+      "live_order",
+      "broker_click",
+      "auto_position_change",
+      "risk_bypass"
+    ]
+  }
+}

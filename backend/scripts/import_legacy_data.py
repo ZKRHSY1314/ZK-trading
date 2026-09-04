@@ -1,4 +1,5 @@
 ﻿import csv
+import argparse
 import json
 import math
 import sqlite3
@@ -752,7 +753,23 @@ def import_all(reset: bool = True) -> dict[str, int]:
 
 
 def main() -> None:
-    counts = import_all(reset=True)
+    # reset=True routes through SQLiteStore.reset_knowledge(), which DELETEs
+    # every one of the 71 KNOWLEDGE_TABLES. That list is much wider than the
+    # knowledge base: it includes daily_bar_cache (~2.9M rows), candidate_scores,
+    # full_market_feature_state and the whole historical_backtest_* set. Running
+    # this script the obvious way therefore destroys the market data it does not
+    # know how to rebuild, so the wipe now has to be asked for by name.
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help=(
+            "Delete all 71 knowledge tables first - including daily_bar_cache "
+            "and every backtest table - then import. Omitted means insert only."
+        ),
+    )
+    args = parser.parse_args()
+    counts = import_all(reset=args.reset)
     print("导入完成:")
     for table, count in counts.items():
         print(f"- {table}: {count}")

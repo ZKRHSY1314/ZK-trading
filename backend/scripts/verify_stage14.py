@@ -1,4 +1,3 @@
-import asyncio
 import json
 from app.data.daily_bar_cache import DailyBarCacheService
 from app.data.price_readiness import PriceReadinessService
@@ -37,7 +36,7 @@ def main():
             print(b)
     
     print("--- 4. Refreshing Daily Bars Again ---")
-    res2 = cache_svc.refresh_bars(limit=5, days=10)
+    cache_svc.refresh_bars(limit=5, days=10)
     
     bars_after_2 = store.fetch_one("SELECT COUNT(*) as c FROM daily_bar_cache")["c"]
     print("Bars after refresh 2:", bars_after_2)

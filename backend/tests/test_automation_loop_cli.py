@@ -401,3 +401,94 @@ def test_sim_cockpit_window_readiness_checklist_allows_dry_run_collection_only()
     assert "dry-run/readback samples only" in checklist["safe_next_action"]
     statuses = {item["name"]: item["status"] for item in checklist["operator_checklist"]}
     assert all(status == "passed" for status in statuses.values())
+
+
+def test_full_cycle_passes_validated_cli_parameters_to_api(monkeypatch):
+    automation_loop = load_automation_loop_module()
+    requested_urls = []
+
+    def fake_request_json(method, url):
+        requested_urls.append((method, url))
+        return {"status": "completed"}
+
+    monkeypatch.setattr(automation_loop, "request_json", fake_request_json)
+
+    result = automation_loop.run_full_cycle(
+        "http://127.0.0.1:8000",
+        limit=11,
+        monitor_limit=7,
+        review_symbol="SH600000",
+    )
+
+    assert requested_urls == [
+        (
+            "POST",
+            "http://127.0.0.1:8000/api/automation/cycles/run-once?limit=11&monitor_limit=7&review_symbol=SH600000",
+        )
+    ]
+    assert result["effective_cycle_params"] == {
+        "limit": 11,
+        "monitor_limit": 7,
+        "review_symbol": "SH600000",
+    }
+
+
+def test_semantic_result_status_propagates_nested_business_failures():
+    automation_loop = load_automation_loop_module()
+
+    assert automation_loop.semantic_result_status({"status": "completed"}) == "completed"
+    assert automation_loop.semantic_result_status({"status": "partial"}) == "partial"
+    assert automation_loop.semantic_result_status({"status": "blocked"}) == "blocked"
+    assert automation_loop.semantic_result_status(
+        {"public_opinion": {"status": "failed"}}
+    ) == "failed"
+    assert automation_loop.semantic_result_status(
+        {"operation_readiness": {"status": "needs_attention"}}
+    ) == "partial"
+    assert automation_loop.semantic_result_status(
+        {"status": "completed", "details": {"status": "automation_risk_blocked"}}
+    ) == "blocked"
+    assert automation_loop.semantic_result_status({"status": "stale"}) == "partial"
+    assert automation_loop.semantic_result_status({"status": "needs_outcomes"}) == "partial"
+    assert automation_loop.semantic_result_status({"status": "pending_future_data"}) == "partial"
+    assert automation_loop.semantic_result_status(
+        {"processed_count": 2, "outcome_count": 0, "error_count": 2, "errors": [{"error": "x"}]}
+    ) == "failed"
+    assert automation_loop.semantic_result_status(
+        {
+            "status": "completed",
+            "automation": {
+                "status": "completed",
+                "summary": {
+                    "run_steps": [
+                        {
+                            "status": "completed",
+                            "details": {"status": "failed"},
+                        }
+                    ]
+                },
+            },
+        }
+    ) == "failed"
+
+
+def test_main_returns_nonzero_and_logs_blocked_business_result(monkeypatch):
+    automation_loop = load_automation_loop_module()
+    logged_entries = []
+    monkeypatch.setattr(
+        automation_loop,
+        "run_api_cycle",
+        lambda api_base, limit: {"status": "blocked", "reason": "runtime_not_ready"},
+    )
+    monkeypatch.setattr(automation_loop, "append_log", logged_entries.append)
+    monkeypatch.setattr(
+        automation_loop.sys,
+        "argv",
+        ["automation_loop.py", "--mode", "api", "--max-cycles", "1"],
+    )
+
+    exit_code = automation_loop.main()
+
+    assert exit_code == 1
+    assert logged_entries[0]["status"] == "blocked"
+    assert logged_entries[0]["result"]["reason"] == "runtime_not_ready"

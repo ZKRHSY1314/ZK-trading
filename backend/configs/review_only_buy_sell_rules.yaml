@@ -1,0 +1,203 @@
+version: 1
+scope: review_only_buy_sell_rule_candidates
+status: candidate_review_only
+review_only: true
+simulation_only: true
+writes_rules_yaml: false
+live_ordering: false
+notes:
+  - These rules are research candidates. They are not loaded by the production RuleEngine.
+  - The 2.6x cost level is a staged take-profit and risk zone, not a buy signal.
+  - Promotion requires sandbox replay, formal backtest with executable trades, and human review.
+
+sandbox_recommended_profile:
+  id: mf26x_hybrid_v0
+  status: candidate_review_only
+  evidence_date: 2026-06-19
+  evidence_source: local_daily_bar_cache_sandbox
+  data_limitations:
+    amount_proxy_used: true
+    amount_proxy_scope: sandbox_only
+    daily_bar_cache_amount_missing_rows: 13377
+    formal_backtest_not_yet_executable: true
+  buy_filters:
+    min_base_len: 80
+    max_entry_multiple: 1.25
+    min_volume_ratio: 2.0
+    max_single_day_chase_pct: 12.0
+  risk_controls:
+    stop_loss_pct: 0.08
+    failure_guard_days: 8
+    failure_guard_min_gain_pct: 0.15
+    risk_reduce_trigger_pct: 0.15
+    risk_reduce_sell_pct: 0.20
+  exit_profile:
+    fixed_half:
+      position_weight: 0.50
+      take_profit_pct: 0.15
+      stop_loss_pct: 0.08
+      max_holding_days: 5
+    mf26x_runner_half:
+      position_weight: 0.50
+      stage_245_sell_pct: 0.30
+      stage_260_sell_pct: 0.40
+      residual_exit:
+        - failed_launch_exit
+        - ma10_residual_exit
+        - distribution_watch_exit
+        - horizon_exit
+  sandbox_result:
+    symbols: 46
+    rows: 13377
+    non_overlapping_trades: 67
+    fixed_exit_avg_return_pct: 3.27
+    fixed_exit_win_rate_pct: 61.19
+    mf26x_runner_avg_return_pct: 7.82
+    mf26x_runner_win_rate_pct: 47.76
+    hybrid_avg_return_pct: 5.55
+    hybrid_median_return_pct: 1.14
+    hybrid_win_rate_pct: 53.73
+
+buy_rules:
+  - id: mf26x_pre_markup_cost_zone
+    name: main_force_26x_pre_markup_cost_zone
+    enabled_for_sandbox: true
+    production_enabled: false
+    purpose: Identify early candidates before the 2.6x take-profit zone.
+    conditions:
+      base_window_days_any_of: [120, 160, 200, 240, 300, 360, 420, 500]
+      base_avg_cost_method: close_mean
+      max_base_cv: 0.30
+      max_base_range_pct: 90
+      current_price_min_multiple_of_avg_cost: 1.00
+      current_price_max_multiple_of_avg_cost: 1.45
+      min_volume_ratio_on_breakout: 1.50
+      require_not_near_take_profit_zone: true
+      reject_if_current_price_multiple_gte: 2.30
+    score_delta_candidate: 18
+    risk_notes:
+      - Requires confirmation from volume, phase replay, and liquidity checks.
+      - Does not override constitution or risk gates.
+
+  - id: mf26x_breakout_confirmation
+    name: main_force_26x_breakout_confirmation
+    enabled_for_sandbox: true
+    production_enabled: false
+    purpose: Confirm that a long base is leaving accumulation rather than drifting.
+    conditions:
+      close_above_ma20: true
+      close_above_ma60_or_reclaiming: true
+      min_volume_ratio: 1.50
+      max_single_day_chase_pct: 12.00
+      reject_if_upper_shadow_pct_gte: 8.00
+    score_delta_candidate: 12
+    risk_notes:
+      - Avoids buying the late part of a one-day spike.
+      - Needs same-day or next-day confirmation before any simulated plan.
+
+  - id: mf26x_hybrid_v0_entry_filter
+    name: main_force_26x_hybrid_v0_entry_filter
+    enabled_for_sandbox: true
+    production_enabled: false
+    purpose: Practical screened entry profile from local sandbox comparison.
+    conditions:
+      min_base_len: 80
+      max_entry_multiple: 1.25
+      min_volume_ratio: 2.0
+      max_single_day_chase_pct: 12.0
+      require_amount_or_sandbox_amount_proxy: true
+    score_delta_candidate: 20
+    risk_notes:
+      - This is the current preferred sandbox profile, not a production setting.
+      - It must be re-tested after real amount data is repaired.
+
+sell_rules:
+  - id: mf26x_staged_take_profit
+    name: main_force_26x_staged_take_profit
+    enabled_for_sandbox: true
+    production_enabled: false
+    purpose: Sell into strength as price approaches the historical 2.6x cost zone.
+    cost_basis: average_base_cost
+    stages:
+      - trigger_multiple: 2.30
+        action: risk_alert
+        suggested_sell_pct: 0
+        note: Start elevated monitoring. Do not add position.
+      - trigger_multiple: 2.45
+        action: partial_take_profit
+        suggested_sell_pct_range: [25, 35]
+        note: First staged sell if price action shows acceleration or volume divergence.
+      - trigger_multiple: 2.60
+        action: partial_take_profit
+        suggested_sell_pct_range: [35, 50]
+        note: Main take-profit zone. Treat chasing here as high risk.
+      - trigger_multiple: 2.75
+        action: distribution_risk_exit
+        suggested_sell_pct_range: [50, 100]
+        note: Only hold residual if trend remains clean and no distribution signal appears.
+    residual_exit_triggers:
+      - close_below_ma5_after_peak
+      - close_below_ma10_after_peak
+      - high_volume_stall
+      - long_upper_shadow
+      - failed_limit_up_or_open_board_distribution
+
+  - id: mf26x_distribution_watch
+    name: main_force_26x_distribution_watch
+    enabled_for_sandbox: true
+    production_enabled: false
+    purpose: Flag likely distribution after a large cost-multiple move.
+    conditions:
+      current_price_multiple_of_avg_cost_gte: 2.30
+      any_of:
+        - high_volume_stall
+        - long_upper_shadow
+        - peak_drawdown_pct_lte: -12
+        - open_board_with_large_volume
+        - consecutive_failed_new_highs
+    action: downgrade_or_exit_review
+    risk_notes:
+      - This rule is a sell/risk rule. It must never be used as a buy booster.
+
+  - id: mf26x_hybrid_split_exit
+    name: main_force_26x_hybrid_split_exit
+    enabled_for_sandbox: true
+    production_enabled: false
+    purpose: Split position between stable short exit and 2.6x runner.
+    fixed_half:
+      sell_pct: 50
+      take_profit_pct: 15
+      stop_loss_pct: 8
+      max_holding_days: 5
+    runner_half:
+      sell_pct: 50
+      failed_launch_exit:
+        days: 8
+        required_peak_gain_pct: 15
+      risk_reduce:
+        trigger_gain_pct: 15
+        sell_pct: 20
+        move_residual_stop_to_cost: true
+      staged_take_profit:
+        - trigger_multiple: 2.45
+          sell_pct: 30
+        - trigger_multiple: 2.60
+          sell_pct: 40
+      residual_exit:
+        - ma10_residual_exit
+        - distribution_watch_exit
+        - horizon_exit
+
+risk_filters:
+  - id: mf26x_st_or_special_treatment_downgrade
+    condition: name_contains_st_or_special_treatment
+    action: downgrade_to_observe
+  - id: mf26x_ipo_or_short_history_downgrade
+    condition: bars_count_lt_240
+    action: downgrade_to_observe
+  - id: mf26x_missing_amount_blocks_executable_backtest
+    condition: amount_missing_or_zero
+    action: repair_data_before_formal_backtest
+  - id: mf26x_high_volatility_board_position_cap
+    condition: board_in_chinext_or_star_market
+    action: cap_simulated_position_and_require_confirmation
