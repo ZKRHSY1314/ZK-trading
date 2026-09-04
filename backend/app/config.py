@@ -11,7 +11,9 @@ class Settings(BaseSettings):
     app_name: str = "A股AI交易驾驶舱"
     app_env: str = "local"
     database_path: Path = DEFAULT_DATABASE_PATH
-    legacy_data_dir: Path = Path("../../数据集1")
+    # Resolved against backend/ by the importer, so one "..", not two: the old
+    # value pointed at D:\数据集1 and the import silently degraded to seed data.
+    legacy_data_dir: Path = Path("../数据集1")
     enable_live_trading: bool = False
     default_cash: float = 200_000
     min_order_lot: int = 100
@@ -39,6 +41,9 @@ class Settings(BaseSettings):
     # served by the desktop client rather than a web API. The 5s realtime quote
     # timeout below is too tight for it and produced spurious failures.
     tonghuasun_request_timeout_seconds: float = 30.0
+    # The host serializes internally and degrades into returning empty frames
+    # when pushed; callers keep their own concurrency and queue behind this.
+    tonghuasun_min_request_interval_seconds: float = 1.0
     realtime_provider: str = "disabled"
     asharehub_api_key: str | None = None
     asharehub_base_url: str = "https://asharehub.com/api"

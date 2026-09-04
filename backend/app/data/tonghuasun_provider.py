@@ -17,7 +17,9 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from dataclasses import dataclass, field
+from threading import Lock
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -49,6 +51,52 @@ _CANDLE_FIELDS = (
     "transaction_amount",
     "date_time",
 )
+
+
+class _LocalHostRateLimit:
+    """Serialize calls to the local plugin and space them out.
+
+    The host is a desktop client, not a web API, and it degrades under
+    concurrent load in a way that is easy to miss: it stops answering with an
+    error and starts answering with an EMPTY candle frame, which the cache
+    reads as "no history" and silently charges to the next source. Measured on
+    a full-market sweep, 4 workers with no spacing returned usable data for 4
+    of 30 symbols, while a serial 1 req/s sweep returned 20 of 20 with no
+    empties and 340 of 340 on the Beijing board.
+
+    The gate is module-level because it protects one desktop client, not one
+    provider instance, and callers pick their own concurrency: refresh_bars
+    still asks for 5 workers, and those requests queue here instead of
+    stampeding the host.
+    """
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._next_allowed_at = 0.0
+
+    def __call__(self, min_interval: float):
+        return _LocalHostRateLimitSlot(self, max(0.0, float(min_interval)))
+
+
+class _LocalHostRateLimitSlot:
+    def __init__(self, gate: "_LocalHostRateLimit", min_interval: float) -> None:
+        self._gate = gate
+        self._min_interval = min_interval
+
+    def __enter__(self) -> None:
+        self._gate._lock.acquire()
+        delay = self._gate._next_allowed_at - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+
+    def __exit__(self, *_exc: object) -> None:
+        # Space from completion, not from arrival: a slow reply already gave
+        # the host its recovery time.
+        self._gate._next_allowed_at = time.monotonic() + self._min_interval
+        self._gate._lock.release()
+
+
+_local_host_rate_limit = _LocalHostRateLimit()
 
 
 class TonghuasunConfigurationError(RuntimeError):
@@ -122,11 +170,13 @@ class TonghuasunMarketDataProvider:
         *,
         product_home: str | os.PathLike[str] | None = None,
         timeout: float = 5.0,
+        min_request_interval: float = 1.0,
         opener: Callable[..., Any] = _open_without_redirect,
     ) -> None:
         self._connection = connection
         self._product_home = product_home
         self.timeout = max(0.1, float(timeout))
+        self.min_request_interval = max(0.0, float(min_request_interval))
         self._opener = opener
 
     @property
@@ -223,9 +273,10 @@ class TonghuasunMarketDataProvider:
             },
         )
         try:
-            with self._opener(request, timeout=self.timeout) as response:
-                raw = _read_bounded(response)
-                status = int(getattr(response, "status", 200))
+            with _local_host_rate_limit(self.min_request_interval):
+                with self._opener(request, timeout=self.timeout) as response:
+                    raw = _read_bounded(response)
+                    status = int(getattr(response, "status", 200))
         except HTTPError as exc:
             raw = _read_bounded(exc)
             raise TonghuasunDataError(

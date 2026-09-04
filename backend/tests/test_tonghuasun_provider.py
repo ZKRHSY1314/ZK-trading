@@ -535,3 +535,89 @@ def test_daily_bar_cache_can_prefer_tonghuasun_without_a_parallel_store(
         "volume_unit": "unknown",
         "quality_status": "ready",
     }
+
+
+def test_concurrent_callers_are_serialized_and_spaced_for_the_local_host():
+    """Callers keep their own concurrency; the host still sees one paced stream.
+
+    The desktop client degrades under parallel load by answering with an empty
+    candle frame instead of an error, which the cache reads as "no history" and
+    charges to the next source - so the damage is silent. Measured on a
+    full-market sweep, 4 unpaced workers produced usable data for 4 of 30
+    symbols where a serial 1 req/s sweep produced 20 of 20.
+
+    refresh_bars still asks for 5 workers, so the gate has to hold regardless of
+    what the caller does.
+    """
+
+    import threading
+    import time
+
+    interval = 0.05
+    in_flight = 0
+    overlapped = False
+    starts: list[float] = []
+    guard = threading.Lock()
+
+    def opener(request, timeout):
+        nonlocal in_flight, overlapped
+        with guard:
+            in_flight += 1
+            overlapped = overlapped or in_flight > 1
+            starts.append(time.monotonic())
+        time.sleep(interval / 2)
+        with guard:
+            in_flight -= 1
+        return StubResponse(
+            {
+                "ok": True,
+                "data": {
+                    "adjustment": 1,
+                    "candles": [
+                        {
+                            "security": {"fullCode": "600000.SH"},
+                            "points": [
+                                {
+                                    "timestampUtc": "2026-08-31T07:00:00Z",
+                                    "values": {
+                                        "open": 10.0,
+                                        "high": 10.8,
+                                        "low": 9.9,
+                                        "latest": 10.6,
+                                        "transaction_volume": 123_400,
+                                        "transaction_amount": 1_300_000,
+                                        "date_time": "20260831",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                },
+            }
+        )
+
+    provider = TonghuasunMarketDataProvider(
+        TonghuasunConnection(
+            base_url="http://127.0.0.1:17180",
+            access_token="local-secret",
+            product_home=Path("."),
+        ),
+        timeout=2.5,
+        min_request_interval=interval,
+        opener=opener,
+    )
+
+    threads = [
+        threading.Thread(target=provider.get_daily_bars, args=("SH600000",)) for _ in range(5)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(starts) == 5
+    assert not overlapped, "requests reached the local host concurrently"
+    starts.sort()
+    gaps = [later - earlier for earlier, later in zip(starts, starts[1:])]
+    # Spacing is measured from completion, so every gap clears the interval.
+    assert all(gap >= interval for gap in gaps), gaps

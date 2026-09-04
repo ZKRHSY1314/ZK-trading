@@ -29,6 +29,7 @@ class DailyBarCacheService:
         self.tonghuasun_provider = TonghuasunMarketDataProvider(
             product_home=settings.tonghuasun_product_home or None,
             timeout=settings.tonghuasun_request_timeout_seconds,
+            min_request_interval=settings.tonghuasun_min_request_interval_seconds,
         )
         self._write_lock = Lock()
 
