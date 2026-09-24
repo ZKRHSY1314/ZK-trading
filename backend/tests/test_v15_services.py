@@ -72,24 +72,19 @@ def test_ai_validation_ignores_legacy_completed_run_without_fills(monkeypatch, t
 
     worker = AIReviewWorker()
     proposal = worker.generate_review()
-    selected: dict[str, int] = {}
 
-    def fake_split(latest_run, _patch):
-        selected["id"] = int(latest_run["id"])
-        return {
-            "checks": {
-                "has_completed_backtest": True,
-                "sample_size": False,
-                "out_of_sample_not_worse": False,
-                "hard_blocks_preserved": True,
-                "live_trading_disabled": True,
-            }
-        }
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("no comparison may run without a declared experiment")
 
-    monkeypatch.setattr(worker, "_split_validation", fake_split)
-    worker.validate_proposal(proposal["id"])
+    monkeypatch.setattr("app.ai.review_worker.run_ab", refuse)
+    validation = worker.validate_proposal(proposal["id"])
 
-    assert selected["id"] == measured_id
+    assert validation["base_run"]["id"] == measured_id
+    # Both fixture runs store an empty config, which is refused rather than
+    # silently replaced by the current rules.yaml.
+    assert validation["status"] == "validation_failed"
+    assert "base_config_missing" in validation["failure_reasons"]
+    assert "experiment_not_predeclared" in validation["failure_reasons"]
 
 
 def test_monitoring_alert_action_lifecycle(test_db):

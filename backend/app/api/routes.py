@@ -6380,12 +6380,20 @@ def list_ai_proposals(limit: int = 20) -> list[dict]:
     return AIReviewWorker().list_proposals(limit=limit)
 
 
+class AIProposalValidationInput(BaseModel):
+    # The predeclared experiment (ai_proposal_experiment.v1); without one the
+    # validation fails closed. See app.ai.review_worker.
+    experiment: dict | None = None
+
+
 @router.post("/ai/review/proposals/{proposal_id}/validate")
-def validate_ai_proposal(proposal_id: int) -> dict:
+def validate_ai_proposal(proposal_id: int, payload: AIProposalValidationInput | None = None) -> dict:
     from app.ai.review_worker import AIReviewWorker
 
     try:
-        return AIReviewWorker().validate_proposal(proposal_id)
+        return AIReviewWorker().validate_proposal(
+            proposal_id, experiment=payload.experiment if payload else None
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
