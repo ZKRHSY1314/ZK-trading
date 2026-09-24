@@ -6,7 +6,7 @@ Assignment: `docs/CLAUDE_CLOUD_HANDOFF_20260924.md`. Status: `ready_for_review`.
 | --- | --- |
 | Starting point | `codex/control-plane-refactor` @ `e3f9673e468ae666d402dd726a1ab1704c1f6f83` |
 | Working branch | `claude/cool-euler-scl62u` (reset from the old `main` pointer to the start SHA; fast-forward only, nothing discarded) |
-| Final code SHA | `67bf68207c2b327238890ab5f5d80d0287cc491c`, followed by this report's own commit (documentation only) |
+| Final code SHA | `8a0d07be049f163a61e09e964a51556beb04fe0f` (the report was first committed as `49a7bad`; this CI update is a later documentation-only commit) |
 | Pull request | Draft [ZKRHSY1314/ZK-trading#2](https://github.com/ZKRHSY1314/ZK-trading/pull/2) into `codex/control-plane-refactor`, not merged, nothing pushed to `main` |
 | Cost | The platform exposes no cost figure, so no remaining-credit estimate is made |
 
@@ -20,6 +20,7 @@ Assignment: `docs/CLAUDE_CLOUD_HANDOFF_20260924.md`. Status: `ready_for_review`.
 | `aefb79f` | CI fix: the Windows leg's first Pytest failure was a collection-time clock in a pre-existing test. Also raises the job timeout to 45 min |
 | `b414de5` | Phase 4: order intents committed before the open (`backtest_execution.v2`), a named fill policy, the metamorphic tests, and a deterministic A/B harness |
 | `67bf682` | Phase 5: a narrow M3/M4 evidence plan. It is a plan only |
+| `8a0d07b` | Windows CI fix: the A/B script now closes its SQLite handles, so it can delete its temporary database copy (WinError 32). Adds a regression test |
 
 Changed files (44):
 
@@ -73,7 +74,15 @@ The three `ensure_stack` tests that run under POSIX pwsh skip on Windows by desi
 - The frontend and `backend (ubuntu-latest)` legs were green.
 - The `backend (windows-latest)` leg reached Pytest for the first time: **1070 passed, 1 failed**, with no skips, so the Windows integration tests ran and passed.
 - The single failure was `test_simulation_account_does_not_claim_expired_or_unparsed_screen_holdings`. It took `datetime.now()` at collection time, and the 22-minute Windows run made the "fresh" evidence expire. `aefb79f` fixes this.
-- The CI status of the later commits is recorded in the PR description as the runs complete.
+- The runs at `b414de5`, `67bf682` and `49a7bad` each failed one Windows test, `test_cli_runs_on_a_copy_and_never_touches_the_source`:
+  - `run_backtest_ab.py` could not delete its temporary database copy because SQLite handles to it were still open (WinError 32).
+  - Linux allows an open file to be deleted, so Linux never showed it.
+  - `8a0d07b` fixes it: `copy_database` closes both connections explicitly, and the script finalises the engine's stray connections before cleanup.
+  - The fix was reproduced on Linux by counting open handles, and a regression test was added.
+- **Current head `8a0d07b`:** all checks are green.
+  - `backend (windows-latest)`: **1172 passed, 0 failed, 4 skipped**. All four skips are Linux-only checks: the three POSIX-pwsh `ensure_stack` tests and the `/proc` open-handle test. The Windows-only PowerShell and process-identity integration tests ran and passed.
+  - `backend (ubuntu-latest)`: green.
+  - `frontend`: green.
 
 **Proof that the causality test is not vacuous.** The metamorphic fixture was also run against the pre-fix engine, checked out at `b0261f6`. The entry's open-time quantity was 14,800 at baseline. It became 15,900 when only the held stock's later close changed, and 14,400 after an intraday stop crash. The fixed engine gives 14,800 in all three cases.
 
@@ -130,4 +139,4 @@ Follow `docs/RECOVERY_PROFILE.md` → "Local Windows acceptance checklist". It h
 - **Maturity proxy.** The "due" test uses weekdays, not an authenticated exchange calendar.
 - **Review worker.** `app/ai/review_worker.py` still compares configurations with retrospective fills and reads a missing return as 0. **Next:** move it onto `ab_harness`. The in-session follow-up suggestion tool timed out, so this is recorded here instead.
 - **No M4 adapter.** No production-to-M4 adapter was built. That needs dated ST, price-band, fee and capacity sources (`docs/RESEARCH_EVIDENCE_PLAN_20260924.md`).
-- **Windows CI time.** The Windows CI leg takes about 22 minutes; the job timeout is now 45 minutes.
+- **Windows CI time.** The Windows CI leg takes 20 to 30 minutes (29 minutes when four runs overlapped); the job timeout is now 45 minutes.
