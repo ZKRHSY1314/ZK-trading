@@ -25,18 +25,19 @@ SMALL_SAMPLE_THRESHOLD = 10
 
 
 class SignalPerformanceService:
-    def __init__(self) -> None:
-        self.store = SQLiteStore(settings.database_path)
+    def __init__(self, store: SQLiteStore | None = None) -> None:
+        self.store = store or SQLiteStore(settings.database_path)
 
     # ------------------------------------------------------------------
     # Performance summary
     # ------------------------------------------------------------------
 
-    def performance_summary(self) -> dict[str, Any]:
+    def performance_summary(self, horizon_days: int = 5) -> dict[str, Any]:
         """Aggregate outcomes by sample_type, label, risk_flag, symbol, and
         scoring components.  Return structured performance rows with honest
         small-sample warnings."""
         self.store.init()
+        safe_horizon = max(1, min(int(horizon_days), 60))
 
         rows = self.store.fetch_all(
             """
@@ -55,8 +56,10 @@ class SignalPerformanceService:
                 o.min_return_pct
             FROM agent_learning_outcomes o
             JOIN agent_learning_samples s ON s.id = o.sample_id
+            WHERE o.horizon_days = ?
             ORDER BY s.sample_type, s.symbol
-            """
+            """,
+            (safe_horizon,),
         )
 
         by_sample_type = self._aggregate_group(rows, key_fn=lambda r: r["sample_type"])
@@ -70,6 +73,7 @@ class SignalPerformanceService:
 
         return {
             "total_samples_with_outcomes": len(rows),
+            "horizon_days": safe_horizon,
             "by_sample_type": by_sample_type,
             "by_label": by_label,
             "by_risk_flag": by_risk_flag,
@@ -82,14 +86,18 @@ class SignalPerformanceService:
     # Calibration proposals
     # ------------------------------------------------------------------
 
-    def generate_proposals(self, created_by: str = "system") -> dict[str, Any]:
+    def generate_proposals(
+        self,
+        created_by: str = "system",
+        horizon_days: int = 5,
+    ) -> dict[str, Any]:
         """Generate calibration proposals based on performance summary.
 
         Proposals are review-only and never mutate scoring weights or
         strategy rules.
         """
         self.store.init()
-        summary = self.performance_summary()
+        summary = self.performance_summary(horizon_days=horizon_days)
         proposals: list[dict[str, Any]] = []
 
         # --- by sample_type ---

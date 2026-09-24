@@ -1,0 +1,43 @@
+{
+  "package": "a_share_trading_training_pack_v2",
+  "version": "0.2.0",
+  "build_date": "2026-05-31",
+  "files": [
+    "README.md",
+    "codex/a_share_rule_engine_reference.py",
+    "codex/codex_import_prompt.md",
+    "dataset/all_training_patterns.csv",
+    "dataset/all_training_patterns.jsonl",
+    "dataset/instruction_tuning_examples.jsonl",
+    "dataset/new_sources_training_patterns.jsonl",
+    "dataset/rule_classification_examples.jsonl",
+    "docs/source_coverage.md",
+    "docs/strategy_cards.md",
+    "docs/training_usage.md",
+    "schemas/event_feature_schema.json",
+    "schemas/pattern_schema.json",
+    "strategies/risk_controls.json",
+    "strategies/strategy_index.csv",
+    "strategies/strategy_set.json",
+    "validation/check_report.json"
+  ],
+  "sha256": {
+    "README.md": "8aa5c3f2ac79d6c3922b64ccb9d19dea9e4ca997c485c8c8cb06c01f1497c3bf",
+    "codex/a_share_rule_engine_reference.py": "5a41fa6098a45b52ae99dea9ce42c8c8447880f4c41db93b12442ebe5c9a0842",
+    "codex/codex_import_prompt.md": "2c047e3d997646ca842667688c5e665a2bf0ac1ec8f04cc227e106dd85bc954e",
+    "dataset/all_training_patterns.csv": "b14189aa1a8d76e69e766529b1ae67d72e8bdd6c0c41ceb1571b65f32d973b3b",
+    "dataset/all_training_patterns.jsonl": "4d713f11222aa842bb460431fdd07f8c07bc7a4a0ee83b31b89a50aae541024f",
+    "dataset/instruction_tuning_examples.jsonl": "2d83c3945b47ef26eb1c7ffb57b2c3533846fd15b1c13a42ac37589ccd8fb38c",
+    "dataset/new_sources_training_patterns.jsonl": "220530b5a59f7d0e504bfaa70b9f9a120222182975a5e3a322d3a35055b9d0d9",
+    "dataset/rule_classification_examples.jsonl": "a7e92e4d70f40b75bd0bb0d87fccb0a03c0b9144f9a5ef25e723b2e5894d1e7b",
+    "docs/source_coverage.md": "1ed0ad2745a41130ba2a9addcf9b928592f12befe7816183ec1c535ae55160d5",
+    "docs/strategy_cards.md": "481736af0122d24a714b82e6910da9bd51164e475dc18abc778365419249094d",
+    "docs/training_usage.md": "49e4265767992f5d2cf5fcb76f6d766545ceeb6c3bf21a5db0ba84daf1b89e5c",
+    "schemas/event_feature_schema.json": "98c2d45107ac210b8e15fc306afdd6e40b56d8f860b3b168baa7c12d39d8cd94",
+    "schemas/pattern_schema.json": "9169feebce39d30f7ebc617314e09cfef85ddb4d9e99ee0567ad56245f2aff33",
+    "strategies/risk_controls.json": "4ba46be5dcc88874f2c21f16d1efa76f7a53194a57a7813f2e402e6516171ebe",
+    "strategies/strategy_index.csv": "95b34c70e787d09d04067e4b5fa8d18ca3ee34277722d99f85fc3f4fcd1fa04a",
+    "strategies/strategy_set.json": "1406e7c445f37e7a7367a88f1df9a576d738260efa2fc10c00aec33ff39b80b9",
+    "validation/check_report.json": "f9a92daececa530922e6cddd71e4cd8c126fa9e1786d73b8c5662ffd398c1489"
+  }
+}

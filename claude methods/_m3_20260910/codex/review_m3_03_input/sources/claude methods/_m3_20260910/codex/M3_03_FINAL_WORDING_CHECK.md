@@ -1,0 +1,10 @@
+# M3-03 final wording check; independent verdicts unchanged
+
+Same running task, same allowed inputs and output scope. Preserve original authored notes by hash and append corrections; use corrected wording in the final serialized record/report. This is factual checking, not a request for consensus or policy changes.
+
+1. C031 summary says the markup rule "would catch a few sessions later". The cutoff does not establish future returns, volume or phase. Replace that assertion with a conditional possibility: a later markup label would require its then-current conditions to be met; whether or when this happens is unknown. Keep the ambiguous verdict and current observed volume/return evidence. Do not inspect later data.
+2. C018 control_set_assessment describes all controls as low-priced with coarse ticks. The embedded SH688513 close is 36.71 CNY, whereas SZ002656 is 1.08 and SH600162 is 1.58. All three are L1_thin by amount, but that does not imply they all share the case's low price or relative tick size. Correct that distinction; formal match admissibility can remain unchanged.
+3. C027 threshold_margins_and_competing_signals gives return_120 margins as 0.107-0.127, omitting the representative: its return_120 is approximately 0.176, hence its margin is approximately 0.074. Use all three margins or include the actual representative minimum. The exact core values remain authoritative.
+4. C032 summary's 7.15 -> 6.60 decline of approximately 7.7% uses the close immediately before the prefix as the starting value. The three embedded closes are 7.00, 6.78, 6.60, so first-member-close to representative is approximately -5.7%. Clearly name which interval the cumulative -7.7% measures; the three-session down pattern and negative verdict remain intact.
+
+Continue to finish the remaining diagnostics and executed validation, include this note and retained original-note hashes in the manifest, then deliver ready_for_review and stop. No new data, code, policy, control selection, SQLite, network, training or M4 work.

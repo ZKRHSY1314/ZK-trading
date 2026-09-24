@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["retrieved_at", "evidence"],
+  "properties": {
+    "retrieved_at": {
+      "type": "string",
+      "description": "ISO-8601 time when this search batch completed"
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id",
+          "cluster_id",
+          "type",
+          "entities",
+          "geography",
+          "status",
+          "direction",
+          "magnitude",
+          "url",
+          "retrieved_at",
+          "first_seen_at",
+          "available_at",
+          "revision",
+          "evidence_urls",
+          "raw_hash",
+          "published_at_status",
+          "published_at",
+          "title",
+          "summary",
+          "source_name",
+          "source_id",
+          "source_tier",
+          "category",
+          "sector_hints",
+          "claims"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Stable identifier for this event fact"
+          },
+          "cluster_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Stable identifier shared by independent reports of the same event"
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Event type such as policy, listing, earnings, supply_disruption, geopolitical, commodity_move, or cross_market_move"
+          },
+          "entities": {
+            "type": "array",
+            "maxItems": 30,
+            "items": {"type": "string"}
+          },
+          "geography": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {"type": "string"}
+          },
+          "status": {
+            "type": "string",
+            "enum": ["new", "ongoing", "updated", "resolved", "unconfirmed"]
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["positive", "negative", "mixed", "neutral"]
+          },
+          "magnitude": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "url": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 2048,
+            "description": "Direct source URL; never use an empty or placeholder value"
+          },
+          "retrieved_at": {"type": "string"},
+          "first_seen_at": {"type": "string"},
+          "available_at": {
+            "type": "string",
+            "description": "Earliest time this fact is available to the system; never earlier than retrieved_at"
+          },
+          "revision": {"type": "integer", "minimum": 1},
+          "evidence_urls": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {"type": "string"}
+          },
+          "raw_hash": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Digest of the raw title, summary, claims, and evidence URLs; ingestion recomputes the authoritative SHA-256"
+          },
+          "published_at_status": {"type": "string", "enum": ["known", "unknown"]},
+          "published_at": {"type": ["string", "null"]},
+          "title": {"type": "string", "minLength": 6, "maxLength": 160},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+          "source_name": {"type": "string", "minLength": 1, "maxLength": 200},
+          "source_id": {"type": "string", "maxLength": 120},
+          "source_tier": {"type": "string", "enum": ["official", "primary_media", "market_media"]},
+          "category": {"type": "string", "enum": ["market", "policy", "sector"]},
+          "sector_hints": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {"type": "string"}
+          },
+          "claims": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+# Cache write-path audit — bounded technical validation
+
+2026-09-09. **Technically validated as a static current-code audit** at SHA-256 `6fa4439d9c8c19331357018729ccbae9a06e13708de2831f5fca3af596cecd73`. CW-R1, CW-R2 and CW-R3 are closed for these bytes. This does not validate production runtime, historical execution, a dataset or price-basis claim.
+
+Codex reviewed the complete correction diff against the frozen first revision and the relevant source already inspected in that review. The generic SQL helper classification now correctly describes capability separately from SELECT usage. Real stock and benchmark refreshes route through the batch upsert; the single-row call in this service is the error sentinel. The direct Python reset default is separated from the CLI's explicit false default. The importer run record is now distinguished from missing cache-key, reset, invocation and response provenance, and its transaction is separated from the earlier reset connection.
+
+CW-R3 now discloses the previously performed fixture byte read: Claude reports `ls -l` and `grep -c 'demo_daily_bars'`, with one matching line, rather than JSON-key/row activation evidence. The limited source-only scope departure is acknowledged. Codex did **not** re-open the fixture or independently authenticate Claude's prior command history; this closes the contradictory reporting and excessive inference, not retroactive permission or a proof of every past file access. No new dataset read was necessary for this review.
+
+All 15 cited source hashes, 91 protected pins and 46 G1 files match. The validated lineage audit remains `155207ffcee956a5a582bb993ef315a56345c7a854637c007f178ec0bf3ded92` and RL-R1/RL-R2 remain closed. The reviewed cache document and verification are frozen under `_m2_codex_review/cache_write_paths_review_20260909_r2/`. HEAD `73f266d`, staging empty. No tests or numerical studies rerun; no SQLite, network, provider imports, services or production mutation.
+
+The guard's existence is not a historical invariant, and the inventory is bounded to the inspected sources/search patterns. Missing binding is not proof of a bad historical row, nor proof that every possible local evidence source is exhausted. No more changes to these two validated audits are requested.
+
+**Next useful authorized work:** analyze turnover's actual downstream dependencies, the distinct denominators/units of similarly named fields, and the implications of the retained auxiliary series' unresolved freshness. This addresses the undecided item in `M2B_NEXT_STAGE_DECISION_MEMO.md` sections 2.2 and 4 without adopting policy or changing implementation. Full next-task scope: `_m2_codex_review/turnover_dependency_dispatch_20260909.txt`.
+
+Keep P1 open, U-6 deferred, all eligibility false, source capability FAIL and historical EV6 unchanged; both captures consumed. The M2 three-year corpus acceptance criteria are not met by these static audits. Continue the 10-minute workflow; no stop/email condition while useful authorized work remains.

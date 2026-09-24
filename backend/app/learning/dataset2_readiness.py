@@ -1396,7 +1396,6 @@ class Dataset2TrainingReadinessService:
         store.init()
         resolved_package_id = package_id or self._latest_staging_package_id(store)
         latest_cleanup = self._latest_staging_automated_cleanup_apply(store)
-        cleanup_decision = (latest_cleanup or {}).get("decision") or {}
         cleanup_evidence = (latest_cleanup or {}).get("evidence") or {}
         rows = self.list_staging_records(package_id=resolved_package_id, limit=1000) if resolved_package_id else []
 
@@ -60957,7 +60956,6 @@ class Dataset2TrainingReadinessService:
     ) -> list[dict[str, Any]]:
         summary = final_execution_execution_approval.get("summary") or {}
         decision = final_execution_execution_approval.get("decision") or {}
-        approval_scope = final_execution_execution_approval.get("approval_scope") or {}
         blocked_check_count = int(summary.get("blocked_check_count") or 0)
         allowed_decisions = {
             "prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_dry_run",
@@ -62164,7 +62162,6 @@ class Dataset2TrainingReadinessService:
     ) -> list[dict[str, Any]]:
         summary = final_execution_execution_execution_approval.get("summary") or {}
         decision = final_execution_execution_execution_approval.get("decision") or {}
-        approval_scope = final_execution_execution_execution_approval.get("approval_scope") or {}
         blocked_check_count = int(summary.get("blocked_check_count") or 0)
         allowed_decisions = {
             "prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_dry_run",
@@ -63708,7 +63705,6 @@ class Dataset2TrainingReadinessService:
     ) -> list[dict[str, Any]]:
         summary = final_execution_execution_execution_execution_approval.get("summary") or {}
         decision = final_execution_execution_execution_execution_approval.get("decision") or {}
-        approval_scope = final_execution_execution_execution_execution_approval.get("approval_scope") or {}
         blocked_check_count = int(summary.get("blocked_check_count") or 0)
         allowed_decisions = {
             "prepared_for_controlled_cleanup_apply_execution_plan_execution_final_execution_execution_execution_execution_dry_run",

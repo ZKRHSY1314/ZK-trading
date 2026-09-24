@@ -1,0 +1,53 @@
+# Codex M2 implementation — 2026-09-10
+
+Authority: the user explicitly instructed Codex to continue until M2 is complete, following M1 review and two manually completed local market logins. This phase is owned by Codex; no Claude dispatch is authorized or performed.
+
+The acceptance population remains the frozen 50 stocks and two benchmarks. Research is 2023-09-04 through 2026-09-04, with 250 requested warmup sessions from 2022-08-24. Expected listing-aware totals are 45,935 rows per view. Required M1 research gates must pass; warmup may have only the previously specified 14 listing-depth shortfalls. This is a pilot corpus, not full-market coverage or M3 training readiness.
+
+Implementation and collection use this new directory and new isolated staging candidates. Historical Sina failures, prior Tonghuashun attempts and both sealed delivery manifests remain immutable. No production promotion, production database write, account/fund access, credential copying, client restart, login automation, trading action, or background-worker launch is part of this plan.
+
+1. Fix explicit exchange handling and submit one security identifier; preserve the everyday 500-row cache contract. Build a separate strict raw-response parser for date history.
+2. First capture eight qualification requests: the two native index candidates with adjustment 0, and SH600011/BJ920000 with adjustments 0/1/2 over the full frozen interval. Preserve raw bytes, request body, attempt reservation, timestamps and producer pins. Requests are serialized with at least 1.5 seconds after completion, 30-second absolute deadlines, an 8 MiB response cap, zero automatic retries and a 600-second batch deadline. HTTP/authentication/identity/empty-shape failures stop the batch. No request parameter alone verifies price basis.
+3. Establish source-specific evidence for native benchmark identity, Beijing code continuity, units and raw price basis. Invalid source names stay in raw evidence and are flagged separately; they are not silently replaced with manifest names.
+4. Once source qualification supports it, collect the exact frozen population into a separate bounded batch. Build two candidate databases only from retained raw bodies and reviewed transformations, with row-level lineage and qualified evidence. Unqualified data stays outside the accepted research view.
+5. Run unchanged research and warmup gates, verify candidate and production-file preservation, independently review the results, and publish only the staging pointer after matching receipts pass.
+
+Any necessary evidence-rule implementation must preserve the established meaning of raw/unadjusted prices. Missing data, inconsistent units or source semantics remain failures; no threshold, population or window is weakened to obtain a pass.
+
+## Operational continuation, 2026-09-10 morning
+
+The eight qualification requests finished successfully overnight. On resuming at 08:41 local, the host and port 17180 were absent. The 48-request collector stopped before creating its capture claim, reading a token or issuing HTTP. At 08:42 the existing reviewed project launcher started the configured D-drive client (PID 21824); no existing client was killed. Manual market login was requested from the user. This normal launch updates the initial service-action scope above; login remains manual. The completed eight-request producer pins and outputs remain unchanged. The remaining collector retains its inherited 09:15–15:30 operator-window guard.
+
+Production archive copies were made with simultaneous read-sharing file leases, byte-verified before any SQLite use, and given a new-phase baseline using the unchanged M1 snapshot command. This is not the historical September 6 baseline. No production SQLite connection or checkpoint was used.
+
+Root integration updated exactly the two obsolete identifier expectations in the existing dirty provider test, retaining all its other preexisting content and the original backup. The guarded existing provider suite passed 34/34 with live trading disabled, no actual market requests and only isolated temporary SQLite files. The first guarded run had one test setup error because Windows asyncio creates a local socket pair; the guard was narrowed to permit that exact standard-library self-pipe call, while arbitrary loopback and public connections remain denied. Both run receipts are retained under test_runtime.
+
+## Remaining-history operator policy revision before collection
+
+At 09:12:56 local the new host PID 21824 had the pinned adapter loaded, exact HTTP.sys loopback queue ownership and no conflicting workers. This fresh observation resolves the previous interface-readiness block without automating login.
+
+The new 48-request plan uses `preflight_remaining.ps1`, a separate pinned copy changing only the time-of-day prohibition from the earlier preflight. The old restriction came from the Sina boundary-1b smoke request, whose payload could include a partial current-session bar. This new Tonghuashun batch has a hard-coded end of 2026-09-04, with no current-session request; the strict parser rejects any window-exceeding row. Historical raw collection may therefore run at any clock time in this new plan. This explicitly supersedes the inherited-window sentence above for the remaining batch, following the user's instruction to continue M2 and a separate Codex review of the applicable scope. It does not change historical authorization records or the old eight-request producer bytes.
+
+All other process, plugin, endpoint-generation, exact loopback, configuration trade-disable and concurrent-worker checks remain. Request count, interval, timeouts, byte cap, zero retries, fixed population and date window remain unchanged. The new guard is pinned in the plan and producer inventory before any token read or HTTP. Staging qualification and both unchanged M1 gates still decide dataset acceptance.
+
+## Pilot recovery and current acceptance state, 2026-09-10 11:52 local
+
+All 52 frozen identities now have successful retained native history responses, across the five explicitly audited recovery partitions. The failed initial batches and the empty USHA600289 response remain retained; a separate actual security-search response established USHT600289 before its successful capture. No failed request is relabeled successful.
+
+The pinned `audit_recovered_pilot_52.json` reports 45,637 valid rows against 45,935 listed-calendar keys, with zero extra keys. `pilot52_blocker_review_v3.json` explains all 298 missing dates as full-day suspensions: 297 via retained issuer documents, one via a directly observed SSE public table. Browser observations are explicitly distinguished from retained HTTP bodies. The source-unit/basis bundle still fails BJ920006 on the original common-price-domain P4 check. An actual BSE public block-trade record explains a plausible mixed-domain mechanism, but the vendor amount-scope qualification remains pending.
+
+The original warmup window supplies only 211, 242 and 249 observations for SZ002656, SH600110 and SH600226. The unchanged original contract therefore still fails even after missing-date explanations. No candidate database or staging pointer has been published; the guarded actual executor was tested to reject this exact unqualified bundle before candidate creation. Production and old evidence preservation passed, with the two intentional provider/test source changes separately identified.
+
+`M2_ACCEPTANCE_REVISION_PROPOSAL.md` is a concrete, unadopted alternative contract. Its five pure diagnostic tests pass; four gap-review tests also pass. These tests grant no eligibility and do not change frozen gates. A decision on the frozen date/observation contract is required before applying this proposal. Login is currently not the blocker. M2 remains in progress, not complete; no Claude dispatch or production promotion occurred.
+
+## Approved contract v2 and actual staging, 2026-09-10
+
+The user's direct reply "可以" adopted the immediately preceding concrete acceptance revision. `acceptance_v2_authority.json` records that authority; the proposal and earlier FAIL artifacts remain byte-identical. The three fixed warmup requests completed with 289/320/327 actual bars. All 4,212 OHLCVA overlap comparisons agree. Exactly 39/8/1 earlier observations supplement the original 45,637 rows; no original price observation is removed. The three mature stocks now have 250 actual warmup observations each. The same 14 listing-depth shortfalls remain, with no wider exemption.
+
+The original BSE trading-system explanation PDF was retained from the official browser response, hashed, and page 12 extracted/rendered/visually read. It explicitly includes both block-trade volume and amount in daily totals. This supports a reviewed source interpretation combining the host's Volume/Turnover fields, issuer code mapping and the observed official block trade. It is not a proprietary vendor specification or a proof of exact numerical accuracy. Raw daily totals remain unchanged.
+
+`contract_v2.py` deterministically replays retained inputs and derives expected dates from the pinned calendar/listings and reviewed suspensions. `staging_v2.py` reuses storage and atomic-pointer guards, retains actual original-gate FAIL runs, and runs a separately identified v2 calendar/P4 evaluation. Full OHLCVA and row-lineage reconciliation supplements the gates. Nine focused tests passed. An isolated actual two-store test reconstructed all 45,685 rows and rejected a deliberate one-CNY amount mutation before any publication.
+
+Actual run `ths_v2_20260910_041710_97ef9c09` created two isolated stores with 45,685 rows each (35,943 research; 9,742 warmup) and 298 separate suspension records. Research v2 integrity and warmup collection integrity passed; V3b remains FAIL solely for the exact 14 listing-depth shortfalls. Original research and warmup gate FAIL reports were retained. The run published only its staging `CURRENT.json`; five production-preservation checkpoints passed under read-sharing file leases. Production promotion, live trading and strict PIT remain false.
+
+The user then explicitly requested an acceptance document, resumption of Claude delegation, and a 15-minute patrol until M2 completion. This supersedes the earlier no-Claude instruction prospectively. Codex remains the integration/coordinator owner; Claude's first task is an independent review of this exact candidate and the full M2 completion criteria. Do not report Codex self-tests as Claude or independent-agent acceptance. Update coordination and the existing heartbeat after the actual dispatch; preserve the prior paused configuration in the coordination history.

@@ -201,7 +201,7 @@ class AutoDiscoveryScanner:
         return pd.DataFrame(mapped)
 
     def _discovery_type(self, code: str, pct_change: float) -> str:
-        is_twenty_cm = code.startswith(("300", "301", "688"))
+        is_twenty_cm = code.startswith(("300", "301", "302", "688"))
         limit_threshold = 19.5 if is_twenty_cm else 9.8
         near_threshold = 15.0 if is_twenty_cm else 8.5
         if pct_change >= limit_threshold:

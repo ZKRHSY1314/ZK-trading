@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A-share controlled strategy pattern dataset schema",
+  "type": "object",
+  "required": [
+    "pattern_id",
+    "pattern_name",
+    "category",
+    "source_id",
+    "timeframe",
+    "observable_features",
+    "action_label",
+    "risk_level",
+    "model_targets"
+  ],
+  "properties": {
+    "pattern_id": {
+      "type": "string"
+    },
+    "pattern_name": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "string"
+    },
+    "source_document": {
+      "type": "string"
+    },
+    "source_pages": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "source_slides": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "timeframe": {
+      "type": "string"
+    },
+    "market_phase": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "observable_features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "trigger_conditions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confirmation_signals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "negative_filters": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "expected_bias": {
+      "type": "string"
+    },
+    "action_label": {
+      "enum": [
+        "SIM_BUY_CANDIDATE",
+        "HOLD_OR_TRAIL",
+        "REDUCE_OR_EXIT",
+        "AVOID_OR_WAIT",
+        "WAIT_CONFIRMATION",
+        "RISK_ALERT",
+        "NO_TRADE"
+      ]
+    },
+    "risk_level": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "software_tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "model_targets": {
+      "type": "object"
+    }
+  }
+}

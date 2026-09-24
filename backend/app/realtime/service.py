@@ -16,9 +16,14 @@ from app.storage.sqlite_store import SQLiteStore
 
 
 class RealtimeMarketService:
-    def __init__(self, provider: RealtimeMarketProvider | None = None) -> None:
-        self.store = SQLiteStore(settings.database_path)
-        self.store.init()
+    def __init__(
+        self,
+        provider: RealtimeMarketProvider | None = None,
+        store: SQLiteStore | None = None,
+    ) -> None:
+        self.store = store or SQLiteStore(settings.database_path)
+        if store is None:
+            self.store.init()
         self.provider = provider or configured_realtime_provider()
 
     def capabilities(self) -> dict[str, Any]:

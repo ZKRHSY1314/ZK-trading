@@ -1,7 +1,26 @@
 import { chromium } from 'playwright';
 
+async function launchSmokeBrowser() {
+  const attempts = [
+    { label: 'playwright-chromium', options: { headless: true } },
+    { label: 'chrome', options: { channel: 'chrome', headless: true } },
+    { label: 'msedge', options: { channel: 'msedge', headless: true } }
+  ];
+  let lastError;
+  for (const attempt of attempts) {
+    try {
+      console.log(`Launching ${attempt.label}...`);
+      return await chromium.launch(attempt.options);
+    } catch (err) {
+      lastError = err;
+      console.log(`${attempt.label} unavailable.`);
+    }
+  }
+  throw lastError;
+}
+
 (async () => {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchSmokeBrowser();
   const page = await browser.newPage();
 
   const errors = [];
@@ -20,33 +39,51 @@ import { chromium } from 'playwright';
   });
 
   try {
-    // Assuming backend is on 8000, and frontend dev server is on 5173
+    const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
+    await page.setViewportSize({ width: 1440, height: 1000 });
+
     console.log("Navigating to frontend...");
-    await page.goto('http://localhost:3000', { waitUntil: 'networkidle' });
+    await page.goto(frontendUrl, { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('trading-dashboard').waitFor({ state: 'visible' });
+    await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
 
     console.log("Checking layout...");
-    // Check key components
-    const healthHeader = await page.getByText(/Local Simulation Mode/i).isVisible();
-    const readinessPanel = await page.getByText(/Price Readiness/i).isVisible();
-    const coverageText = await page.getByText(/Daily Bar Coverage/i).isVisible();
-
-    // Check Safety controls
-    const disabledLiveButton = await page.getByTestId('live-trading-disabled-button').isVisible();
-    const simulatedDisclaimer = await page.getByText(/SIMULATION ONLY/i).isVisible();
+    const liveButton = page.getByTestId('live-trading-disabled-button');
+    const checks = {
+      dashboard_visible: await page.getByTestId('trading-dashboard').isVisible(),
+      product_name_visible: await page.getByText(/\u667a\u6295 A\u80a1/).first().isVisible(),
+      search_visible: await page.getByPlaceholder(/\u641c\u7d22\u80a1\u7968/).isVisible(),
+      release_gate_visible: await page.getByTestId('release-gate').isVisible(),
+      selection_v2_summary_visible: await page.getByTestId('selection-v2-summary').isVisible(),
+      control_plane_observability_visible: await page.getByTestId('control-plane-observability').isVisible(),
+      runtime_control_worker_visible: await page.getByTestId('runtime-worker-control-plane').isVisible(),
+      runtime_market_pulse_worker_visible: await page.getByTestId('runtime-worker-codex-market-pulse').isVisible(),
+      runtime_reference_worker_visible: await page.getByTestId('runtime-worker-reference-data').isVisible(),
+      market_pulse_stage_visible: await page.getByTestId('observability-market-pulse').isVisible(),
+      decision_snapshot_stage_visible: await page.getByTestId('observability-decision-snapshot').isVisible(),
+      forecast_feedback_stage_visible: await page.getByTestId('observability-forecast-feedback').isVisible(),
+      training_feedback_stage_visible: await page.getByTestId('observability-training-feedback').isVisible(),
+      market_overview_visible: await page.getByTestId('market-overview').isVisible(),
+      stock_chart_visible: await page.getByTestId('stock-chart').isVisible(),
+      simulation_plan_visible: await page.getByTestId('simulation-plan').isVisible(),
+      order_book_visible: await page.getByTestId('order-book').isVisible(),
+      simulation_label_visible: await page.getByText(/\u6a21\u62df\u4ea4\u6613\u8ba1\u5212/).first().isVisible(),
+      live_button_visible: await liveButton.isVisible(),
+      live_button_disabled: await liveButton.isDisabled()
+    };
 
     console.log({
-      app_loads: true,
-      health_header_visible: healthHeader,
-      readiness_panel_visible: readinessPanel,
-      coverage_text_visible: coverageText,
-      disabled_live_button_visible: disabledLiveButton,
-      simulated_disclaimer_visible: simulatedDisclaimer,
+      ...checks,
       console_errors: errors.length,
       api_failures: apiFails.length
     });
 
-    if (!healthHeader || !readinessPanel || !coverageText || !disabledLiveButton || !simulatedDisclaimer) {
-      console.error("Missing critical UI elements.");
+    const missingChecks = Object.entries(checks)
+      .filter(([, passed]) => !passed)
+      .map(([name]) => name);
+
+    if (missingChecks.length > 0) {
+      console.error("Missing critical UI elements:", missingChecks);
       process.exit(1);
     }
     if (apiFails.length > 0) {

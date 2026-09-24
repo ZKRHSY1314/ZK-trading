@@ -83,6 +83,22 @@ class OffhourPotentialSearchService:
         except Exception as exc:
             errors.append(f"scoring_failed: {exc}")
 
+        fallback_used = False
+        if not items_raw and not scored_items:
+            fallback_items = self._fallback_items_from_local_evidence(safe_limit)
+            if fallback_items:
+                fallback_used = True
+                items_raw = fallback_items
+                stored_count = len(fallback_items)
+                scored_count = len(fallback_items)
+                source = "local_candidate_evidence_fallback"
+                errors.append(
+                    "discovery_local_fallback_used: external discovery failed or returned no usable "
+                    "items; reused persisted potential/candidate scores for review-only planning"
+                )
+                if persist:
+                    self._sync_fallback_lifecycle(fallback_items, source)
+
         # Step 3 — build enriched item list
         enriched = self._enrich_items(items_raw, scored_items)
 
@@ -107,11 +123,12 @@ class OffhourPotentialSearchService:
                 "strong_mover": int(discovery.get("strong_mover_count", 0)),
             },
             "errors": errors,
+            "fallback_used": fallback_used,
         }
 
         if persist:
             run_id = self._persist_run(
-                status="completed" if discovery_status != "failed" else "partial",
+                status="completed" if discovery_status != "failed" and not fallback_used else "partial",
                 source=source,
                 total_scanned=total_scanned,
                 stored_count=stored_count,
@@ -124,7 +141,7 @@ class OffhourPotentialSearchService:
 
         return {
             "run_id": run_id,
-            "status": "completed" if discovery_status != "failed" else "partial",
+            "status": "completed" if discovery_status != "failed" and not fallback_used else "partial",
             "source": source,
             "total_scanned": total_scanned,
             "stored_count": stored_count,
@@ -133,6 +150,7 @@ class OffhourPotentialSearchService:
             "top_scored_items": top_scored[:5],
             "notes": notes,
             "errors": errors,
+            "fallback_used": fallback_used,
         }
 
     def latest_run(self) -> dict[str, Any] | None:
@@ -241,9 +259,14 @@ class OffhourPotentialSearchService:
                 "turnover_rate": item.get("turnover_rate"),
                 "amount": item.get("amount"),
                 "lifecycle_state": lc_data.get("state", "unknown"),
-                "potential_score": float(score_data.get("total_score") or 0),
+                "potential_score": float(
+                    score_data.get("total_score")
+                    or item.get("potential_score")
+                    or item.get("priority")
+                    or 0
+                ),
                 "reasons": score_data.get("reasons", item.get("reasons", [])),
-                "components": score_data.get("components", {}),
+                "components": score_data.get("components", item.get("components", {})),
                 "source": item.get("source", "offhour_search"),
                 "raw": item.get("raw", {}),
             })
@@ -270,6 +293,104 @@ class OffhourPotentialSearchService:
             })
 
         return enriched
+
+    def _fallback_items_from_local_evidence(self, limit: int) -> list[dict[str, Any]]:
+        """Recover a review-only candidate set when live discovery providers fail."""
+        safe_limit = max(1, min(int(limit), 500))
+        by_symbol: dict[str, dict[str, Any]] = {}
+
+        potential_rows = self.store.fetch_all(
+            """
+            SELECT symbol, name, current_price, pct_change, turnover_rate, amount,
+                   potential_score, lifecycle_state, source, reasons_json,
+                   components_json, raw_json, created_at
+            FROM potential_search_items
+            WHERE symbol IS NOT NULL
+            ORDER BY potential_score DESC, id DESC
+            LIMIT ?
+            """,
+            (safe_limit * 2,),
+        )
+        for row in potential_rows:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if not symbol or symbol in by_symbol:
+                continue
+            by_symbol[symbol] = {
+                "symbol": symbol,
+                "name": row.get("name"),
+                "current_price": row.get("current_price"),
+                "pct_change": row.get("pct_change"),
+                "turnover_rate": row.get("turnover_rate"),
+                "amount": row.get("amount"),
+                "lifecycle_state": row.get("lifecycle_state") or "pending_review",
+                "potential_score": float(row.get("potential_score") or 0),
+                "reasons": self._json(row.get("reasons_json"), default=[]),
+                "components": self._json(row.get("components_json"), default={}),
+                "source": f"local_fallback:{row.get('source') or 'potential_search_items'}",
+                "raw": self._json(row.get("raw_json"), default={}),
+            }
+            if len(by_symbol) >= safe_limit:
+                break
+
+        if len(by_symbol) < safe_limit:
+            score_rows = self.store.fetch_all(
+                """
+                SELECT cs.symbol, cs.name, cs.total_score, cs.rating, cs.state,
+                       cs.source, cs.reasons_json, cs.components_json, cs.raw_json,
+                       cs.created_at
+                FROM candidate_scores cs
+                JOIN (
+                    SELECT symbol, MAX(id) AS latest_id
+                    FROM candidate_scores
+                    WHERE symbol IS NOT NULL
+                    GROUP BY symbol
+                ) latest ON latest.latest_id = cs.id
+                ORDER BY cs.total_score DESC, cs.id DESC
+                LIMIT ?
+                """,
+                (safe_limit * 2,),
+            )
+            for row in score_rows:
+                symbol = str(row.get("symbol") or "").strip().upper()
+                if not symbol or symbol in by_symbol:
+                    continue
+                by_symbol[symbol] = {
+                    "symbol": symbol,
+                    "name": row.get("name"),
+                    "current_price": None,
+                    "pct_change": None,
+                    "turnover_rate": None,
+                    "amount": None,
+                    "lifecycle_state": row.get("state") or "pending_review",
+                    "potential_score": float(row.get("total_score") or 0),
+                    "reasons": self._json(row.get("reasons_json"), default=[]),
+                    "components": self._json(row.get("components_json"), default={}),
+                    "source": f"local_fallback:{row.get('source') or 'candidate_scores'}",
+                    "raw": self._json(row.get("raw_json"), default={}),
+                }
+                if len(by_symbol) >= safe_limit:
+                    break
+
+        items = list(by_symbol.values())
+        items.sort(key=lambda item: (-float(item.get("potential_score") or 0), item["symbol"]))
+        return items[:safe_limit]
+
+    def _sync_fallback_lifecycle(self, items: list[dict[str, Any]], source: str) -> None:
+        lifecycle = CandidateLifecycleService()
+        for item in items:
+            lifecycle.upsert_state(
+                symbol=item["symbol"],
+                name=item.get("name"),
+                state="pending_review",
+                source=source,
+                score=item.get("potential_score"),
+                rating="local_evidence_fallback",
+                risk_level="external_discovery_failed_review_only",
+                reason="; ".join(str(reason) for reason in (item.get("reasons") or [])[:6])
+                or "local candidate evidence fallback",
+                payload=item,
+                event_type="local_candidate_fallback",
+            )
 
     def _persist_run(
         self,
@@ -363,3 +484,9 @@ class OffhourPotentialSearchService:
         run["top_scored_items"] = items[:5]
         run["top_scored_symbols"] = [item["symbol"] for item in items[:5]]
         return run
+
+    def _json(self, payload: str | None, *, default: Any) -> Any:
+        try:
+            return json.loads(payload or "")
+        except (TypeError, json.JSONDecodeError):
+            return default

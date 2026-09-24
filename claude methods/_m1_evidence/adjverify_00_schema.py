@@ -1,0 +1,20 @@
+import sqlite3
+OP=r"D:/codex-A股交易/trading_local.sqlite3"
+MH=r"D:/codex-A股交易/market_history.sqlite3"
+def ro(p): return sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+c=ro(OP); m=ro(MH)
+print("== cache sample symbols ==")
+for r in c.execute("SELECT symbol FROM daily_bar_cache WHERE trade_date='2024-08-13' ORDER BY symbol LIMIT 10"): print(r)
+for r in c.execute("SELECT symbol FROM daily_bar_cache WHERE trade_date='2024-08-13' ORDER BY symbol DESC LIMIT 10"): print(r)
+print("== mh sample symbols ==")
+for r in m.execute("SELECT symbol,adjustment_mode FROM daily_bars WHERE trade_date='2024-08-13' ORDER BY symbol LIMIT 6"): print(r)
+print("== mh adj modes on that date ==")
+for r in m.execute("SELECT adjustment_mode,COUNT(*),COUNT(DISTINCT symbol) FROM daily_bars WHERE trade_date='2024-08-13' GROUP BY 1"): print(r)
+print("== cache distinct sources overall ==")
+for r in c.execute("SELECT source,COUNT(*) FROM daily_bar_cache GROUP BY 1 ORDER BY 2 DESC LIMIT 20"): print(r)
+print("== cache adjustment_mode / volume_unit / quality_status ==")
+for r in c.execute("SELECT adjustment_mode,volume_unit,quality_status,COUNT(*) FROM daily_bar_cache GROUP BY 1,2,3 ORDER BY 4 DESC LIMIT 20"): print(r)
+print("== instruments exchange counts ==")
+for r in m.execute("SELECT exchange,asset_type,COUNT(*) FROM instruments GROUP BY 1,2 ORDER BY 3 DESC"): print(r)
+print("== instruments sample symbols ==")
+for r in m.execute("SELECT symbol,exchange,asset_type FROM instruments LIMIT 8"): print(r)

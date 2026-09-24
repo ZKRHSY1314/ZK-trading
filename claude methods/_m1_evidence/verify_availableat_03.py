@@ -1,0 +1,25 @@
+import sqlite3
+MH=r"D:/codex-A股交易/market_history.sqlite3"
+c=sqlite3.connect(f"file:{MH}?mode=ro",uri=True); c.row_factory=sqlite3.Row
+def q(s,a=()): return [dict(r) for r in c.execute(s,a).fetchall()]
+print("J. trade_date span of daily_bars (explains why window filter changed nothing)")
+print("SQL: SELECT MIN(trade_date),MAX(trade_date),COUNT(*) FROM daily_bars")
+print("  ",q("SELECT MIN(trade_date) mn,MAX(trade_date) mx,COUNT(*) n FROM daily_bars")[0])
+print("SQL: SELECT COUNT(*) FROM daily_bars WHERE trade_date NOT BETWEEN '2023-09-04' AND '2026-09-04'")
+print("   rows outside research window =",q("SELECT COUNT(*) n FROM daily_bars WHERE trade_date NOT BETWEEN '2023-09-04' AND '2026-09-04'")[0]['n'])
+print("\nK. instruments exchange domain — are there ANY index rows to exclude?")
+print("SQL: SELECT DISTINCT exchange, asset_type FROM instruments")
+print("  ",q("SELECT exchange, asset_type, COUNT(*) n FROM instruments GROUP BY exchange, asset_type"))
+print("\nL. the 2 symbols whose bars are all lag<=1 — are they real coverage or 1-bar stubs?")
+print("SQL: per-symbol bar_count where MAX(lag)<=1")
+print("  ",q("""WITH l AS (SELECT symbol, julianday(substr(available_at,1,10))-julianday(trade_date) d FROM daily_bars)
+   SELECT symbol, COUNT(*) bars, MIN(d) mn, MAX(d) mx FROM l GROUP BY symbol HAVING MAX(d)<=1"""))
+print("\nM. can any OTHER column rescue point-in-time? compare created_at to trade_date")
+print("SQL: SELECT COUNT(*) FROM daily_bars WHERE julianday(substr(created_at,1,10))-julianday(trade_date)>30")
+print("   created_at also >30d after trade_date:",q("SELECT COUNT(*) n FROM daily_bars WHERE julianday(substr(created_at,1,10))-julianday(trade_date)>30")[0]['n'])
+print("SQL: SELECT COUNT(DISTINCT substr(created_at,1,10)) FROM daily_bars")
+print("   distinct created_at days:",q("SELECT COUNT(DISTINCT substr(created_at,1,10)) n FROM daily_bars")[0]['n'])
+print("\nN. ingest_runs — earliest run date (nothing can predate the first ingest)")
+print("SQL: SELECT MIN(created_at),MAX(created_at),COUNT(*) FROM ingest_runs")
+print("  ",q("SELECT MIN(created_at) mn,MAX(created_at) mx,COUNT(*) n FROM ingest_runs")[0])
+c.close()

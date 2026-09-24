@@ -137,6 +137,10 @@ class MainForcePhaseReplayService:
         return self._replay_model(row) if row else None
 
     def _load_daily_bars(self, code: str) -> tuple[pd.DataFrame, str]:
+        local = self._load_local_qfq_bars(with_exchange_prefix(code))
+        if len(local) >= 80:
+            return local, "daily_bar_cache.qfq"
+
         try:
             hist = self.provider.get_daily_bars(code)
             if not hist.empty:
@@ -157,6 +161,39 @@ class MainForcePhaseReplayService:
                 f"AKShare 历史日线获取失败: {akshare_error}; Sina 兜底为空"
             )
         return fallback, "sina.cn.kline_daily_fallback"
+
+    def _load_local_qfq_bars(self, symbol: str) -> pd.DataFrame:
+        rows = self.store.fetch_all(
+            """
+            SELECT trade_date, open, high, low, close, volume, amount
+            FROM daily_bar_cache
+            WHERE symbol = ?
+              AND trade_date != 'ERROR'
+              AND quality_status = 'ready'
+              AND adjustment_mode = 'qfq'
+              AND open > 0 AND high > 0 AND low > 0 AND close > 0
+              AND volume IS NOT NULL AND volume >= 0
+            ORDER BY trade_date ASC
+            LIMIT 1200
+            """,
+            (symbol,),
+        )
+        if not rows:
+            return pd.DataFrame()
+        frame = pd.DataFrame(rows)
+        result = pd.DataFrame(
+            {
+                "日期": frame["trade_date"],
+                "开盘": pd.to_numeric(frame["open"], errors="coerce"),
+                "收盘": pd.to_numeric(frame["close"], errors="coerce"),
+                "最高": pd.to_numeric(frame["high"], errors="coerce"),
+                "最低": pd.to_numeric(frame["low"], errors="coerce"),
+                "成交量": pd.to_numeric(frame["volume"], errors="coerce"),
+                "成交额": pd.to_numeric(frame["amount"], errors="coerce"),
+            }
+        )
+        result["涨跌幅"] = result["收盘"].pct_change() * 100
+        return result
 
     def _load_sina_daily_bars(self, code: str) -> pd.DataFrame:
         prefix = "sh" if code.startswith("6") else "sz"

@@ -1,0 +1,81 @@
+name: review-only-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, "codex/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      ENABLE_LIVE_TRADING: "false"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Configure isolated database
+        shell: pwsh
+        run: |
+          "DATABASE_PATH=$env:RUNNER_TEMP\zk-trading-ci.sqlite3" >> $env:GITHUB_ENV
+      - name: Install backend
+        working-directory: backend
+        run: python -m pip install -e ".[dev]"
+      - name: Prove live trading is disabled
+        working-directory: backend
+        run: python -c "from app.config import settings; assert settings.enable_live_trading is False"
+      - name: Ruff
+        working-directory: backend
+        run: python -m ruff check app tests
+      - name: Parse PowerShell entrypoints
+        shell: pwsh
+        run: |
+          $errors = @()
+          Get-ChildItem -LiteralPath scripts -Filter *.ps1 | ForEach-Object {
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$null,
+              [ref]$parseErrors
+            ) | Out-Null
+            if ($parseErrors) { $errors += $parseErrors }
+          }
+          if ($errors.Count -gt 0) {
+            $errors | Format-List
+            exit 1
+          }
+      - name: Pytest
+        working-directory: backend
+        run: python -m pytest -q
+
+  frontend:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+      - name: Typecheck
+        working-directory: frontend
+        run: npm test
+      - name: Build
+        working-directory: frontend
+        run: npm run build

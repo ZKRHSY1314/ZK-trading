@@ -1,14 +1,16 @@
-from datetime import datetime
+from datetime import date, datetime, time as clock_time
 from pathlib import Path
 from typing import Any
 from collections import Counter
 import json
 import time
 import uuid
+from zoneinfo import ZoneInfo
 
 from app.candidates.auto_discovery import AutoDiscoveryScanner
 from app.candidates.local_scanner import LocalCandidateScanner
 from app.config import settings
+from app.data.trading_calendar import trading_session_age
 from app.data.snapshot_builder import MarketDataError, MarketSnapshotBuilder
 from app.decision import DecisionAnalyzer
 from app.sim_cockpit.service import SimCockpitService
@@ -45,6 +47,7 @@ class AutomationSupervisor:
                 "offhour_research_loop",
                 "single_symbol_review",
                 "offhour_potential_search",
+                "public_opinion_capture",
                 "event_logging",
             ],
             "reserved_adapters": [
@@ -129,6 +132,25 @@ class AutomationSupervisor:
                 "artifact_policy": "candidate_only_not_auto_loaded",
                 "cli_modes": ["offhour-research-status", "offhour-research-loop"],
                 "requires_health_live_trading_disabled": True,
+                "live_trading_enabled": settings.enable_live_trading,
+            },
+            "public_opinion_capture": {
+                "status": "enabled_for_scheduled_codex_capture",
+                "mode": "review_only_policy_market_sector_news",
+                "allowed_outputs": [
+                    "public_opinion_items",
+                    "public_opinion_sector_signals",
+                    "selection_v2_tailwind_context",
+                ],
+                "recommended_cadence": ["09:00", "11:30", "13:00", "15:10", "20:30"],
+                "requires_health_live_trading_disabled": True,
+                "forbidden": [
+                    "broker_order",
+                    "credential_access",
+                    "screen_click_trading",
+                    "live_auto_trading",
+                    "auto_promote_to_strategy",
+                ],
                 "live_trading_enabled": settings.enable_live_trading,
             },
             "guardrails": [
@@ -398,10 +420,27 @@ class AutomationSupervisor:
 
         return "pass"
 
-    def run_once(self, limit: int = 30) -> dict[str, Any]:
+    def run_once(
+        self,
+        limit: int = 30,
+        *,
+        decision_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         run_id = self._start_run("simulation_once")
         started_at = time.perf_counter()
-        self._event(run_id, "automation_started", None, {"limit": limit})
+        self._event(
+            run_id,
+            "automation_started",
+            None,
+            {
+                "limit": limit,
+                "candidate_source": (
+                    "decision_snapshot" if decision_snapshot is not None else "legacy_scanner"
+                ),
+                "decision_date": (decision_snapshot or {}).get("date"),
+                "decision_schema_version": (decision_snapshot or {}).get("schema_version"),
+            },
+        )
 
         run_steps: list[dict[str, Any]] = []
         failed_steps: list[dict[str, Any]] = []
@@ -466,7 +505,18 @@ class AutomationSupervisor:
 
         step_start = time.perf_counter()
         try:
-            discovery = AutoDiscoveryScanner().scan(limit=max(20, limit * 4), persist=True)
+            if decision_snapshot is not None:
+                discovery = {
+                    "status": "skipped",
+                    "reason": "immutable_decision_snapshot_provided",
+                    "discovered_count": 0,
+                    "limit_up_count": 0,
+                    "near_limit_up_count": 0,
+                    "strong_mover_count": 0,
+                    "scored_count": 0,
+                }
+            else:
+                discovery = AutoDiscoveryScanner().scan(limit=max(20, limit * 4), persist=True)
             self._event(
                 run_id,
                 "auto_discovery_completed",
@@ -482,7 +532,7 @@ class AutomationSupervisor:
                 _step_entry(
                     "auto_discovery",
                     "auto_discovery",
-                    "completed",
+                    "skipped" if decision_snapshot is not None else "completed",
                     step_start,
                     {
                         "status": discovery.get("status"),
@@ -537,7 +587,11 @@ class AutomationSupervisor:
 
         step_start = time.perf_counter()
         try:
-            scan = LocalCandidateScanner().scan(limit=limit, persist=True)
+            scan = (
+                self._scan_from_decision_snapshot(decision_snapshot, limit=limit)
+                if decision_snapshot is not None
+                else LocalCandidateScanner().scan(limit=limit, persist=True)
+            )
             self._event(
                 run_id,
                 "candidate_scan_completed",
@@ -557,6 +611,7 @@ class AutomationSupervisor:
                     step_start,
                     {
                         "scan_id": scan.get("scan_id"),
+                        "source": scan.get("source", "local_candidate_scanner"),
                         "strong_count": scan["strong_count"],
                         "watch_count": scan["watch_count"],
                         "rejected_count": scan["rejected_count"],
@@ -672,6 +727,24 @@ class AutomationSupervisor:
                 symbol = candidate["symbol"]
                 try:
                     snapshot = MarketSnapshotBuilder().build(symbol, candidate.get("name"))
+                    freshness = self._snapshot_freshness(snapshot)
+                    if not freshness["allowed"]:
+                        payload = {
+                            "reason": "stale_market_snapshot",
+                            "candidate": candidate,
+                            "market_data_freshness": freshness,
+                        }
+                        self._event(run_id, "plan_skipped", symbol, payload)
+                        processed.append(
+                            {
+                                "symbol": symbol,
+                                "status": "skipped",
+                                "reason": "stale_market_snapshot",
+                                "market_data_freshness": freshness,
+                            }
+                        )
+                        continue
+                    snapshot.metadata["freshness_gate"] = freshness
                     analysis = DecisionAnalyzer().analyze(snapshot)
                     plan = SimulationPlanner().create_plan(snapshot)
                 except (ValueError, MarketDataError) as exc:
@@ -885,6 +958,47 @@ class AutomationSupervisor:
         self._finish_run(run_id, summary, status=overall_status)
         return {"run_id": run_id, "status": overall_status, "summary": summary}
 
+    @staticmethod
+    def _snapshot_freshness(
+        snapshot: Any,
+        *,
+        now: datetime | None = None,
+        trading_dates: list[date] | None = None,
+    ) -> dict[str, Any]:
+        current = now or datetime.now(ZoneInfo("Asia/Shanghai"))
+        trade_date = snapshot.trade_date
+        data_quality = str((snapshot.metadata or {}).get("data_quality") or "unknown")
+        if trade_date is None:
+            return {
+                "allowed": False,
+                "reason": "trade_date_missing",
+                "trade_date": None,
+                "data_quality": data_quality,
+            }
+        if trade_date > current.date():
+            return {
+                "allowed": False,
+                "reason": "future_trade_date",
+                "trade_date": trade_date.isoformat(),
+                "data_quality": data_quality,
+            }
+        session_age, calendar_source = trading_session_age(
+            trade_date,
+            current.date(),
+            exclude_target_session=current.time() <= clock_time(15, 0),
+            trading_dates=trading_dates,
+        )
+        allowed = session_age == 0 and data_quality != "fallback_profile"
+        return {
+            "allowed": allowed,
+            "reason": None if allowed else "stale_trade_session",
+            "trade_date": trade_date.isoformat(),
+            "target_date": current.date().isoformat(),
+            "trading_session_age": session_age,
+            "trading_calendar_source": calendar_source,
+            "data_quality": data_quality,
+        }
+
     def _risk_blocked_summary(self, processed: list[dict[str, Any]]) -> dict[str, Any]:
         rules = Counter()
         layers = Counter()
@@ -987,6 +1101,60 @@ class AutomationSupervisor:
         except Exception as exc:
             return [{"status": "failed", "reason": str(exc)}]
 
+    @staticmethod
+    def _scan_from_decision_snapshot(
+        snapshot: dict[str, Any],
+        *,
+        limit: int,
+    ) -> dict[str, Any]:
+        """Adapt one immutable Decision Snapshot to the legacy planning seam.
+
+        The adapter intentionally performs no rescoring.  It preserves the V2
+        rank and only maps plan types to the three buckets consumed by the
+        existing review-only planning implementation.
+        """
+        buckets: dict[str, list[dict[str, Any]]] = {
+            "strong": [],
+            "watch": [],
+            "rejected": [],
+        }
+        strong_types = {"SIM_BUY_PLAN"}
+        watch_types = {
+            "WAIT_PULLBACK_PLAN",
+            "WAIT_BREAKOUT_PLAN",
+            "WATCH_ONLY_PLAN",
+            "SECTOR_BAROMETER",
+        }
+        rows = list(snapshot.get("daily_candidate_snapshot") or [])[: max(1, int(limit))]
+        for raw in rows:
+            if not isinstance(raw, dict) or not raw.get("symbol"):
+                continue
+            item = dict(raw)
+            item["score"] = float(item.get("final_score") or item.get("score") or 0.0)
+            plan_type = str(item.get("plan_type") or "WATCH_ONLY_PLAN")
+            if plan_type in strong_types:
+                item["tier"] = "strong"
+                buckets["strong"].append(item)
+            elif plan_type in watch_types:
+                item["tier"] = "watch"
+                buckets["watch"].append(item)
+            else:
+                item["tier"] = "rejected"
+                buckets["rejected"].append(item)
+        return {
+            "scan_id": snapshot.get("snapshot_id") or snapshot.get("date"),
+            "source": "decision_snapshot",
+            "schema_version": snapshot.get("schema_version"),
+            "decision_date": snapshot.get("date"),
+            "config_version": snapshot.get("config_version"),
+            "buckets": buckets,
+            "lifecycle": None,
+            "scoring": {"source": "strategy_selection_v2", "rescored": False},
+            "strong_count": len(buckets["strong"]),
+            "watch_count": len(buckets["watch"]),
+            "rejected_count": len(buckets["rejected"]),
+        }
+
     def _phase_guardrail_for(
         self,
         symbol: str,
@@ -1018,6 +1186,7 @@ class AutomationSupervisor:
         limit: int = 5,
         monitor_limit: int = 5,
         review_symbol: str = "SZ002081",
+        decision_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run the safe observe-plan-monitor-review loop once."""
         cycle_started_at = time.perf_counter()
@@ -1037,7 +1206,7 @@ class AutomationSupervisor:
         failed_steps = cycle["failed_steps"]
 
         step_start = time.perf_counter()
-        automation = self.run_once(limit=limit)
+        automation = self.run_once(limit=limit, decision_snapshot=decision_snapshot)
         cycle["automation"] = automation
         automation_status = automation.get("status", "failed")
         automation_run_id = automation.get("run_id")

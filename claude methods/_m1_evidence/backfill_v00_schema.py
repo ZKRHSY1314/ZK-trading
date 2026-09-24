@@ -1,0 +1,21 @@
+import sqlite3
+MH=r"D:\codex-A股交易\market_history.sqlite3"
+TL=r"D:\codex-A股交易\trading_local.sqlite3"
+c=sqlite3.connect(f"file:{MH}?mode=ro",uri=True)
+print("=== market_history.daily_bars DDL ===")
+for r in c.execute("SELECT sql FROM sqlite_master WHERE name='daily_bars'"): print(r[0])
+print("\n=== ingest_runs DDL ===")
+for r in c.execute("SELECT sql FROM sqlite_master WHERE name='ingest_runs'"): print(r[0])
+print("\n=== daily_bars adjustment_mode distribution ===")
+for r in c.execute("SELECT adjustment_mode, COUNT(*), SUM(amount IS NULL) FROM daily_bars GROUP BY 1 ORDER BY 2 DESC"): print(r)
+print("\n=== daily_bars provider distribution ===")
+for r in c.execute("SELECT provider, COUNT(*), SUM(amount IS NULL) FROM daily_bars GROUP BY 1 ORDER BY 2 DESC"): print(r)
+print("\n=== distinct (symbol,trade_date) cells vs rows ===")
+for r in c.execute("SELECT COUNT(*) rows, COUNT(DISTINCT symbol||'|'||trade_date) cells FROM daily_bars"): print(r)
+c.close()
+c2=sqlite3.connect(f"file:{TL}?mode=ro",uri=True)
+print("\n=== trading_local.daily_bar_cache DDL ===")
+for r in c2.execute("SELECT sql FROM sqlite_master WHERE name='daily_bar_cache'"): print(r[0])
+print("\n=== cache source x adjustment_mode x quality_status ===")
+for r in c2.execute("SELECT source, adjustment_mode, quality_status, COUNT(*), SUM(amount IS NULL) FROM daily_bar_cache GROUP BY 1,2,3 ORDER BY 4 DESC LIMIT 30"): print(r)
+c2.close()
