@@ -36,3 +36,19 @@ required-version = "==0.16.6"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
+
+# The five files below are byte-pinned accepted research artifacts (see
+# docs/CLOUD_PUBLICATION_BASELINE_20260924.md and .gitattributes). Reformatting
+# them would create new bytes without a research change or a valid new freeze,
+# so only their pre-existing *style* findings are exempted here, per file and per
+# rule. tests/test_frozen_research_isolation.py fails if an exemption names a
+# non-frozen file or a non-style rule, and fails if the bytes stop matching the
+# pins, at which point these exemptions must be removed with the freeze.
+# F841 in test_m4_risk.py is the unused ``d`` in a fixture helper whose effect is
+# asserted through ``E.intents()`` on the next lines; it is not a lost assertion.
+[tool.ruff.lint.per-file-ignores]
+"app/research/m4_execution.py" = ["E741"]
+"app/research/m4_portfolio.py" = ["E741"]
+"app/research/m4_risk.py" = ["E702", "E741"]
+"tests/test_m4_portfolio.py" = ["E741"]
+"tests/test_m4_risk.py" = ["E702", "E703", "F841"]

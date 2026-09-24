@@ -6,17 +6,25 @@ import pytest
 from fastapi.testclient import TestClient
 from pathlib import Path
 
+from frozen_research import PROCESS_ISOLATED_TESTS, run_frozen_tests_in_clean_process
+
 # Override config before importing app. SQLiteStore opens a new connection for
 # each operation, so plain `:memory:` would discard the schema after init().
+#
+# The session database is ALWAYS a fresh temporary file. An inherited
+# DATABASE_PATH (a developer shell, a .env, a CI variable) is never used: a
+# stray production path there must not become the target of test writes.
+# Environment variables outrank .env in pydantic-settings, so these also win
+# over a local backend/.env. The remaining overrides pin the defaults that keep
+# the suite off real capture and realtime providers.
 os.environ["ENABLE_LIVE_TRADING"] = "false"
-_bootstrap_database: Path | None = None
-_configured_database = os.environ.get("DATABASE_PATH")
-if not _configured_database or _configured_database == ":memory:":
-    _bootstrap_handle = tempfile.NamedTemporaryFile(delete=False, suffix=".sqlite3")
-    _bootstrap_handle.close()
-    _bootstrap_database = Path(_bootstrap_handle.name)
-    _configured_database = str(_bootstrap_database)
-os.environ["DATABASE_PATH"] = _configured_database
+os.environ["REALTIME_PROVIDER"] = "disabled"
+os.environ["SCREEN_CAPTURE_PROVIDER"] = "disabled"
+os.environ["SCREEN_CAPTURE_ALLOW_REAL_CAPTURE"] = "false"
+_bootstrap_handle = tempfile.NamedTemporaryFile(delete=False, suffix=".sqlite3")
+_bootstrap_handle.close()
+_bootstrap_database = Path(_bootstrap_handle.name)
+os.environ["DATABASE_PATH"] = str(_bootstrap_database)
 
 collect_ignore = []
 if os.getenv("RUN_LEGACY_DATASET2_READINESS_TESTS") != "1":
@@ -32,17 +40,43 @@ if os.getenv("RUN_LEGACY_REVIEW_TESTS") != "1":
 
 def pytest_sessionfinish(session, exitstatus):
     del session, exitstatus
-    if _bootstrap_database is not None:
-        try:
-            _bootstrap_database.unlink(missing_ok=True)
-        except OSError:
-            pass
+    try:
+        _bootstrap_database.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def pytest_collection_modifyitems(config, items):
+    """Run the frozen M4 "no ``app`` in this process" tests in a clean interpreter.
+
+    This conftest imports ``app`` below, so those assertions cannot hold in the
+    pytest host. The items stay collected under their original node ids and are
+    not skipped: their body is executed by the frozen suite's own stdlib runner
+    in a fresh process (see tests/frozen_research.py), and that child's result
+    is this item's result. Every other test in the frozen files runs in-host.
+    """
+    del config
+    for item in items:
+        cls = getattr(item, "cls", None)
+        key = (item.path.name, getattr(cls, "__name__", None), getattr(item, "originalname", item.name))
+        if key in PROCESS_ISOLATED_TESTS:
+            path, class_name, method = item.path, key[1], key[2]
+            item.runtest = lambda path=path, c=class_name, m=method: run_frozen_tests_in_clean_process(path, c, m)
+            item.user_properties.append(("execution", "clean_child_process"))
 
 
 from app.main import app  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.storage.sqlite_store import SQLiteStore  # noqa: E402
 from app.data.akshare_provider import AkshareProvider, MarketDataProvider  # noqa: E402
+
+# Fail closed before any test runs if the overrides above did not take effect.
+if settings.enable_live_trading is not False:
+    raise pytest.UsageError("tests require ENABLE_LIVE_TRADING=false before app import")
+if Path(settings.database_path).resolve() != _bootstrap_database.resolve():
+    raise pytest.UsageError(
+        f"tests must use the temporary bootstrap database, not {settings.database_path}"
+    )
 
 
 class MockProvider(MarketDataProvider):
