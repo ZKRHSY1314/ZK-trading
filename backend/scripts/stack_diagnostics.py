@@ -5,6 +5,7 @@ import argparse
 import base64
 from datetime import date, datetime, timedelta, timezone
 import http.client
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,11 @@ import sqlite3
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
+# Sibling stdlib module holding the per-profile component contract.
+_profiles_spec = importlib.util.spec_from_file_location(
+    'stack_profiles_for_diagnostics', Path(__file__).with_name('stack_profiles.py'))
+stack_profiles = importlib.util.module_from_spec(_profiles_spec)
+_profiles_spec.loader.exec_module(stack_profiles)
 WORKERS = {
     'control_worker': ('control_plane', 1800),
     'reference_data_worker': ('reference_data', 18000),
@@ -53,7 +59,9 @@ def heartbeat(payload, now, stale_after):
         status = 'stale'
     elif last == 'running':
         status = 'running'
-    elif last in {'completed', 'healthy', 'ok', 'success', 'ready'}:
+    # "skipped" is a completed idle cycle (for example market history already
+    # up to date, or waiting for the session to finalise), not a failure.
+    elif last in {'completed', 'healthy', 'ok', 'success', 'ready', 'skipped'}:
         status = 'healthy'
     else:
         status = 'degraded'
@@ -216,25 +224,42 @@ def market_snapshot(path, now):
             'recent_ready_rows': dict(sorted(counts.items())[-10:])}
 
 
+def tracked_profile(root):
+    """Service profile recorded by run_stack.ps1; v1 metadata predates profiles (full)."""
+    metadata = read_json(root / 'logs/run_stack.pids.json')
+    if not isinstance(metadata, dict):
+        return {'service_profile': None, 'metadata_schema': None, 'plan_sha256': None}
+    profile = metadata.get('service_profile')
+    return {'service_profile': profile if isinstance(profile, str) and profile else 'full',
+            'metadata_schema': metadata.get('schema_version'),
+            'plan_sha256': metadata.get('plan_sha256')}
+
+
 def inspect(root, now, *, runtime=None, http_get=local_http):
     runtime = process_snapshot(root) if runtime is None else runtime
     processes = runtime.get('processes', {})
+    profile = tracked_profile(root)
     workers = {}
     for key, (filename, threshold) in WORKERS.items():
         tracked = processes.get(key, {})
-        pulse = heartbeat(read_json(root / 'backend/logs' / (filename+'_heartbeat.json')),
-                          now, threshold)
-        disabled = key.startswith('codex_') and tracked.get('enabled') is False
+        payload = read_json(root / 'backend/logs' / (filename+'_heartbeat.json'))
+        pulse = heartbeat(payload, now, threshold)
+        # run_stack.ps1 records every component a profile (or the Codex switch)
+        # excluded as enabled=false; such a worker must not be running at all.
+        disabled = tracked.get('enabled') is False
         pid_matches = (isinstance(pulse.get('pid'), int) and pulse['pid'] > 0
                        and pulse['pid'] == tracked.get('runtime_pid'))
+        mismatched = stack_profiles.heartbeat_config_mismatches(key, payload)
         workers[key] = {**pulse, 'process_identity': tracked.get('identity', 'unverifiable'),
                         'heartbeat_pid_matches': pid_matches,
-                        'disabled': disabled}
+                        'disabled': disabled,
+                        'configuration_mismatches': mismatched}
         workers[key]['operational_status'] = (
-            'disabled' if disabled and tracked.get('identity') == 'not_running' else
-            'disabled' if disabled and tracked.get('identity') == 'missing_metadata' else
+            'disabled' if disabled and tracked.get('identity') in {'not_running', 'missing_metadata'} else
+            'running_but_not_in_profile' if disabled else
             'not_running_or_unverified' if tracked.get('identity') != 'matched' else
-            'heartbeat_pid_mismatch' if not pid_matches else pulse['status'])
+            'heartbeat_pid_mismatch' if not pid_matches else
+            'configuration_mismatch' if mismatched else pulse['status'])
     health = http_get(8000, '/health')
     ready = http_get(8000, '/readyz')
     frontend = http_get(3000, '/', parse_json=False)
@@ -266,6 +291,7 @@ def inspect(root, now, *, runtime=None, http_get=local_http):
             'status': 'needs_attention' if issues else 'healthy', 'issues': issues,
             'read_only': True, 'database_writes': False, 'starts_workers': False,
             'live_trading_enabled': health.get('live_trading_enabled'),
+            **profile,
             'runtime': runtime, 'backend': health, 'readiness': ready, 'frontend': frontend,
             'workers': workers, 'market': market,
             'automatic_restart_attempted': False}

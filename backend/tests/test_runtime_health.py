@@ -8,6 +8,40 @@ from app.main import app
 from app.runtime.status import readiness_snapshot
 
 
+def _fresh() -> str:
+    # A current timestamp. Far-future stamps used to stand in for "fresh", which
+    # hid that /readyz clamped them to age 0; they are now reported as invalid.
+    return datetime.now(timezone.utc).isoformat()
+
+
+def test_readiness_rejects_a_heartbeat_from_the_future(tmp_path, test_db):
+    heartbeat = tmp_path / "future-worker.json"
+    heartbeat.write_text(
+        json.dumps({"pid": 459, "cycle": 1, "status": "completed",
+                    "completed_at": "2099-01-01T00:00:00+00:00"}),
+        encoding="utf-8",
+    )
+    slight_skew = tmp_path / "skewed-worker.json"
+    slight_skew.write_text(
+        json.dumps({"pid": 460, "cycle": 1, "status": "completed",
+                    "completed_at": (datetime.now(timezone.utc) + timedelta(seconds=20)).isoformat()}),
+        encoding="utf-8",
+    )
+
+    snapshot = readiness_snapshot(
+        test_db.db_path,
+        heartbeat_paths={"control_plane": heartbeat, "reference_data": slight_skew},
+    )
+
+    future = snapshot["workers"]["control_plane"]
+    assert future["status"] == "invalid"
+    assert future["reason"] == "future_timestamp"
+    assert future["age_seconds"] < 0
+    assert "control_plane_heartbeat_invalid" in snapshot["attention"]
+    # Small clock skew between processes is tolerated, not treated as tampering.
+    assert snapshot["workers"]["reference_data"]["status"] == "healthy"
+
+
 def test_livez_reports_process_health(client):
     response = client.get("/livez")
 
@@ -59,7 +93,7 @@ def test_app_lifespan_initializes_runtime_database_before_readyz(tmp_path):
 def test_readiness_reports_worker_heartbeat_without_mutating_it(tmp_path, test_db):
     heartbeat = tmp_path / "worker.json"
     heartbeat.write_text(
-        '{"pid":123,"cycle":4,"status":"partial","completed_at":"2099-01-01T00:00:00+00:00"}',
+        json.dumps({"pid": 123, "cycle": 4, "status": "partial", "completed_at": _fresh()}),
         encoding="utf-8",
     )
     modified_before = heartbeat.stat().st_mtime_ns
@@ -79,7 +113,7 @@ def test_readiness_reports_worker_heartbeat_without_mutating_it(tmp_path, test_d
 def test_readiness_does_not_call_an_empty_market_pulse_healthy(tmp_path, test_db):
     heartbeat = tmp_path / "codex-worker.json"
     heartbeat.write_text(
-        '{"pid":456,"cycle":2,"status":"empty","completed_at":"2099-01-01T00:00:00+00:00"}',
+        json.dumps({"pid": 456, "cycle": 2, "status": "empty", "completed_at": _fresh()}),
         encoding="utf-8",
     )
 
@@ -95,8 +129,7 @@ def test_readiness_does_not_call_an_empty_market_pulse_healthy(tmp_path, test_db
 def test_readiness_reports_failed_decision_review_as_degraded(tmp_path, test_db):
     heartbeat = tmp_path / "decision-worker.json"
     heartbeat.write_text(
-        '{"pid":457,"cycle":2,"status":"failed",'
-        '"completed_at":"2099-01-01T00:00:00+00:00"}',
+        json.dumps({"pid": 457, "cycle": 2, "status": "failed", "completed_at": _fresh()}),
         encoding="utf-8",
     )
 

@@ -6,6 +6,12 @@ param(
     [ValidateSet(0, 1)]
     [int]$EnableCodexSearch = 1,
     [string]$TonghuasunProfile = "",
+    # "full" keeps the historical behaviour; "review" runs only backend + frontend.
+    # A tracked stack started under another profile is never switched implicitly:
+    # pass -SwitchProfile to replace it.
+    [ValidateSet("full", "review")]
+    [string]$ServiceProfile = "full",
+    [switch]$SwitchProfile,
     [switch]$CheckOnly
 )
 
@@ -22,6 +28,11 @@ if ($CheckOnly) {
 }
 $RunScript = Join-Path $PSScriptRoot "run_stack.ps1"
 $StopScript = Join-Path $PSScriptRoot "stop_stack.ps1"
+$Python = Join-Path $ProjectRoot "backend\.venv\Scripts\python.exe"
+$StackProfileScript = Join-Path $ProjectRoot "backend\scripts\stack_profiles.py"
+$StackRecoveryScript = Join-Path $ProjectRoot "backend\scripts\stack_recovery.py"
+# Codex workers only exist in the full profile.
+$CodexSearchEnabled = $CodexSearchEnabled -and ($ServiceProfile -eq "full")
 $PidFile = Join-Path $ProjectRoot "logs\run_stack.pids.json"
 $ApiBase = "http://127.0.0.1:$BackendPort"
 $FrontendBase = "http://127.0.0.1:$FrontendPort"
@@ -37,6 +48,46 @@ $FullMarketCalibrationHeartbeatFile = Join-Path $ProjectRoot "backend\logs\full_
 
 . (Join-Path $PSScriptRoot "tonghuasun_readonly.ps1")
 $TonghuasunReadOnly = Get-TonghuasunReadOnlyContext -ProfilePath $TonghuasunProfile
+
+foreach ($requiredFile in @($Python, $StackProfileScript, $StackRecoveryScript)) {
+    if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
+        throw "Required stack helper not found: $requiredFile"
+    }
+}
+$planText = & $Python -B -X utf8 $StackProfileScript plan `
+    --profile $ServiceProfile `
+    --project-root $ProjectRoot `
+    --backend-port ([string]$BackendPort) `
+    --frontend-port ([string]$FrontendPort) `
+    --enable-codex-search $(if ($CodexSearchEnabled) { "1" } else { "0" })
+if ($LASTEXITCODE -ne 0) {
+    throw "Stack profile planner rejected service profile '$ServiceProfile'."
+}
+$StackPlan = ($planText -join "`n") | ConvertFrom-Json
+$SelectedComponents = @($StackPlan.selected)
+
+function Test-ComponentSelected {
+    param([string]$Name)
+
+    return $SelectedComponents -contains $Name
+}
+
+function Get-TrackedServiceProfile {
+    if (-not (Test-Path -LiteralPath $PidFile -PathType Leaf)) {
+        return $null
+    }
+    try {
+        $tracked = Get-Content -Raw -Encoding UTF8 -LiteralPath $PidFile | ConvertFrom-Json
+    }
+    catch {
+        return "unreadable"
+    }
+    # run_stack_pids.v1 predates profiles and always started the full stack.
+    if ([string]::IsNullOrEmpty([string]$tracked.service_profile)) {
+        return "full"
+    }
+    return [string]$tracked.service_profile
+}
 
 function Read-JsonFileStatus {
     param([string]$LiteralPath)
@@ -78,6 +129,17 @@ function Test-TrackedProcessIdentity {
         $actualExecutable.Equals($expectedExecutable, [StringComparison]::OrdinalIgnoreCase) -and
         [string]$row.CommandLine -eq [string]$Metadata.command_line -and
         ([string]$row.CommandLine).Contains([string]$Metadata.command_marker)
+    )
+}
+
+function Test-ExcludedComponent {
+    param([object]$Metadata)
+
+    return (
+        $null -ne $Metadata -and
+        $Metadata.enabled -is [bool] -and
+        $Metadata.enabled -eq $false -and
+        -not (Test-TrackedProcessIdentity -Metadata $Metadata)
     )
 }
 
@@ -363,7 +425,41 @@ function Get-HealthyStack {
                 $codexDecisionHeartbeat.status -notin @("missing", "invalid", "stale")
             )
         )
+        $trackedProfile = if ([string]::IsNullOrEmpty([string]$metadata.service_profile)) {
+            "full"
+        }
+        else {
+            [string]$metadata.service_profile
+        }
+        $profileMatches = $trackedProfile -eq $ServiceProfile
+        if (-not (Test-ComponentSelected "control_worker")) {
+            $controlHealthy = Test-ExcludedComponent -Metadata $metadata.control_worker
+        }
+        if (-not (Test-ComponentSelected "reference_data_worker")) {
+            $referenceHealthy = Test-ExcludedComponent -Metadata $metadata.reference_data_worker
+        }
+        if (-not (Test-ComponentSelected "full_market_feature_worker")) {
+            $fullMarketFeatureHealthy = Test-ExcludedComponent `
+                -Metadata $metadata.full_market_feature_worker
+        }
+        if (-not (Test-ComponentSelected "market_history_refresh_worker")) {
+            $marketHistoryRefreshHealthy = Test-ExcludedComponent `
+                -Metadata $metadata.market_history_refresh_worker
+        }
+        if (-not (Test-ComponentSelected "capital_flow_refresh_worker")) {
+            $capitalFlowRefreshHealthy = Test-ExcludedComponent `
+                -Metadata $metadata.capital_flow_refresh_worker
+        }
+        if (-not (Test-ComponentSelected "instrument_catalog_refresh_worker")) {
+            $instrumentCatalogHealthy = Test-ExcludedComponent `
+                -Metadata $metadata.instrument_catalog_refresh_worker
+        }
+        if (-not (Test-ComponentSelected "full_market_calibration_worker")) {
+            $fullMarketCalibrationHealthy = Test-ExcludedComponent `
+                -Metadata $metadata.full_market_calibration_worker
+        }
         if (
+            $profileMatches -and
             $ready.status -eq "ready" -and
             $frontend.StatusCode -ge 200 -and
             $frontend.StatusCode -lt 400 -and
@@ -379,6 +475,8 @@ function Get-HealthyStack {
         ) {
             return [ordered]@{
                 healthy = $true
+                service_profile = $ServiceProfile
+                selected_components = $SelectedComponents
                 health = $health
                 ready = $ready
                 frontend_status = $frontend.StatusCode
@@ -445,6 +543,9 @@ function Get-HealthyStack {
     return [ordered]@{
         healthy = $false
         reason = $failureReason
+        service_profile = $ServiceProfile
+        tracked_service_profile = $trackedProfile
+        service_profile_matches = $profileMatches
         ready_status = $ready.status
         frontend_status = $frontend.StatusCode
         control_worker_healthy = $controlHealthy
@@ -484,6 +585,7 @@ if ($current.healthy) {
         status = "already_running"
         checked_at = [DateTimeOffset]::Now.ToString("o")
         live_trading_enabled = $false
+        service_profile = $ServiceProfile
         backend = $ApiBase
         frontend = $FrontendBase
         tonghuasun_readonly = $TonghuasunReadOnly
@@ -493,38 +595,93 @@ if ($current.healthy) {
     exit 0
 }
 
-if (Test-Path -LiteralPath $PidFile -PathType Leaf) {
+# Never widen or narrow a tracked stack's scope implicitly (for example, a
+# scheduled full-profile run replacing a manual review-profile recovery).
+$trackedServiceProfile = Get-TrackedServiceProfile
+if (
+    $null -ne $trackedServiceProfile -and
+    $trackedServiceProfile -ne $ServiceProfile -and
+    -not $SwitchProfile
+) {
+    [ordered]@{
+        schema_version = "ensure_stack.v1"
+        status = "profile_mismatch"
+        checked_at = [DateTimeOffset]::Now.ToString("o")
+        live_trading_enabled = $false
+        service_profile = $ServiceProfile
+        tracked_service_profile = $trackedServiceProfile
+        action = "none; pass -SwitchProfile to replace the tracked stack"
+    } | ConvertTo-Json -Depth 5
+    exit 2
+}
+
+# Restart budget: a component that dies on every start must not cause a
+# whole-stack stop/start on every scheduled run. The helper only reads here.
+$decisionText = & $Python -B -X utf8 $StackRecoveryScript decide --project-root $ProjectRoot
+$decisionExit = $LASTEXITCODE
+if ($decisionExit -ne 0) {
+    $decision = $null
     try {
-        & $StopScript | Out-Null
+        $decision = ($decisionText -join "`n") | ConvertFrom-Json
     }
     catch {
-        throw "Tracked stack is unhealthy and could not be stopped safely: $($_.Exception.Message)"
+        $decision = [ordered]@{ action = "suppress"; reason = "decision_unreadable" }
+    }
+    [ordered]@{
+        schema_version = "ensure_stack.v1"
+        status = "restart_suppressed"
+        checked_at = [DateTimeOffset]::Now.ToString("o")
+        live_trading_enabled = $false
+        service_profile = $ServiceProfile
+        restart_decision = $decision
+        unhealthy = $current
+    } | ConvertTo-Json -Depth 6
+    exit 2
+}
+
+try {
+    if (Test-Path -LiteralPath $PidFile -PathType Leaf) {
+        try {
+            & $StopScript | Out-Null
+        }
+        catch {
+            throw "Tracked stack is unhealthy and could not be stopped safely: $($_.Exception.Message)"
+        }
+    }
+
+    $env:ENABLE_LIVE_TRADING = "false"
+    & $RunScript `
+        -BackendPort $BackendPort `
+        -FrontendPort $FrontendPort `
+        -StartupTimeoutSeconds $StartupTimeoutSeconds `
+        -EnableCodexSearch:$CodexSearchEnabled `
+        -TonghuasunProfile $TonghuasunProfile `
+        -ServiceProfile $ServiceProfile
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "run_stack.ps1 failed with exit code $LASTEXITCODE"
+    }
+
+    $started = Get-HealthyStack
+    if (-not $started.healthy) {
+        $diagnostics = $started | ConvertTo-Json -Compress -Depth 5
+        throw "Stack startup returned without reaching healthy review-only state. Diagnostics: $diagnostics"
     }
 }
-
-$env:ENABLE_LIVE_TRADING = "false"
-& $RunScript `
-    -BackendPort $BackendPort `
-    -FrontendPort $FrontendPort `
-    -StartupTimeoutSeconds $StartupTimeoutSeconds `
-    -EnableCodexSearch:$CodexSearchEnabled `
-    -TonghuasunProfile $TonghuasunProfile
-
-if ($LASTEXITCODE -ne 0) {
-    throw "run_stack.ps1 failed with exit code $LASTEXITCODE"
+catch {
+    & $Python -B -X utf8 $StackRecoveryScript record --project-root $ProjectRoot `
+        --outcome failed --profile $ServiceProfile | Out-Null
+    throw
 }
-
-$started = Get-HealthyStack
-if (-not $started.healthy) {
-    $diagnostics = $started | ConvertTo-Json -Compress -Depth 5
-    throw "Stack startup returned without reaching healthy review-only state. Diagnostics: $diagnostics"
-}
+& $Python -B -X utf8 $StackRecoveryScript record --project-root $ProjectRoot `
+    --outcome started --profile $ServiceProfile | Out-Null
 
 [ordered]@{
     schema_version = "ensure_stack.v1"
     status = "started"
     checked_at = [DateTimeOffset]::Now.ToString("o")
     live_trading_enabled = $false
+    service_profile = $ServiceProfile
     backend = $ApiBase
     frontend = $FrontendBase
     tonghuasun_readonly = $TonghuasunReadOnly
