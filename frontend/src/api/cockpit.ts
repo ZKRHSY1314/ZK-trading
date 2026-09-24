@@ -199,3 +199,75 @@ export function runControlPlaneOnce(input: {
     body: JSON.stringify(input),
   });
 }
+
+export type StrategyEvidenceEligibility = {
+  eligible: boolean;
+  reasons: string[];
+  policy_version: string;
+};
+
+export type ForecastEvidenceHorizon = {
+  horizon_days: number;
+  status: OperationalStatus;
+  evidence_quality?: "official" | "exploratory" | string;
+  canonical_policy_version?: string | null;
+  fold_unit?: string | null;
+  fold_count?: number;
+  canonical_snapshot_count?: number;
+  repeated_snapshot_date_count?: number;
+  confirmed_fold_count?: number;
+  inferred_fold_count?: number;
+  excluded_inferred_snapshot_count?: number;
+  forecast_count?: number;
+  sample_count?: number;
+  due_count?: number;
+  matured_due_count?: number;
+  pending_count?: number;
+  coverage_of_due?: number | null;
+  maturity_basis?: string;
+  spearman_rank_ic?: number | null;
+  rank_ic_fold_count?: number;
+  precision_at_k?: number | null;
+  insufficient_reasons?: string[];
+  strategy_evidence: StrategyEvidenceEligibility;
+};
+
+export type ForecastEvidenceSelection = {
+  raw_decision_id_count: number;
+  confirmed_snapshot_count: number;
+  inferred_snapshot_count: number;
+  non_canonical_decision_id_count: number;
+  confirmed_decision_date_count: number;
+  inferred_decision_date_count: number;
+  claims: { total: number; open: number; non_scheduled: number; as_of_filtered: boolean };
+};
+
+export type ForecastEvidenceSnapshot = {
+  schema_version: string;
+  as_of: string;
+  canonical_policy_version: string;
+  evidence_policy: { version: string; min_independent_decision_dates: number; min_coverage_of_due: number };
+  include_inferred: boolean;
+  evidence_status?: OperationalStatus;
+  runtime: { status: string; read_only: boolean };
+  strategy_evidence: { qualified: boolean; qualified_horizons: string[]; policy_version: string };
+  maturity_basis: string;
+  by_scope: Record<
+    "stock" | "sector",
+    { status?: OperationalStatus; selection: ForecastEvidenceSelection; horizons: ForecastEvidenceHorizon[] }
+  >;
+  stored_evaluations: {
+    groups: Array<{
+      canonical_policy_version: string | null;
+      qualification: "current_policy" | "legacy_unversioned" | "other_policy";
+      row_count: number;
+      ready_count: number;
+    }>;
+    legacy_ready_count: number;
+  };
+  live_trading_enabled: boolean;
+};
+
+export function fetchForecastEvidence(signal?: AbortSignal) {
+  return fetchJson<ForecastEvidenceSnapshot>("/api/forecast/evidence", { signal });
+}

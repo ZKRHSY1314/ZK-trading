@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 
 from app.api.ai_model_routes import router as ai_model_router
+from app.api.forecast_evidence_routes import router as forecast_evidence_router
 from app.api.full_market_research_routes import router as full_market_research_router
 from app.api.offhour_research_routes import router as offhour_research_router
 from app.api.public_opinion_routes import router as public_opinion_router
@@ -28,6 +29,7 @@ app.include_router(public_opinion_router)
 app.include_router(ai_model_router)
 app.include_router(offhour_research_router)
 app.include_router(full_market_research_router)
+app.include_router(forecast_evidence_router)
 
 
 @app.get("/livez")

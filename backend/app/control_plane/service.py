@@ -493,7 +493,15 @@ class ControlPlaneService:
             created_by="control_plane_forecast_feedback",
         )
         return {
-            "status": evaluation.get("status") or labels.get("status") or "completed",
+            # The step reports whether labelling and evaluation RAN. The strength
+            # of the evidence travels separately as evidence_status: too few
+            # matured, confirmed decision dates is a research state, not a
+            # runtime fault, and must not mark the control-plane worker degraded
+            # (that shortened its retry interval and raised an attention flag on
+            # every cycle while evidence was still accumulating).
+            "status": labels.get("status") or "completed",
+            "evidence_status": evaluation.get("status") or "insufficient_data",
+            "evidence_quality": evaluation.get("evidence_quality"),
             "labels": labels,
             "evaluation": evaluation,
             "calibration": calibration,
@@ -1006,9 +1014,18 @@ class ControlPlaneService:
                 {
                     "horizon_days": item.get("horizon_days"),
                     "status": item.get("status"),
+                    "evidence_quality": item.get("evidence_quality"),
                     "sample_count": item.get("sample_count", 0),
                     "fold_count": item.get("fold_count", 0),
+                    "fold_unit": item.get("fold_unit"),
+                    "confirmed_fold_count": item.get("confirmed_fold_count"),
+                    "excluded_inferred_snapshot_count": item.get(
+                        "excluded_inferred_snapshot_count"
+                    ),
                     "coverage": item.get("coverage", 0.0),
+                    "coverage_of_due": item.get("coverage_of_due"),
+                    "due_count": item.get("due_count"),
+                    "pending_count": item.get("pending_count"),
                     "precision_at_k": item.get("precision_at_k"),
                     "spearman_rank_ic": item.get("spearman_rank_ic"),
                     "brier_score": item.get("brier_score"),
@@ -1032,6 +1049,10 @@ class ControlPlaneService:
             }
         return {
             "status": result.get("status"),
+            "evidence_status": result.get("evidence_status", evaluation.get("status")),
+            "evidence_quality": evaluation.get("evidence_quality"),
+            "canonical_policy_version": evaluation.get("canonical_policy_version"),
+            "as_of": evaluation.get("as_of"),
             "eligible_count": labels.get("eligible_count", 0),
             "labelled_count": labels.get("labelled_count", 0),
             "pending_count": labels.get("pending_count", 0),

@@ -193,8 +193,19 @@ def canonical_snapshot_cte() -> str:
     ).strip()
 
 
+# The selection predicate every statistics read applies after canonical_join().
+# Its single ``?`` parameter is 1 to admit inferred snapshots (exploratory use
+# only) and 0 for official, guard-confirmed evidence.
+CANONICAL_SELECTION_PREDICATE = "(cs.selection_kind = 'confirmed' OR ? = 1)"
+
+
 def canonical_join(alias: str = "d") -> str:
-    """The join that restricts `alias` to canonical snapshot rows."""
+    """The join that restricts `alias` to canonical snapshot rows.
+
+    Labelling, evaluation, the ledger's matured read and the evidence scoreboard
+    all compose this join with CANONICAL_SELECTION_PREDICATE, so they cannot
+    disagree about which snapshot is "the" decision.
+    """
 
     return (
         f"JOIN canonical cs\n"

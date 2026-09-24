@@ -6,7 +6,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from app.forecasting.canonical import canonical_snapshot_cte
+from app.forecasting.canonical import (
+    CANONICAL_SELECTION_PREDICATE,
+    canonical_join,
+    canonical_snapshot_cte,
+)
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -362,18 +366,14 @@ class ForecastLedger:
             # what lets selection_kind travel out with each row.
             canonical_joined = joined.replace(
                 "FROM forecast_decisions d",
-                """FROM forecast_decisions d
-            JOIN canonical cs
-              ON cs.decision_id = d.decision_id
-             AND cs.scope = d.scope
-             AND cs.data_version = d.data_version""",
+                f"FROM forecast_decisions d\n            {canonical_join('d')}",
                 1,
             )
             sql = f"""
             WITH {canonical_snapshot_cte()}
             SELECT {selection}, cs.selection_kind AS canonical_selection_kind
             {canonical_joined}
-              AND (cs.selection_kind = 'confirmed' OR ? = 1)
+              AND {CANONICAL_SELECTION_PREDICATE}
             {raw_ordering}
             """
             params = [*params, 1 if include_inferred else 0]
