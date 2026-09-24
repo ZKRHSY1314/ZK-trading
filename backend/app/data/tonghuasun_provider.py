@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from threading import Lock
@@ -218,11 +219,11 @@ class TonghuasunMarketDataProvider:
             raise ValueError(f"unsupported Tonghuashun adjustment mode: {adjust}")
         limit = max(1, min(int(days), 500))
         full_code = tonghuasun_full_code(symbol)
-        code = normalize_a_share_code(symbol)
         payload = {
             "market": 1,
-            "security": {"market": 1, "code": code, "fullCode": full_code},
-            "codes": [full_code],
+            # The host resolves every supplied identifier independently. A bare
+            # code alongside fullCode can select an additional, wrong exchange.
+            "security": {"market": 1, "fullCode": full_code},
             "startTimeUtc": None,
             "endTimeUtc": None,
             "limit": limit,
@@ -311,11 +312,19 @@ class TonghuasunMarketDataProvider:
 
 
 def tonghuasun_full_code(symbol: str) -> str:
-    code = normalize_a_share_code(symbol)
     raw = str(symbol or "").strip().upper()
-    if raw.startswith("BJ") or code.startswith(("4", "8", "92")):
+    match = re.fullmatch(r"(?:(SH|SZ|BJ))?(\d{6})(?:\.(SH|SZ|BJ))?", raw)
+    if match is None:
+        raise ValueError("invalid Tonghuashun security code")
+    prefix, code, suffix = match.groups()
+    if prefix and suffix and prefix != suffix:
+        raise ValueError("conflicting Tonghuashun exchange identifiers")
+    explicit_exchange = prefix or suffix
+    if explicit_exchange:
+        return f"{code}.{explicit_exchange}"
+    if code.startswith(("4", "8", "92")):
         suffix = "BJ"
-    elif raw.startswith("SZ") or code.startswith(("0", "2", "3")):
+    elif code.startswith(("0", "2", "3")):
         suffix = "SZ"
     else:
         suffix = "SH"

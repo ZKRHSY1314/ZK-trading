@@ -49,8 +49,11 @@ class DataFreshnessDiagnosticsService:
                 MAX(trade_date) AS latest_trade_date
             FROM daily_bar_cache
             WHERE quality_status = 'ready'
-              AND trade_date != 'ERROR'
-            """
+              AND length(trade_date) = 10
+              AND date(trade_date, '+0 days') = trade_date
+              AND trade_date <= ?
+            """,
+            (date.today().isoformat(),),
         ) or {}
         latest_trade_date = summary.get("latest_trade_date")
         calendar_lag_days = self._calendar_lag_days(latest_trade_date)
@@ -71,13 +74,18 @@ class DataFreshnessDiagnosticsService:
                 stale_candidates.append(item)
 
         stale_global = calendar_lag_days is not None and calendar_lag_days > max_lag_days
-        refresh_recommended = bool(stale_global or stale_candidates or missing_candidates)
+        missing_global = not latest_trade_date
+        refresh_recommended = bool(
+            missing_global or stale_global or stale_candidates or missing_candidates
+        )
         status = "refresh_recommended" if refresh_recommended else "ready"
         return {
             "status": status,
             "max_lag_days": max_lag_days,
             "latest_trade_date": latest_trade_date,
             "calendar_lag_days": calendar_lag_days,
+            "date_validation": "canonical_iso_date_not_in_future",
+            "missing_global_history": missing_global,
             "row_count": int(summary.get("row_count") or 0),
             "symbol_count": int(summary.get("symbol_count") or 0),
             "candidate_source": "candidate_scores_top",
@@ -191,10 +199,12 @@ class DataFreshnessDiagnosticsService:
             FROM daily_bar_cache
             WHERE symbol IN ({",".join("?" for _ in symbols)})
               AND quality_status = 'ready'
-              AND trade_date != 'ERROR'
+              AND length(trade_date) = 10
+              AND date(trade_date, '+0 days') = trade_date
+              AND trade_date <= ?
             GROUP BY symbol
             """,
-            tuple(symbols),
+            (*symbols, date.today().isoformat()),
         )
         return {
             str(row["symbol"]): {

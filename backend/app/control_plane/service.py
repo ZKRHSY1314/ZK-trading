@@ -21,7 +21,24 @@ from app.models import AgentTaskInput
 from app.storage.sqlite_store import SQLiteStore
 
 
+# An empty claim is only reclaimed after this long. It must comfortably exceed a
+# cycle (observed ~55s) so a healthy writer is never mistaken for a dead one.
+STALE_CLAIM_SECONDS = 1800
+# How often a writer re-checks that it still owns the vintage while writing.
+# Small enough that a reclaimed writer stops quickly, large enough not to add a
+# query per candidate.
+OWNERSHIP_RECHECK_EVERY = 10
+
 ControlProfile = Literal["adaptive", "pulse", "training", "maintenance", "full"]
+# Only a scheduled run may hold the official daily claim and write the ledger.
+# A manual run is a preview: it computes candidates and returns them, but it
+# must not occupy the (scope, data_version) claim, because that claim is a
+# primary key - an ad-hoc invocation that took it would leave the real scheduled
+# run with "already_recorded" and no way to replace it, permanently costing the
+# day its official snapshot. Replay and challenger runs need their own storage
+# namespace before they may write; until that exists they behave as previews.
+RunKind = Literal["scheduled", "manual", "replay", "challenger"]
+OFFICIAL_RUN_KIND = "scheduled"
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
@@ -140,6 +157,7 @@ class ControlPlaneService:
         monitor_limit: int = 5,
         review_symbol: str = "SZ002081",
         requested_by: str = "codex_control_plane",
+        run_kind: RunKind = "manual",
     ) -> dict[str, Any]:
         started = monotonic_time.perf_counter()
         now = self._clock()
@@ -185,7 +203,9 @@ class ControlPlaneService:
 
         decision_payload: dict[str, Any] | None = None
         if selected_profile in {"pulse", "maintenance", "full"}:
-            decision_payload = self._run_decision_step(limit=safe_limit, now=now)
+            decision_payload = self._run_decision_step(
+                limit=safe_limit, now=now, run_kind=run_kind
+            )
             steps.append(decision_payload["step"])
 
         task_payload: dict[str, Any] | None = None
@@ -328,11 +348,31 @@ class ControlPlaneService:
             },
         }
 
-    def _run_decision_step(self, *, limit: int, now: datetime) -> dict[str, Any]:
+    def _run_decision_step(
+        self, *, limit: int, now: datetime, run_kind: RunKind = "manual"
+    ) -> dict[str, Any]:
         started = monotonic_time.perf_counter()
         try:
-            result = self._run_decision_snapshot(limit=limit, now=now)
-            business_status = self._normalize_status(str(result.get("status") or "completed"))
+            result = self._run_decision_snapshot(limit=limit, now=now, run_kind=run_kind)
+            # The selection almost always reports "completed" - it computed a
+            # list. Whether that list actually became the decision of record is
+            # in the ledger, so the step is the worse of the two. Without this,
+            # a run that lost the vintage mid-write and published nothing was
+            # indistinguishable from one that published, and ownership_lost
+            # could never reach the operator.
+            business_status = self._rollup_status(
+                [
+                    {"status": self._normalize_status(str(result.get("status") or "completed"))},
+                    {
+                        "status": self._normalize_status(
+                            str(
+                                (result.get("forecast_ledger") or {}).get("status")
+                                or "completed"
+                            )
+                        )
+                    },
+                ]
+            )
             return {
                 "result": result,
                 "step": {
@@ -421,7 +461,9 @@ class ControlPlaneService:
                 "reason": str(exc),
             }
 
-    def _run_decision_snapshot(self, *, limit: int, now: datetime) -> dict[str, Any]:
+    def _run_decision_snapshot(
+        self, *, limit: int, now: datetime, run_kind: RunKind = "manual"
+    ) -> dict[str, Any]:
         market_data = self._market_data_factory(now, limit)
         if market_data["status"] != "fresh":
             return {
@@ -440,7 +482,7 @@ class ControlPlaneService:
             ),
             "market_data": market_data,
         }
-        return self._record_decision_forecasts(result, now=now)
+        return self._record_decision_forecasts(result, now=now, run_kind=run_kind)
 
     def _run_forecast_feedback(self, *, now: datetime, limit: int) -> dict[str, Any]:
         feedback = self._forecast_feedback_factory()
@@ -465,6 +507,7 @@ class ControlPlaneService:
         result: dict[str, Any],
         *,
         now: datetime,
+        run_kind: RunKind = "manual",
     ) -> dict[str, Any]:
         candidates = [
             item
@@ -503,8 +546,76 @@ class ControlPlaneService:
             or "codex_market_pulse.v1"
         )
         ledger = ForecastLedger(self.store)
+
+        # One frozen snapshot per bar vintage. Without this a 15-minute loop
+        # re-records the same daily candidates every cycle: 8 snapshots and
+        # 1,200 rows for 30 subjects were observed in one morning, and July days
+        # carry 10-24x the same decisions. Every pooled statistic downstream -
+        # win rate, Rank IC, the scoreboard - would then be weighted by how many
+        # times the loop happened to run rather than by distinct decisions.
+        #
+        # An empty candidate set must never claim the vintage: claiming it would
+        # freeze the day empty and suppress the real snapshot that follows.
+        if run_kind != OFFICIAL_RUN_KIND:
+            # Preview: the candidates are computed and returned, but nothing is
+            # claimed and nothing is written. Writing here would be worse than
+            # useless - the claim is keyed on (scope, data_version), so a manual
+            # run holding it would lock the scheduled run out of its own day.
+            result["snapshot_id"] = None
+            result["decision_cutoff"] = cutoff
+            result["forecast_ledger"] = {
+                "status": "preview_not_recorded",
+                "reason": f"run_kind_is_not_official:{run_kind}",
+                "recorded_count": 0,
+                "candidate_count": len(candidates),
+                "data_version": data_version,
+                "run_kind": run_kind,
+                "horizons": sorted(FORECAST_HORIZONS),
+                "review_only": True,
+            }
+            return result
+
+        claim_conflict = None
+        if candidates and data_version:
+            claim_conflict = self._claim_decision_day(
+                scope="stock",
+                data_version=data_version,
+                decision_id=decision_id,
+                candidate_count=len(candidates),
+                claimed_at=cutoff,
+                run_kind=run_kind,
+            )
+        if claim_conflict is not None:
+            # An idempotent no-op is a success, so the step stays "completed"
+            # and the operator's health signal does not turn amber every cycle.
+            result["snapshot_id"] = claim_conflict["decision_id"]
+            result["decision_cutoff"] = cutoff
+            result["forecast_ledger"] = {
+                "status": "already_recorded",
+                "reason": f"decision_day_already_recorded:{data_version}",
+                "recorded_count": 0,
+                "candidate_count": len(candidates),
+                "data_version": data_version,
+                "existing_decision_id": claim_conflict["decision_id"],
+                "existing_recorded_count": claim_conflict["recorded_count"],
+                "horizons": sorted(FORECAST_HORIZONS),
+                "review_only": True,
+            }
+            return result
+
         recorded = 0
+        ownership_lost = False
         for rank, candidate in enumerate(candidates, start=1):
+            # Ownership is re-checked while writing, not only at the end: a
+            # writer that stalled long enough to lose its lease must stop adding
+            # rows as soon as it notices, rather than writing a whole second
+            # snapshot and discovering the loss at finalize time.
+            if rank > 1 and (rank - 1) % OWNERSHIP_RECHECK_EVERY == 0:
+                if not self._owns_decision_day(
+                    scope="stock", data_version=data_version, decision_id=decision_id
+                ):
+                    ownership_lost = True
+                    break
             raw_evidence = candidate.get("evidence")
             if isinstance(raw_evidence, list):
                 evidence = [item for item in raw_evidence if isinstance(item, dict)]
@@ -543,16 +654,186 @@ class ControlPlaneService:
                     )
                 )
                 recorded += 1
+        if ownership_lost:
+            result["snapshot_id"] = decision_id
+            result["decision_cutoff"] = cutoff
+            result["forecast_ledger"] = {
+                "status": "ownership_lost",
+                "reason": f"decision_day_reclaimed_by_another_writer:{data_version}",
+                "recorded_count": 0,
+                "orphaned_row_count": recorded,
+                "candidate_count": len(candidates),
+                "data_version": data_version,
+                "horizons": sorted(FORECAST_HORIZONS),
+                "review_only": True,
+            }
+            return result
+
+        if recorded and data_version:
+            published = self._finalize_decision_day(
+                scope="stock",
+                data_version=data_version,
+                decision_id=decision_id,
+                recorded_count=recorded,
+            )
+            if not published:
+                # A successor owns the vintage. The rows written above stay on
+                # disk as audit history, but this snapshot is not the day's
+                # decision and must not be reported as one; canonical selection
+                # prefers the guard-confirmed snapshot, so it will not be picked.
+                result["snapshot_id"] = decision_id
+                result["decision_cutoff"] = cutoff
+                result["forecast_ledger"] = {
+                    "status": "ownership_lost",
+                    "reason": f"decision_day_reclaimed_by_another_writer:{data_version}",
+                    "recorded_count": 0,
+                    "orphaned_row_count": recorded,
+                    "candidate_count": len(candidates),
+                    "data_version": data_version,
+                    "horizons": sorted(FORECAST_HORIZONS),
+                    "review_only": True,
+                }
+                return result
         result["snapshot_id"] = decision_id
         result["decision_cutoff"] = cutoff
         result["forecast_ledger"] = {
             "status": "recorded" if recorded else "empty",
+            "data_version": data_version,
             "recorded_count": recorded,
             "candidate_count": len(candidates),
             "horizons": sorted(FORECAST_HORIZONS),
             "review_only": True,
         }
         return result
+
+    def _claim_decision_day(
+        self,
+        *,
+        scope: str,
+        data_version: str,
+        decision_id: str,
+        candidate_count: int,
+        claimed_at: str,
+        run_kind: str = "manual",
+    ) -> dict[str, Any] | None:
+        """Take ownership of one (scope, bar vintage) or report who already holds it.
+
+        The uniqueness lives in the primary key rather than in a read-then-write
+        check: a check-then-insert lets two concurrent callers both pass, and
+        concurrent callers are ordinary here - a scheduled loop and a manual
+        run-once overlapped while this was being built. BEGIN IMMEDIATE takes the
+        write lock before the SELECT, so the whole claim is one serialized step.
+
+        Returns None when the caller now owns the vintage, or the holding row when
+        it does not.
+
+        Recovery is deliberately conservative. A claim is only taken over once it
+        is both empty AND older than STALE_CLAIM_SECONDS. An empty claim on its
+        own means nothing: the rows are written after the claim commits, so a
+        healthy writer is observably empty for the whole time it is writing, and
+        taking that over would let two callers write the same vintage - the exact
+        duplication this guard exists to stop. The stale window is far longer
+        than a cycle, so only a process that really died is reclaimed.
+        """
+
+        if run_kind != OFFICIAL_RUN_KIND:
+            # Defence in depth. The callers above already route non-scheduled
+            # runs to preview, but this is the only function that can create an
+            # official claim, so it refuses rather than trusting them - and an
+            # omitted run_kind defaults to manual, so forgetting to pass one
+            # fails closed instead of quietly claiming the day.
+            raise ValueError(
+                f"only {OFFICIAL_RUN_KIND!r} runs may claim a decision day; got {run_kind!r}"
+            )
+
+        with self.store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT decision_id, recorded_count, claimed_at "
+                "FROM forecast_decision_days WHERE scope = ? AND data_version = ?",
+                (scope, data_version),
+            ).fetchone()
+            if row is not None:
+                held = {
+                    "decision_id": row["decision_id"],
+                    "recorded_count": int(row["recorded_count"]),
+                }
+                if held["recorded_count"] > 0:
+                    return held
+                if not self._claim_is_stale(row["claimed_at"], claimed_at):
+                    # Empty but recent: a writer is mid-flight. Taking this over
+                    # would put two writers on one vintage.
+                    return held
+            conn.execute(
+                "INSERT INTO forecast_decision_days "
+                "(scope, data_version, decision_id, claimed_at, candidate_count, "
+                " recorded_count, run_kind) "
+                "VALUES (?, ?, ?, ?, ?, 0, ?) "
+                "ON CONFLICT(scope, data_version) DO UPDATE SET "
+                "decision_id = excluded.decision_id, claimed_at = excluded.claimed_at, "
+                "candidate_count = excluded.candidate_count, run_kind = excluded.run_kind",
+                (scope, data_version, decision_id, claimed_at, int(candidate_count), run_kind),
+            )
+            return None
+
+    @staticmethod
+    def _claim_is_stale(claimed_at: Any, now: str) -> bool:
+        """Whether an empty claim is old enough to have been abandoned.
+
+        Anything unparseable is treated as NOT stale. Refusing to reclaim costs
+        one skipped snapshot that the next vintage supersedes; reclaiming a live
+        writer costs a duplicated decision day, which is the failure this whole
+        guard exists to prevent.
+        """
+
+        try:
+            claimed = datetime.fromisoformat(str(claimed_at))
+            current = datetime.fromisoformat(str(now))
+        except (TypeError, ValueError):
+            return False
+        if claimed.tzinfo is None or current.tzinfo is None:
+            return False
+        return (current - claimed).total_seconds() > STALE_CLAIM_SECONDS
+
+    def _owns_decision_day(self, *, scope: str, data_version: str, decision_id: str) -> bool:
+        """Whether this writer still holds the vintage.
+
+        The lease stops an immediate takeover but cannot stop a slow one: a
+        writer that stalls past STALE_CLAIM_SECONDS loses the vintage to a
+        successor and, without this, would happily resume inserting rows and
+        finalize on top of the successor's claim - producing two snapshots for
+        one vintage, the exact outcome the guard exists to prevent.
+        """
+
+        with self.store.connect() as conn:
+            row = conn.execute(
+                "SELECT decision_id FROM forecast_decision_days "
+                "WHERE scope = ? AND data_version = ?",
+                (scope, data_version),
+            ).fetchone()
+        return row is not None and str(row["decision_id"]) == decision_id
+
+    def _finalize_decision_day(
+        self, *, scope: str, data_version: str, decision_id: str, recorded_count: int
+    ) -> bool:
+        """Publish the claim, but only if this writer still owns it.
+
+        decision_id is the ownership token. The UPDATE carries it in the WHERE
+        clause so the check and the write are one atomic statement - testing
+        ownership first and updating afterwards would leave a window in which the
+        vintage changes hands between the two.
+
+        Returns False when ownership was lost; the caller must not report a
+        recorded snapshot.
+        """
+
+        with self.store.connect() as conn:
+            cursor = conn.execute(
+                "UPDATE forecast_decision_days SET recorded_count = ? "
+                "WHERE scope = ? AND data_version = ? AND decision_id = ?",
+                (int(recorded_count), scope, data_version, decision_id),
+            )
+            return cursor.rowcount == 1
 
     @staticmethod
     def _json_safe(value: Any) -> Any:
@@ -811,7 +1092,21 @@ class ControlPlaneService:
             "not_ready",
         }:
             return "partial"
-        if normalized in {"completed", "complete", "ready", "ok", "success", "recorded"}:
+        if normalized in {
+            "completed",
+            "complete",
+            "ready",
+            "ok",
+            "success",
+            "recorded",
+            # An idempotent repeat is a successful no-op: the vintage already
+            # holds its official snapshot, which is the guard working as
+            # designed. Reporting it as "partial" made ~95 of 96 daily cycles
+            # look degraded and would train an operator to ignore the signal.
+            "already_recorded",
+            # Likewise a preview: it was asked not to write, and it did not.
+            "preview_not_recorded",
+        }:
             return "completed"
         return "partial"
 

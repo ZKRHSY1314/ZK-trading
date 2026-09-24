@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import closing
 from datetime import date, datetime, time as datetime_time, timedelta
@@ -424,7 +425,13 @@ def run_once(
         "seed_planned": len(seed_symbols),
         "universe_snapshot_refresh_needed": universe_snapshot_refresh_needed,
         "universe_snapshot_refreshed": False,
+        # source_policy is what was REQUESTED. effective_sources is what actually
+        # served the data, and they are not the same thing: keeping only the
+        # request made a fallback run indistinguishable from a real one.
         "source_policy": source_policy,
+        "effective_sources": {},
+        "tonghuasun_share": None,
+        "fallback_reasons": {},
         "safety": _safety(False),
     }
     if not refresh_symbols and not seed_symbols and not universe_snapshot_refresh_needed:
@@ -462,6 +469,10 @@ def run_once(
 
     errors: list[dict[str, Any]] = []
     refresh_results: dict[str, dict[str, Any]] = {}
+    # What actually served each symbol, and why the plugin did not when it did
+    # not. Requested policy and effective source are different facts.
+    served_by: Counter[str] = Counter()
+    fallback_reasons: Counter[str] = Counter()
     cache_service = DailyBarCacheService(store=SQLiteStore(source_database))
     for offset in range(0, len(refresh_symbols), batch_size):
         if time.monotonic() >= deadline_at:
@@ -488,6 +499,23 @@ def run_once(
                     "error": "refresh_result_missing",
                 }
             refresh_results[symbol] = item
+            # A symbol the plugin refused and Sina then served has
+            # status == "success", so without this the 401 recorded in
+            # "attempts" is dropped and the run renders as an ordinary
+            # Tonghuashun refresh. That is how a 90-minute full-market sweep
+            # ran entirely on Sina/Tencent while reporting success.
+            served_by[str(item.get("source") or "unknown")] += 1
+            if item.get("status") == "success" and not str(
+                item.get("source") or ""
+            ).startswith("tonghuasun"):
+                for attempt in item.get("attempts") or []:
+                    if not isinstance(attempt, dict):
+                        continue
+                    if str(attempt.get("source") or "").startswith("tonghuasun") and attempt.get(
+                        "error"
+                    ):
+                        fallback_reasons[str(attempt.get("error"))[:200]] += 1
+                        break
             if item.get("status") != "success":
                 errors.append(
                     {
@@ -515,6 +543,16 @@ def run_once(
                 ),
             },
         )
+
+    served_total = sum(served_by.values())
+    tonghuasun_served = sum(
+        count for name, count in served_by.items() if name.startswith("tonghuasun")
+    )
+    base["effective_sources"] = dict(served_by)
+    base["tonghuasun_share"] = (
+        round(tonghuasun_served / served_total, 4) if served_total else None
+    )
+    base["fallback_reasons"] = dict(fallback_reasons)
 
     refreshed_cache_dates = _latest_qfq_dates(
         source_database,

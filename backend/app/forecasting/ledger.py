@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from app.forecasting.canonical import canonical_snapshot_cte
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -134,6 +135,11 @@ class ForecastOutcome:
 class MaturedForecast:
     forecast: ForecastDecision
     outcome: ForecastOutcome
+    # How the snapshot this row came from was chosen: "confirmed" (a scheduled
+    # run's guard record vouches for it) or "inferred" (no guard record, picked
+    # by shape alone). Carried so a downstream consumer cannot mistake the
+    # weaker kind for official evidence. None on a raw, non-deduplicated read.
+    selection_kind: str | None = None
 
 
 class ForecastLedger:
@@ -287,7 +293,38 @@ class ForecastLedger:
         scope: str | None = None,
         subject: str | None = None,
         horizon_days: int | None = None,
+        deduplicate: bool = True,
+        include_inferred: bool = False,
     ) -> list[MaturedForecast]:
+        """Matured forecasts from one canonical snapshot per (scope, bar vintage).
+
+        Before the one-snapshot-per-vintage guard existed, a 15-minute control
+        loop re-recorded the same daily candidates every cycle: the ledger holds
+        20,082 rows that reduce to 1,947 distinct observations, and single days
+        carry 10-24x. The same stock at the same horizon on the same bar vintage
+        has one forward return no matter how many times it was written down, so
+        pooling the raw rows weights every statistic - win rate, Rank IC, the
+        scoreboard - by how long the loop happened to be up.
+
+        The duplicates are kept on disk deliberately, as the audit trail of what
+        the system actually did, and excluded here instead.
+
+        A whole snapshot survives or none of it does. A snapshot is a ranked list
+        decided at one instant, so picking survivors per subject would assemble a
+        ranking out of rows from different snapshots - a list that was never
+        decided, whose ranks do not agree with each other.
+
+        Which snapshot survives is decided by app.forecasting.canonical, not
+        here: the guard record rules, and shape is consulted only for legacy
+        vintages that have none.
+
+        Only guard-confirmed snapshots are returned by default. An `inferred`
+        one was chosen by shape alone, so it is weaker evidence and must be asked
+        for: include_inferred=True. Every row carries its selection_kind either
+        way. deduplicate=False is the raw audit path - every row, duplicates and
+        orphans included, with no selection_kind.
+        """
+
         cutoff = _timestamp(as_of)
         conditions = ["o.status = 'matured'", "o.observed_at <= ?"]
         params: list[Any] = [cutoff]
@@ -295,9 +332,7 @@ class ForecastLedger:
             if value is not None:
                 conditions.append(f"d.{column} = ?")
                 params.append(value)
-        rows = self.store.fetch_all(
-            f"""
-            SELECT
+        selection = """
                 d.*,
                 o.observed_at AS outcome_observed_at,
                 o.continuous_return AS outcome_continuous_return,
@@ -307,6 +342,8 @@ class ForecastLedger:
                 o.evidence_json AS outcome_evidence_json,
                 o.status AS outcome_status,
                 o.review_only AS outcome_review_only
+        """
+        joined = f"""
             FROM forecast_decisions d
             JOIN forecast_outcomes o
               ON o.decision_id = d.decision_id
@@ -314,12 +351,40 @@ class ForecastLedger:
              AND o.subject = d.subject
              AND o.horizon_days = d.horizon_days
             WHERE {' AND '.join(conditions)}
-            ORDER BY d.decision_cutoff ASC, d.decision_id, d.scope, d.subject, d.horizon_days
-            """,
-            tuple(params),
+        """
+        raw_ordering = (
+            "ORDER BY d.decision_cutoff ASC, d.decision_id, d.scope, d.subject, d.horizon_days"
         )
+        if deduplicate:
+            # The rule lives in app.forecasting.canonical so the ledger, the
+            # feedback evaluation, calibration and the scoreboard cannot drift
+            # apart on what "one decision" means. The join (not an EXISTS) is
+            # what lets selection_kind travel out with each row.
+            canonical_joined = joined.replace(
+                "FROM forecast_decisions d",
+                """FROM forecast_decisions d
+            JOIN canonical cs
+              ON cs.decision_id = d.decision_id
+             AND cs.scope = d.scope
+             AND cs.data_version = d.data_version""",
+                1,
+            )
+            sql = f"""
+            WITH {canonical_snapshot_cte()}
+            SELECT {selection}, cs.selection_kind AS canonical_selection_kind
+            {canonical_joined}
+              AND (cs.selection_kind = 'confirmed' OR ? = 1)
+            {raw_ordering}
+            """
+            params = [*params, 1 if include_inferred else 0]
+        else:
+            sql = f"SELECT {selection}, NULL AS canonical_selection_kind {joined} {raw_ordering}"
+        rows = self.store.fetch_all(sql, tuple(params))
         return [
             MaturedForecast(
+                selection_kind=(
+                    row["canonical_selection_kind"] if deduplicate else None
+                ),
                 forecast=self._forecast_from_row(row),
                 outcome=ForecastOutcome(
                     decision_id=row["decision_id"],

@@ -712,3 +712,89 @@ def test_worker_heartbeat_exposes_progress_and_partial_retry(tmp_path) -> None:
     assert heartbeat["scan_status"] == "completed"
     assert heartbeat["error_count"] == 1
     assert heartbeat["live_trading_enabled"] is False
+
+
+def test_a_tencent_fallback_is_reported_as_a_fallback_not_as_tonghuashun(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """The requested policy is not the effective source, and the run must say so.
+
+    A symbol the local plugin refused and a fallback then served comes back with
+    status == "success", so the plugin's failure lived only in that item's
+    "attempts" and was dropped for successful symbols. The cycle summary reported
+    the REQUESTED source_policy and nothing else - which is how a 90-minute
+    full-market refresh that never reached Tonghuashun rendered as an ordinary
+    success.
+    """
+
+    source_path = tmp_path / "trading.sqlite3"
+    target_path = tmp_path / "history.sqlite3"
+    manifest_path = tmp_path / "official.json"
+    source = SQLiteStore(source_path)
+    source.init()
+    _seed_runtime_bar(source, "SH600000", "2026-07-14")
+    _write_manifest(manifest_path, ["SH600000"])
+    MarketHistoryStore(target_path).initialize()
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "code": 0,
+                    "data": {
+                        "sh600000": {
+                            "qfqday": [
+                                ["2026-07-15", "10.1", "10.3", "10.4", "10", "1200"],
+                                ["2026-07-16", "10.3", "10.5", "10.6", "10.2", "1300"],
+                            ]
+                        }
+                    },
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(daily_bar_cache, "urlopen", lambda *_a, **_k: _Response())
+
+    # The local plugin refuses, exactly as it did with HTTP 401.
+    def _refuse(*_args, **_kwargs):
+        raise RuntimeError("local Tonghuashun API error [unauthorized]")
+
+    monkeypatch.setattr(
+        daily_bar_cache.TonghuasunMarketDataProvider, "get_daily_bars", _refuse, raising=False
+    )
+
+    def _request(method, url, payload=None, *, timeout=30):
+        if url.endswith("/health"):
+            return {"status": "ok", "live_trading_enabled": False}
+        return {"status": "completed", "scan_id": 44, "selected_count": 0}
+
+    result = market_history_refresh_loop.run_once(
+        "http://127.0.0.1:8000",
+        source_database=source_path,
+        target_database=target_path,
+        universe_manifest_path=manifest_path,
+        days=150,
+        batch_size=200,
+        max_workers=1,
+        seed_batch_size=500,
+        deadline_seconds=900,
+        source_policy="tonghuasun_first",
+        now=datetime(2026, 7, 16, 16, 0, tzinfo=SHANGHAI),
+        trading_dates={date(2026, 7, 14), date(2026, 7, 15), date(2026, 7, 16)},
+        request_fn=_request,
+    )
+
+    # The request is still recorded, but it is no longer the whole story.
+    assert result["source_policy"] == "tonghuasun_first"
+    # What actually served the data.
+    assert result["effective_sources"]
+    assert not any(name.startswith("tonghuasun") for name in result["effective_sources"])
+    assert result["tonghuasun_share"] == 0.0
+    # And why the plugin did not serve it.
+    assert any("unauthorized" in reason for reason in result["fallback_reasons"])

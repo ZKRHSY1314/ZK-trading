@@ -42,7 +42,7 @@ def pytest_sessionfinish(session, exitstatus):
 from app.main import app  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.storage.sqlite_store import SQLiteStore  # noqa: E402
-from app.data.akshare_provider import MarketDataProvider  # noqa: E402
+from app.data.akshare_provider import AkshareProvider, MarketDataProvider  # noqa: E402
 
 
 class MockProvider(MarketDataProvider):
@@ -67,6 +67,32 @@ class MockProvider(MarketDataProvider):
                 "涨跌幅": [1.0, 3.96],
             }
         )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_market_data_network(monkeypatch):
+    """Stop the akshare sources from reaching the internet during tests.
+
+    The default chain attempts akshare before Tencent, and tests only patch
+    daily_bar_cache.urlopen - which the Tencent source uses but the akshare
+    providers do not. So every fallback test was making a real request to a host
+    that is unreachable from here, waiting out the timeout: this one file took
+    54s instead of 4s, and its failures moved around with network timing.
+
+    The chain still ATTEMPTS akshare, because that ordering is what the fallback
+    tests are about; it just fails immediately and identically every time.
+    Tests that want akshare to succeed inject their own provider.
+    """
+
+    def _offline(*_args, **_kwargs):
+        raise RuntimeError("akshare network access is disabled in tests")
+
+    # raising=True on purpose. These two are real methods, so a rename would
+    # otherwise turn this fixture into a silent no-op and quietly hand the whole
+    # suite live network access again - the exact failure it exists to prevent.
+    monkeypatch.setattr(AkshareProvider, "get_daily_bars", _offline)
+    monkeypatch.setattr(AkshareProvider, "get_daily_bars_sina", _offline)
+    yield
 
 
 @pytest.fixture(autouse=True)

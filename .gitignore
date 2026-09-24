@@ -15,6 +15,9 @@ node_modules/
 dist/
 .vite/
 .codegraph/
+.vs/
+.pytest_cache/
+.ruff_cache/
 logs/
 *.log
 @AutomationLog.txt
@@ -39,3 +42,14 @@ temp/
 scratch/
 frontend/scratch/
 frontend/smoke_result.json
+/claude methods/_m2_codex_implementation_20260910/warmup3_capture/
+/claude methods/_m2_codex_implementation_20260910/contract_v2_runs/
+
+# Share research source and review documents; keep generated evidence and datasets local.
+/claude methods/**
+!/claude methods/**/
+!/claude methods/**/*.md
+!/claude methods/**/*.py
+!/claude methods/**/*.ps1
+!/claude methods/**/*.js
+!/claude methods/**/*.mjs

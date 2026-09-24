@@ -1,17 +1,25 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [int]$BackendPort = 8000,
     [int]$FrontendPort = 3000,
     [int]$StartupTimeoutSeconds = 45,
     [ValidateSet(0, 1)]
     [int]$EnableCodexSearch = 1,
-    [string]$TonghuasunProfile = ""
+    [string]$TonghuasunProfile = "",
+    [switch]$CheckOnly
 )
 
 $ErrorActionPreference = "Stop"
 $CodexSearchEnabled = [bool]$EnableCodexSearch
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+if ($CheckOnly) {
+    if ($BackendPort -ne 8000 -or $FrontendPort -ne 3000) {
+        throw 'CheckOnly currently supports only the standard 8000/3000 ports.'
+    }
+    & (Join-Path $PSScriptRoot 'check_stack.ps1')
+    exit $LASTEXITCODE
+}
 $RunScript = Join-Path $PSScriptRoot "run_stack.ps1"
 $StopScript = Join-Path $PSScriptRoot "stop_stack.ps1"
 $PidFile = Join-Path $ProjectRoot "logs\run_stack.pids.json"
@@ -468,7 +476,7 @@ if ($current.healthy) {
     $trackedStartup = Get-Content -LiteralPath $PidFile -Raw -Encoding UTF8 | ConvertFrom-Json
     $tonghuasunConfigurationMatches = (
         $trackedStartup.tonghuasun_readonly.product_home -eq $TonghuasunReadOnly.product_home -and
-        $trackedStartup.tonghuasun_readonly.daily_bar_source_policy -eq "akshare_first" -and
+        $trackedStartup.tonghuasun_readonly.daily_bar_source_policy -eq $TonghuasunReadOnly.daily_bar_source_policy -and
         $trackedStartup.tonghuasun_readonly.live_trading_enabled -eq $false
     )
     [ordered]@{

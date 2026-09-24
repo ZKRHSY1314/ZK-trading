@@ -1,0 +1,33 @@
+# M3-03: Actual cutoff-only individual case review
+
+Task ID: M3-03-CASE-REVIEW-20260910. Owner: the existing Claude project fork. Codex independently accepted M3-02; this is the next bounded task, not a rerun of M3-01/02.
+
+Read `M3_02_CODEX_ACCEPTANCE_20260910.md` (SHA-256 `4c1fcc2376c93c5ebf233b28b1d2f6608108eadadd8754ca30cb3e79124648dd`) and this task fully. The accepted reader manifest is `claude methods/_m3_20260910/claude_02/artifact_manifest.json`, SHA `4aa337d9840c970700bad7f2566af7e7a84a486ec8180c1b0295664bc0662962`.
+
+## Exact input and output boundary
+
+Work in `D:\codex-A股交易`. Only write new files under `claude methods/_m3_20260910/claude_03/`. Preserve all existing code, tests, datasets, SQLite files, M2/M3 outputs, frozen policy and coordination state. Do not dispatch any other agent or task. No network, SQLite connection, capture, client/account/credential access, production promotion, trading, training or M4 work.
+
+The sole case evidence is `claude methods/_m3_20260910/codex/case_review_bundle_01/`: read README, index and all 32 `cases/C001.json` through `C032.json`, and all eight diagnostics. The bundle's `manifest.json` SHA is `fa234fded7e448f1d8313ee26f43f1e81902e9294426faf1dc2164747ac887fc`; index SHA `77e29df61a9ffa85379a1505a9f1065574968255ff30249dab4d97b99dcb8fec`. Check every input file hash against the manifest before use. Each case embeds its three prefix cores, representative core and all selected control cores. Origin paths are provenance metadata only: do not open full chronological files, full episode inventories or episode_audit files for case judgment. Do not inspect Codex's individual reviews. No later outcomes or later phase endpoints are review inputs.
+
+You may read the accepted `backend/app/research/m3_labels.py` (SHA `e20eb21cdea032ced319a8f45a34cdeb03fd4d8b357ac31403306fa73b225393`), M3-01-R3 policy/documentation, `policy_freeze.json`, and `codex/CASE_REVIEW_RUBRIC.md` to interpret frozen rules. Policy hash remains `d436ba1402f9d0b53e1008c2a2bd50678a457c3e050561a59ded30dbbd21c025`.
+
+## Actual review required
+
+Individually inspect all 32 cases and every one of the 127 selected control uses. Scripts may display evidence, verify hashes/arithmetic and serialize your authored judgments, but must not produce template positive verdicts from generated labels. Record your actual case-specific reasoning with numeric evidence, material counterevidence and an explicit verdict. Neither an automated replay nor two reviewer names proves actual review. Identify yourself accurately as a Claude agent reviewer; do not create Codex reviews or describe agent reviews as human review.
+
+For each C case: assess the three consecutive prefix dates and their observable phase; representative-date selection eligibility; threshold margins and competing phase signals; actual observed/suspended state and warmup; benchmark/regime/liquidity and cohort coverage; source/as-of/provenance/adjustment/unit evidence; unknown ST, float shares, turnover and corporate actions; signal eligibility versus execution eligibility. Positive means support for the frozen observable accumulation-proxy episode only, not knowledge of hidden actors, future gains or suitability for trading. Preserve ambiguity or rejection when the evidence warrants it.
+
+For each selected control, give an individually authored short assessment identifying symbol/date/core hash, frozen non-candidate reason with specific metrics, matching regime/liquidity/date/cutoff and same-policy eligibility, and relevant uncertainty. Do not remove/reselect controls or weaken rules to retain a case. State whether the fixed control set is admissible; materially invalid/ambiguous controls must affect the overall case disposition and final counting eligibility. Same-day matched controls do not establish causal identification.
+
+For D001-D008, assess the named diagnostic semantics from its current core: markup, distribution, failed markup, insufficient warmup, suspension, known cash-action gate, signal-versus-fill distinction, and scoped BJ unit exception. These are single-record diagnostics and never count as positive episodes. No position is declared, so no_trade is not an observed stop/exit result.
+
+## Deliverables
+
+1. `reviews/C001.json` ... `C032.json`, with case_id, exact input file/packet/core/policy/prefix hashes, reviewer_id, reviewer_kind=agent, actual timezone-aware reviewed_at, verdict (`positive`, `negative`, `ambiguous`, `failed`, or `reject_data`), case-specific supporting_evidence, contradicting_evidence, limitations, individual control_reviews, control_set_admissible, and execution_ref identifying this actual task execution. Include a raw review object compatible with `ReviewRecord` if useful, but do not mutate input cores or invent a second reviewer. The representative core's own episode_id is the review's case_episode_id; the prefix hash separately binds the reviewed three-session episode prefix. Preserve revisions with explicit supersession and reasons.
+2. `diagnostics/D001.json` ... `D008.json` with specific reasoning and bindings, explicitly excluded from positive counts.
+3. `REVIEW_REPORT.md` explaining the actual reviewer execution, per-case verdicts, diagnostic findings, limitations, control issues and any uncertainty. All 32 are potential candidates; none is pre-approved. The full frozen inventory supports at most 32 matched episodes/23 dependence groups, below the original 50-positive target. Never fabricate or tune to meet the target. Do not call M3 complete or training-ready.
+4. Reproducible validation script and executed receipt verifying all input pins preserved, exact 32/8 coverage, all 127 control uses, complete case/prefix bindings, non-synthetic agent identities, review timestamps, allowed verdicts and no missing reasoning. Distinguish validation from the individual reviews themselves. Include actual execution evidence describing which input evidence was inspected; no claimed actions without evidence.
+5. `artifact_manifest.json` with file paths, byte sizes and SHA-256 for all written outputs and all consumed sources. Retain original authored notes and revisions. Finish with `ready_for_review`, exact manifest hash and concise counts; then stop. Codex will independently review the same inputs, reconcile preserved opinions and assemble the canonical final ledger.
+
+Maintain `review_only=true`, `live_trading_enabled=false`, `strict_pit=false`, `training_eligible=false`. Capture dates in 2026 cannot prove historical availability. M3-01/02 are accepted and must remain unchanged. Execute this one bounded task now.

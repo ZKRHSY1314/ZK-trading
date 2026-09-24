@@ -1,6 +1,38 @@
 import json
+from datetime import date
 
 from app.diagnostics.data_freshness import DataFreshnessDiagnosticsService
+
+
+def test_empty_cache_without_candidates_does_not_report_ready(test_db):
+    with test_db.connect() as conn:
+        conn.execute('DELETE FROM daily_bar_cache')
+        conn.execute('DELETE FROM candidate_scores')
+    before = test_db.db_path.read_bytes()
+    result = DataFreshnessDiagnosticsService(store=test_db).daily_bar_refresh_preflight()
+    assert result['status'] == 'refresh_recommended'
+    assert result['missing_global_history'] is True
+    assert result['row_count'] == 0
+    assert test_db.db_path.read_bytes() == before
+
+
+def test_invalid_and_future_dates_cannot_hide_real_cache_age(test_db):
+    with test_db.connect() as conn:
+        conn.execute('DELETE FROM daily_bar_cache')
+        conn.execute('DELETE FROM candidate_scores')
+        for value in ('ERROR', '2026-02-30', '2099-01-01', '20260911', '2026-99-01'):
+            _insert_bar(conn, 'SYN_A', value, 10)
+        _insert_bar(conn, 'SYN_A', '2020-01-02', 10)
+        _insert_bar(conn, 'SYN_B', date.today().isoformat(), 10)
+        conn.execute("INSERT INTO candidate_scores(symbol,total_score,source) VALUES ('SYN_A',90,'fixture')")
+    before = test_db.db_path.read_bytes()
+    service = DataFreshnessDiagnosticsService(store=test_db)
+    result = service.daily_bar_refresh_preflight(max_lag_days=1)
+    assert result['latest_trade_date'] == date.today().isoformat()
+    assert result['row_count'] == 2
+    assert result['stale_candidate_count'] == 1
+    assert result['sample_stale_candidates'][0]['latest_trade_date'] == '2020-01-02'
+    assert test_db.db_path.read_bytes() == before
 
 
 def _insert_bar(conn, symbol: str, trade_date: str, close: float) -> None:

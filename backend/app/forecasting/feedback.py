@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, time, timedelta, timezone
 import json
 import math
@@ -14,6 +14,7 @@ from app.forecasting.ledger import (
     ForecastOutcome,
 )
 from app.market_intelligence import SectorExposureResolver
+from app.forecasting.canonical import CANONICAL_POLICY_VERSION, canonical_snapshot_cte
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -54,6 +55,33 @@ def _round(value: float | None) -> float | None:
     return None if value is None else round(float(value), 8)
 
 
+def _roll_up_status(statuses) -> str:
+    """degraded > ready > insufficient_data.
+
+    A container is only as trustworthy as its weakest included child: if any
+    child rests on inferred evidence the whole result is degraded, and reporting
+    "ready" because some other child happened to qualify would hide exactly the
+    thing the caller needs to see.
+    """
+
+    seen = {str(status) for status in statuses}
+    if "degraded" in seen:
+        return "degraded"
+    if "ready" in seen:
+        return "ready"
+    return "insufficient_data"
+
+
+def _roll_up_evidence(qualities) -> str:
+    """exploratory wins: one inferred child taints the aggregate."""
+
+    return (
+        "exploratory"
+        if any(str(quality) == "exploratory" for quality in qualities)
+        else "official"
+    )
+
+
 class ForecastFeedback:
     """Mature stock and sector forecasts and evaluate immutable decisions."""
 
@@ -68,7 +96,17 @@ class ForecastFeedback:
         as_of: str | datetime,
         *,
         limit: int = 1000,
+        include_inferred: bool = False,
     ) -> dict[str, Any]:
+        """Persist matured outcomes for canonical, guard-confirmed snapshots.
+
+        This WRITES, so its default is the strict one. An orphaned snapshot, a
+        duplicate, or one whose claim is still open must never receive an
+        official outcome label - once written, those rows look exactly like real
+        evidence. include_inferred=True is for exploratory backfill of legacy
+        vintages that predate the guard.
+        """
+
         cutoff = _datetime(as_of)
         normalized_cutoff = cutoff.isoformat().replace("+00:00", "Z")
         safe_limit = max(1, min(int(limit), 10_000))
@@ -92,6 +130,7 @@ class ForecastFeedback:
                 cutoff=normalized_cutoff,
                 scan_limit=scan_limit,
                 rotation_bucket=int(cutoff.timestamp() // 300),
+                include_inferred=include_inferred,
             )
             scope_result["backlog_count"] = backlog_count
             scope_result["scan_offset"] = scan_offset
@@ -100,13 +139,15 @@ class ForecastFeedback:
             for row in rows:
                 forecast = self._forecast(row)
                 outcome, reason = self._label(forecast, cutoff, lookup=lookup)
-                evaluated.append((forecast, outcome, reason))
+                evaluated.append(
+                    (forecast, outcome, reason, str(row["selection_kind"]))
+                )
             ready = [item for item in evaluated if item[1] is not None]
             waiting = [item for item in evaluated if item[1] is None]
             selected = ready[:safe_limit]
             selected.extend(waiting[: max(0, safe_limit - len(selected))])
             scope_result["eligible_count"] = len(selected)
-            for forecast, outcome, reason in selected:
+            for forecast, outcome, reason, selection_kind in selected:
                 if outcome is None:
                     pending_details = reason if isinstance(reason, dict) else {}
                     scope_result["pending"].append(
@@ -114,6 +155,7 @@ class ForecastFeedback:
                             "decision_id": forecast.decision_id,
                             "subject": forecast.subject,
                             "horizon_days": forecast.horizon_days,
+                            "selection_kind": selection_kind,
                             "reason": pending_details.get("reason", reason),
                             **{
                                 key: value
@@ -123,6 +165,19 @@ class ForecastFeedback:
                         }
                     )
                     continue
+                # Provenance is written INTO the outcome, not just reported.
+                # Once persisted an exploratory label is indistinguishable from
+                # an official one unless the row itself carries how its snapshot
+                # was chosen - and the canonical query cannot answer that later,
+                # because a vintage's classification can change as claims land.
+                outcome = replace(
+                    outcome,
+                    evidence={
+                        **(outcome.evidence or {}),
+                        "canonical_selection_kind": selection_kind,
+                        "canonical_policy_version": CANONICAL_POLICY_VERSION,
+                    },
+                )
                 persisted = self.ledger.record_outcome(outcome)
                 scope_result["labelled"].append(
                     {
@@ -130,9 +185,20 @@ class ForecastFeedback:
                         "subject": persisted.subject,
                         "horizon_days": persisted.horizon_days,
                         "observed_at": persisted.observed_at,
+                        "selection_kind": selection_kind,
                     }
                 )
         for scope_result in by_scope.values():
+            kinds = [item.get("selection_kind") for item in scope_result["labelled"]]
+            scope_result["confirmed_labelled_count"] = sum(
+                1 for kind in kinds if kind == "confirmed"
+            )
+            scope_result["inferred_labelled_count"] = sum(
+                1 for kind in kinds if kind == "inferred"
+            )
+            scope_result["evidence_quality"] = (
+                "exploratory" if scope_result["inferred_labelled_count"] else "official"
+            )
             scope_result["labelled_count"] = len(scope_result["labelled"])
             scope_result["pending_count"] = len(scope_result["pending"])
         stock_result = by_scope["stock"]
@@ -148,6 +214,16 @@ class ForecastFeedback:
             "labelled": stock_result["labelled"],
             "pending": stock_result["pending"],
             "total_eligible_count": sum(result["eligible_count"] for result in by_scope.values()),
+            "canonical_policy_version": CANONICAL_POLICY_VERSION,
+            "evidence_quality": _roll_up_evidence(
+                result.get("evidence_quality") for result in by_scope.values()
+            ),
+            "confirmed_labelled_count": sum(
+                result["confirmed_labelled_count"] for result in by_scope.values()
+            ),
+            "inferred_labelled_count": sum(
+                result["inferred_labelled_count"] for result in by_scope.values()
+            ),
             "total_labelled_count": sum(result["labelled_count"] for result in by_scope.values()),
             "total_pending_count": sum(result["pending_count"] for result in by_scope.values()),
             "by_scope": by_scope,
@@ -164,9 +240,19 @@ class ForecastFeedback:
         cutoff: str,
         scan_limit: int,
         rotation_bucket: int,
+        include_inferred: bool = False,
     ) -> tuple[list[dict[str, Any]], int, int]:
+        # Labelling writes outcomes, so it must not touch duplicate, orphaned or
+        # still-open snapshots. Without the canonical join it scanned raw
+        # forecast_decisions: the production ledger has 1,350 unlabelled rows
+        # across nine snapshots for a single vintage, so this would have written
+        # official outcomes for eight snapshots that are not the day's decision.
         filters = """
             FROM forecast_decisions d
+            JOIN canonical cs
+              ON cs.decision_id = d.decision_id
+             AND cs.scope = d.scope
+             AND cs.data_version = d.data_version
             LEFT JOIN forecast_outcomes o
               ON o.decision_id = d.decision_id
              AND o.scope = d.scope
@@ -177,10 +263,12 @@ class ForecastFeedback:
               AND o.id IS NULL
               AND d.decision_cutoff <= ?
               AND d.available_at <= ?
+              AND (cs.selection_kind = 'confirmed' OR ? = 1)
         """
+        inferred_flag = 1 if include_inferred else 0
         count_row = self.store.fetch_one(
-            f"SELECT COUNT(*) AS count {filters}",
-            (scope, cutoff, cutoff),
+            f"WITH {canonical_snapshot_cte()} SELECT COUNT(*) AS count {filters}",
+            (scope, cutoff, cutoff, inferred_flag),
         )
         backlog_count = int((count_row or {}).get("count") or 0)
         if backlog_count == 0:
@@ -193,8 +281,9 @@ class ForecastFeedback:
 
         def fetch(*, limit: int, query_offset: int) -> list[dict[str, Any]]:
             return self.store.fetch_all(
-                f"SELECT d.* {filters} {order} LIMIT ? OFFSET ?",
-                (scope, cutoff, cutoff, limit, query_offset),
+                f"WITH {canonical_snapshot_cte()} "
+                f"SELECT d.*, cs.selection_kind {filters} {order} LIMIT ? OFFSET ?",
+                (scope, cutoff, cutoff, inferred_flag, limit, query_offset),
             )
 
         rows = fetch(limit=scan_limit, query_offset=offset)
@@ -210,7 +299,21 @@ class ForecastFeedback:
         k: int = 5,
         min_samples: int = 20,
         min_folds: int = 3,
+        include_inferred: bool = False,
     ) -> dict[str, Any]:
+        """Evaluate forecast quality over canonical snapshots only.
+
+        include_inferred is False by default and that default is the point. An
+        `inferred` snapshot is one with no guard record, chosen by shape alone -
+        if a single upstream failure truncated every snapshot of a vintage, the
+        largest is still incomplete while looking complete beside its siblings.
+        The production ledger is currently 1 confirmed against 29 inferred, so
+        pooling them silently would let weak evidence dominate every number.
+
+        Turning it on marks the whole evaluation `exploratory`; it never
+        produces an official metric.
+        """
+
         cutoff = _datetime(as_of)
         safe_k = max(1, min(int(k), 100))
         safe_min_samples = max(1, int(min_samples))
@@ -225,14 +328,18 @@ class ForecastFeedback:
                     k=safe_k,
                     min_samples=safe_min_samples,
                     min_folds=safe_min_folds,
+                    include_inferred=include_inferred,
                 )
                 for horizon in sorted(FORECAST_HORIZONS)
             ]
             by_scope[scope] = {
-                "status": (
-                    "ready"
-                    if any(row["status"] == "ready" for row in scope_horizons)
-                    else "insufficient_data"
+                # degraded outranks ready, which outranks insufficient_data. A
+                # scope holding even one exploratory child is not a finished
+                # result, and previously the roll-up only recognised "ready" so
+                # a degraded child silently disappeared into the aggregate.
+                "status": _roll_up_status(row["status"] for row in scope_horizons),
+                "evidence_quality": _roll_up_evidence(
+                    row.get("evidence_quality") for row in scope_horizons
                 ),
                 "target": self._evaluation_target(scope),
                 "horizons": scope_horizons,
@@ -241,9 +348,11 @@ class ForecastFeedback:
         # aggregated sector metrics under by_scope.
         horizons = by_scope["stock"]["horizons"]
         return {
-            "status": "ready"
-            if any(result["status"] == "ready" for result in by_scope.values())
-            else "insufficient_data",
+            "status": _roll_up_status(result["status"] for result in by_scope.values()),
+            "evidence_quality": _roll_up_evidence(
+                result.get("evidence_quality") for result in by_scope.values()
+            ),
+            "canonical_policy_version": CANONICAL_POLICY_VERSION,
             "schema_version": "forecast_feedback_evaluation.v1",
             "as_of": cutoff.isoformat().replace("+00:00", "Z"),
             "horizon_days": sorted(FORECAST_HORIZONS),
@@ -835,18 +944,37 @@ class ForecastFeedback:
         k: int,
         min_samples: int,
         min_folds: int,
+        include_inferred: bool = False,
     ) -> dict[str, Any]:
         cutoff = as_of.isoformat().replace("+00:00", "Z")
+        # Each decision_id below becomes a fold, so a re-recorded snapshot does
+        # not just inflate the sample - it inflates the fold count, which is
+        # exactly what makes a Rank IC look statistically stable. Six trading
+        # days of decisions were being reported as 121 folds because a
+        # 15-minute loop re-froze the same candidates all day.
+        #
+        # One whole snapshot per vintage survives, not one row per subject: a
+        # snapshot is a ranked list decided at one instant, and mixing rows from
+        # different snapshots would build a ranking that was never decided.
+        # Which snapshot is canonical is decided by app.forecasting.canonical,
+        # shared with the ledger and calibration so the three cannot disagree.
+        # The duplicates stay on disk as the audit trail and are excluded on read.
         rows = self.store.fetch_all(
-            """
+            f"""
+            WITH {canonical_snapshot_cte()}
             SELECT
                 d.decision_id, d.subject, d.rank, d.score, d.probability,
                 d.features_json,
+                cs.selection_kind,
                 o.id AS outcome_id,
                 o.continuous_return,
                 o.benchmark_neutral_return,
                 o.observed_at
             FROM forecast_decisions d
+            JOIN canonical cs
+              ON cs.decision_id = d.decision_id
+             AND cs.scope = d.scope
+             AND cs.data_version = d.data_version
             LEFT JOIN forecast_outcomes o
               ON o.decision_id = d.decision_id
              AND o.scope = d.scope
@@ -858,9 +986,10 @@ class ForecastFeedback:
               AND d.horizon_days = ?
               AND d.decision_cutoff <= ?
               AND d.available_at <= ?
+              AND (cs.selection_kind = 'confirmed' OR ? = 1)
             ORDER BY d.decision_id, d.rank IS NULL, d.rank, d.subject
             """,
-            (cutoff, scope, horizon_days, cutoff, cutoff),
+            (cutoff, scope, horizon_days, cutoff, cutoff, 1 if include_inferred else 0),
         )
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in rows:
@@ -966,8 +1095,43 @@ class ForecastFeedback:
             insufficient_reasons.append(f"fold_count_below_{min_folds}")
         if all(metric is None for metric in (precision_at_k, spearman_rank_ic, brier_score)):
             insufficient_reasons.append("no_available_evaluation_metric")
+        # Evidence provenance travels with the numbers. Without this a caller
+        # cannot tell an official metric from one resting on snapshots that were
+        # chosen by shape alone, and 29 of the 30 canonical snapshots in the
+        # production ledger are of the weaker kind.
+        confirmed_folds = sorted(
+            {
+                str(row["decision_id"])
+                for row in rows
+                if str(row["selection_kind"]) == "confirmed"
+            }
+        )
+        inferred_folds = sorted(
+            {
+                str(row["decision_id"])
+                for row in rows
+                if str(row["selection_kind"]) == "inferred"
+            }
+        )
+        inferred_samples = sum(
+            1
+            for row in rows
+            if str(row["selection_kind"]) == "inferred" and row.get("outcome_id") is not None
+        )
+        evidence_quality = "exploratory" if inferred_folds else "official"
+        status = "insufficient_data" if insufficient_reasons else "ready"
+        if evidence_quality == "exploratory" and status == "ready":
+            # Never let an exploratory run read as a finished result.
+            status = "degraded"
+
         return {
-            "status": "insufficient_data" if insufficient_reasons else "ready",
+            "status": status,
+            "evidence_quality": evidence_quality,
+            "canonical_policy_version": CANONICAL_POLICY_VERSION,
+            "confirmed_fold_count": len(confirmed_folds),
+            "inferred_fold_count": len(inferred_folds),
+            "confirmed_sample_count": sample_count - inferred_samples,
+            "inferred_sample_count": inferred_samples,
             "scope": scope,
             "horizon_days": horizon_days,
             "target": self._evaluation_target(scope),

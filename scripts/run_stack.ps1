@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [int]$BackendPort = 8000,
     [int]$FrontendPort = 3000,
@@ -43,7 +43,7 @@ $CodexPulseReasoningEffort = "medium"
 . (Join-Path $PSScriptRoot "tonghuasun_readonly.ps1")
 $TonghuasunReadOnly = Get-TonghuasunReadOnlyContext -ProfilePath $TonghuasunProfile
 if ($TonghuasunReadOnly.host_status -eq "not_running") {
-    Write-Warning "Tonghuashun is not running. The stack keeps akshare_first; start the client explicitly with scripts\start_tonghuasun_readonly.ps1 when needed."
+    Write-Warning "Tonghuashun is not running. Market data will fall back to Sina/Tencent and every refresh will be labelled as a fallback, not as a Tonghuashun refresh. Start the client with scripts\start_tonghuasun_readonly.ps1 and sign in before running market-data work."
 }
 
 function Assert-FileExists {
@@ -328,7 +328,12 @@ $priorTonghuasunDirectory = [Environment]::GetEnvironmentVariable("TONGHUASUN_AG
 $priorDailyBarPolicy = [Environment]::GetEnvironmentVariable("DAILY_BAR_SOURCE_POLICY", "Process")
 try {
     $env:TONGHUASUN_AGENT_HOME = $TonghuasunReadOnly.product_home
-    $env:DAILY_BAR_SOURCE_POLICY = "akshare_first"
+    # The policy is NOT overridden here. It comes from the profile and
+    # backend/app/config.py, both of which say tonghuasun_first. Forcing
+    # akshare_first at launch demoted the plugin before it was ever tried, so a
+    # full-market refresh ran entirely on Sina and Tencent and still read as an
+    # ordinary success. Fallbacks remain inside the tonghuasun_first chain.
+    $env:DAILY_BAR_SOURCE_POLICY = $TonghuasunReadOnly.daily_bar_source_policy
     $backendArgs = @(
         "-X", "utf8", "-m", "uvicorn", "app.main:app",
         "--host", "127.0.0.1", "--port", [string]$BackendPort

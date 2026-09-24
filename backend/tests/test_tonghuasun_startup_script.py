@@ -69,7 +69,7 @@ def _fixture_script(changes: str = "", *, launch: bool = False) -> str:
 $script:FixtureProfile = @{
     SchemaVersion = 1; ProductHome = 'C:\TonghuasunFixture';
     ExecutablePath = 'C:\TonghuasunFixture\bin\happ.exe';
-    DailyBarSourcePolicy = 'akshare_first'
+    DailyBarSourcePolicy = 'tonghuasun_first'
 }
 $script:FixtureConfig = [pscustomobject]@{
     enableTradeTools = $false; enableAutomatedTradeApi = $false;
@@ -143,7 +143,7 @@ def test_readonly_profile_accepts_matching_host_without_starting_or_fetching():
     assert result["context"]["market_data_verified"] is False
     assert result["context"]["market_data_only"] is True
     assert result["context"]["live_trading_enabled"] is False
-    assert result["context"]["daily_bar_source_policy"] == "akshare_first"
+    assert result["context"]["daily_bar_source_policy"] == "tonghuasun_first"
     assert "SYNTHETIC-SECRET" not in json.dumps(result)
 
 
@@ -163,7 +163,9 @@ def test_readonly_profile_accepts_matching_host_without_starting_or_fetching():
         ("$script:FixtureEndpoint.startedAtUtc = '2026-09-02T07:50:20Z'", "does not match"),
         ("$script:FixtureHosts[0].ExecutablePath = 'C:\\Other\\happ.exe'", "different or ambiguous"),
         ("$script:MissingPath = 'C:\\TonghuasunFixture\\runtime\\endpoint.json'", "without endpoint evidence"),
-        ("$script:FixtureProfile.DailyBarSourcePolicy = 'tonghuasun_first'", "akshare_first"),
+        # The launcher must refuse a profile that demotes the local plugin: doing
+        # so silently sent a whole full-market refresh to Sina and Tencent.
+        ("$script:FixtureProfile.DailyBarSourcePolicy = 'akshare_first'", "tonghuasun_first"),
     ],
 )
 def test_unsafe_or_unverified_startup_fails_closed(changes: str, message: str):

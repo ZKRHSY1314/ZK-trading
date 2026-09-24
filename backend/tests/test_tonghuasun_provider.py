@@ -20,6 +20,7 @@ from app.data.tonghuasun_provider import (
     _trade_date,
     tonghuasun_full_code,
 )
+from app.config import settings
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -133,12 +134,20 @@ def test_status_endpoint_is_market_only_and_does_not_require_the_plugin(
     monkeypatch.delenv("TONGHUASUN_AGENT_HOME", raising=False)
     monkeypatch.delenv("TONGHUASUN_CODEX_HOME", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    # The endpoint now resolves the CONFIGURED home, the same one refreshes read
+    # from - previously it took whatever the environment offered, so it could
+    # report on a different plugin install than the one serving data. Clear it
+    # too, or this developer machine's real install leaks into the fixture.
+    monkeypatch.setattr(settings, "tonghuasun_product_home", "")
 
     response = client.get("/api/data/tonghuasun/status")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "not_configured"
+    # A configured plugin is still not proof that market data works; only the
+    # preflight's real candle answers that.
+    assert payload["market_data_verified"] is False
     assert payload["market_data_only"] is True
     assert payload["loopback_only"] is True
     assert payload["live_trading_enabled"] is False
@@ -213,10 +222,9 @@ def test_daily_candles_use_only_the_read_only_market_endpoint() -> None:
     headers = {key.lower(): value for key, value in request.header_items()}
     assert headers["x-tonghuasun-codex-token"] == "local-secret"
     payload = json.loads(request.data)
-    assert payload["codes"] == ["600000.SH"]
+    assert "codes" not in payload
     assert payload["security"] == {
         "market": 1,
-        "code": "600000",
         "fullCode": "600000.SH",
     }
     assert payload["period"] == 7

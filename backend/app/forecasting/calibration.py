@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from app.config import settings
+from app.forecasting.canonical import CANONICAL_POLICY_VERSION
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -43,7 +44,21 @@ class ForecastCalibrationService:
                     metrics=metrics,
                 )
                 snapshots.append(snapshot)
-                if metrics.get("status") == "ready":
+                # A proposal is a recommendation to change behaviour, so it may
+                # only rest on evidence whose provenance is positively known.
+                #
+                # Both checks fail closed. Defaulting evidence_quality to
+                # "official" would have let metrics from a caller that predates
+                # the provenance fields - or one that simply omitted them -
+                # produce a proposal, and an absent field is not a statement of
+                # quality. The policy version must match the one running now,
+                # because metrics computed under a different canonical policy
+                # describe a different sample.
+                if (
+                    metrics.get("status") == "ready"
+                    and metrics.get("evidence_quality") == "official"
+                    and metrics.get("canonical_policy_version") == CANONICAL_POLICY_VERSION
+                ):
                     proposals.append(
                         self._upsert_proposal(
                             evaluation_id=snapshot["evaluation_id"],
@@ -75,8 +90,27 @@ class ForecastCalibrationService:
         metrics: dict[str, Any],
     ) -> dict[str, Any]:
         horizon_days = int(metrics["horizon_days"])
+        # The version recorded is the one the METRICS carry, never the module
+        # constant. Stamping the running policy onto metrics that did not state
+        # one would relabel unknown provenance as "produced by the current
+        # policy" - the same failure as defaulting evidence_quality to official,
+        # and undetectable afterwards. Absent provenance stays NULL.
+        supplied_policy_version = metrics.get("canonical_policy_version")
+        policy_version = (
+            str(supplied_policy_version) if supplied_policy_version else None
+        )
+
+        # The policy version is part of the identity, not just a column. Two
+        # policies can produce byte-identical metrics on the same data, and
+        # INSERT OR IGNORE would then keep the first row - leaving a result
+        # stamped with a policy that did not produce it, and no way to tell.
         canonical = json.dumps(
-            {"scope": scope, "horizon_days": horizon_days, "metrics": metrics},
+            {
+                "scope": scope,
+                "horizon_days": horizon_days,
+                "metrics": metrics,
+                "canonical_policy_version": policy_version,
+            },
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -91,8 +125,9 @@ class ForecastCalibrationService:
                 INSERT OR IGNORE INTO forecast_evaluations(
                     evaluation_id, as_of, scope, horizon_days, status,
                     sample_count, fold_count, coverage, precision_at_k,
-                    spearman_rank_ic, brier_score, metrics_json, review_only
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    spearman_rank_ic, brier_score, metrics_json,
+                    canonical_policy_version, review_only
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 """,
                 (
                     evaluation_id,
@@ -107,6 +142,10 @@ class ForecastCalibrationService:
                     metrics.get("spearman_rank_ic"),
                     metrics.get("brier_score"),
                     canonical,
+                    # NULL when the metrics stated no provenance, which is how
+                    # rows that cannot be attributed to a canonical policy stay
+                    # identifiable - by provenance rather than by their date.
+                    policy_version,
                 ),
             )
             inserted = cursor.rowcount == 1

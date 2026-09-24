@@ -1484,6 +1484,43 @@ CREATE INDEX IF NOT EXISTS idx_forecast_decisions_available
 CREATE INDEX IF NOT EXISTS idx_forecast_decisions_evaluation
     ON forecast_decisions(scope, horizon_days, decision_cutoff, decision_id);
 
+-- One frozen decision snapshot per (scope, bar vintage). The primary key IS the
+-- guard: two cycles racing on the same vintage cannot both claim it, which a
+-- read-then-write check in application code cannot promise. Concurrent callers
+-- are ordinary here - a scheduled loop and a manual run-once overlapped while
+-- this was being built - and the endpoint is reachable by anything that can
+-- POST to it.
+-- Keyed on the bar vintage rather than the wall clock because a decision is an
+-- artifact of the data it was derived from: on a weekend or holiday the vintage
+-- does not advance, so the day stays claimed and no empty snapshot is minted.
+CREATE TABLE IF NOT EXISTS forecast_decision_days (
+    scope TEXT NOT NULL CHECK(scope IN ('sector', 'stock', 'system')),
+    data_version TEXT NOT NULL,
+    decision_id TEXT NOT NULL,
+    claimed_at TEXT NOT NULL,
+    candidate_count INTEGER NOT NULL,
+    recorded_count INTEGER NOT NULL,
+    -- Only a scheduled run ever reaches this table. Manual, replay and
+    -- challenger runs are previews: they compute candidates and return them
+    -- without claiming or recording anything, so they never occupy a vintage.
+    -- (The claim is keyed on (scope, data_version), so an ad-hoc run holding it
+    -- would leave the real scheduled run unable to record that day at all.)
+    -- 'manual', 'replay' and 'challenger' therefore remain valid values only so
+    -- the column can describe a row should those runs ever gain their own
+    -- storage; nothing writes them today.
+    --
+    -- 'legacy_unknown' marks claims written before this column existed: their
+    -- provenance is not knowable after the fact, so they are never promoted to
+    -- official.
+    --
+    -- No DEFAULT on purpose: every new claim must state its provenance. A
+    -- default of 'scheduled' would let an unstated writer mint an official
+    -- snapshot, which is the whole failure this column exists to prevent.
+    run_kind TEXT NOT NULL
+        CHECK(run_kind IN ('scheduled', 'manual', 'replay', 'challenger', 'legacy_unknown')),
+    PRIMARY KEY (scope, data_version)
+);
+
 CREATE TABLE IF NOT EXISTS forecast_outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     decision_id TEXT NOT NULL,
@@ -1526,6 +1563,11 @@ CREATE TABLE IF NOT EXISTS forecast_evaluations (
     spearman_rank_ic REAL,
     brier_score REAL,
     metrics_json TEXT NOT NULL,
+    -- Which canonical-snapshot policy produced this row. NULL marks the rows
+    -- written before the policy existed, whose sample and fold counts were
+    -- inflated by re-recorded snapshots; they stay as audit history and are
+    -- told apart from new results by this column rather than by their date.
+    canonical_policy_version TEXT,
     review_only INTEGER NOT NULL DEFAULT 1 CHECK(review_only = 1),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -1758,6 +1800,95 @@ KNOWLEDGE_TABLES = [
 ]
 
 
+def _column_names(conn, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_decision_day_run_kind(conn) -> None:
+    """Add run_kind to forecast_decision_days as one all-or-nothing rebuild.
+
+    Two things ALTER TABLE ADD COLUMN cannot do, and both matter:
+
+    1. It cannot attach a CHECK, so an upgraded database would accept values a
+       freshly created one rejects. The table is rebuilt instead, which is the
+       only way the two schemas end up identical.
+    2. Its DEFAULT would be applied to existing rows. Those claims predate the
+       column, so their provenance is unknowable - the production database holds
+       one written during a manual run. Defaulting them to 'scheduled' would
+       silently promote a manual snapshot to the official daily decision.
+       They become 'legacy_unknown', which the canonical policy never treats as
+       official.
+
+    The rebuild is CREATE -> INSERT -> DROP -> RENAME, and a failure between the
+    DROP and the RENAME would leave the database with no forecast_decision_days
+    at all. So it runs inside one explicit transaction and is rolled back whole.
+    executescript() is deliberately NOT used: it commits any pending transaction
+    before running, which would defeat exactly this protection.
+
+    BEGIN IMMEDIATE is taken BEFORE the schema is inspected, and the inspection
+    is repeated under that lock, so two initializers racing on one file cannot
+    both decide to rebuild.
+    """
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # Re-checked under the write lock, not before it.
+        if "run_kind" in _column_names(conn, "forecast_decision_days"):
+            conn.execute("COMMIT")
+            return
+
+        # A previous crash cannot leave a half-built table behind to collide.
+        conn.execute("DROP TABLE IF EXISTS forecast_decision_days__migrated")
+        conn.execute(
+            """
+            CREATE TABLE forecast_decision_days__migrated (
+                scope TEXT NOT NULL CHECK(scope IN ('sector', 'stock', 'system')),
+                data_version TEXT NOT NULL,
+                decision_id TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                candidate_count INTEGER NOT NULL,
+                recorded_count INTEGER NOT NULL,
+                run_kind TEXT NOT NULL
+                    CHECK(run_kind IN
+                        ('scheduled', 'manual', 'replay', 'challenger', 'legacy_unknown')),
+                PRIMARY KEY (scope, data_version)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO forecast_decision_days__migrated
+                (scope, data_version, decision_id, claimed_at,
+                 candidate_count, recorded_count, run_kind)
+            SELECT scope, data_version, decision_id, claimed_at,
+                   candidate_count, recorded_count, 'legacy_unknown'
+            FROM forecast_decision_days
+            """
+        )
+        conn.execute("DROP TABLE forecast_decision_days")
+        conn.execute(
+            "ALTER TABLE forecast_decision_days__migrated "
+            "RENAME TO forecast_decision_days"
+        )
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+
+
+def _migrate_evaluation_policy_version(conn) -> None:
+    """Add canonical_policy_version to forecast_evaluations.
+
+    Nullable by design: a NULL marks a row written before the canonical policy
+    existed, whose sample and fold counts were inflated by re-recorded
+    snapshots. That is how legacy results are told apart later - by provenance
+    rather than by date. Idempotent.
+    """
+
+    if "canonical_policy_version" not in _column_names(conn, "forecast_evaluations"):
+        conn.execute("ALTER TABLE forecast_evaluations ADD COLUMN canonical_policy_version TEXT")
+
+
 class SQLiteStore:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
@@ -1776,12 +1907,15 @@ class SQLiteStore:
                 "ALTER TABLE agent_control_tasks ADD COLUMN approved_at TEXT",
                 "ALTER TABLE agent_control_tasks ADD COLUMN rejected_by TEXT",
                 "ALTER TABLE agent_control_tasks ADD COLUMN rejected_at TEXT",
-                "ALTER TABLE agent_control_tasks ADD COLUMN approval_note TEXT"
+                "ALTER TABLE agent_control_tasks ADD COLUMN approval_note TEXT",
             ]:
                 try:
                     conn.execute(stmt)
                 except sqlite3.OperationalError:
                     pass
+
+            _migrate_decision_day_run_kind(conn)
+            _migrate_evaluation_policy_version(conn)
 
             for stmt in [
                 "ALTER TABLE ai_parameter_proposals ADD COLUMN validation_json TEXT NOT NULL DEFAULT '{}'",

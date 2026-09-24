@@ -16,6 +16,68 @@ def _store(tmp_path) -> SQLiteStore:
     return store
 
 
+def _confirm_all(store):
+    """Register the guard claims a scheduled run would have written.
+
+    Labelling now writes only for canonical, guard-confirmed snapshots, so a
+    fixture that means "these are real decisions" has to say so the way the
+    production path does.
+    """
+
+    rows = store.fetch_all(
+        "SELECT scope, data_version, decision_id, "
+        "       COUNT(DISTINCT subject) AS subjects, COUNT(*) AS row_count, "
+        "       COUNT(DISTINCT horizon_days) AS horizons "
+        "FROM forecast_decisions GROUP BY scope, data_version, decision_id"
+    )
+    with store.connect() as conn:
+        for row in rows:
+            # A guarded stock vintage must carry the full FORECAST_HORIZONS grid
+            # to be confirmed. Claiming a partial-grid snapshot would make its
+            # vintage guarded-but-incomplete, i.e. invisible to every canonical
+            # read - so fixtures that model legacy partial data stay unclaimed
+            # and are reached with include_inferred=True instead.
+            if row["scope"] == "stock" and int(row["horizons"]) < 5:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO forecast_decision_days "
+                "(scope, data_version, decision_id, claimed_at, candidate_count, "
+                " recorded_count, run_kind) VALUES (?, ?, ?, ?, ?, ?, 'scheduled')",
+                (
+                    row["scope"],
+                    row["data_version"],
+                    row["decision_id"],
+                    "2026-07-10T15:00:00+08:00",
+                    int(row["subjects"]),
+                    int(row["row_count"]),
+                ),
+            )
+
+
+def _confirm(store, *, decision_id, subjects, horizons=(1, 3, 5, 10, 20), scope="stock"):
+    """Register the guard claim a scheduled run would have written.
+
+    Official metrics only consider guard-confirmed snapshots, so a fixture that
+    means "this is the day's real decision" has to say so the same way the
+    production path does.
+    """
+
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO forecast_decision_days "
+            "(scope, data_version, decision_id, claimed_at, candidate_count, "
+            " recorded_count, run_kind) VALUES (?, ?, ?, ?, ?, ?, 'scheduled')",
+            (
+                scope,
+                f"fixture-vintage-{decision_id}",
+                decision_id,
+                "2026-07-10T15:00:00+08:00",
+                len(subjects),
+                len(subjects) * len(horizons),
+            ),
+        )
+
+
 def _forecast(
     *,
     decision_id: str = "sector-decision-a",
@@ -25,7 +87,11 @@ def _forecast(
     rank: int = 1,
     probability: float | None = 0.8,
     features: dict | None = None,
+    data_version: str | None = None,
 ) -> ForecastDecision:
+    # One snapshot per bar vintage is an invariant now, and evaluation keeps one
+    # snapshot per vintage on read, so fixtures that mean "two separate
+    # decisions" have to carry two vintages.
     return ForecastDecision(
         decision_id=decision_id,
         scope=scope,
@@ -38,7 +104,7 @@ def _forecast(
         probability=probability,
         model_version="sector-thesis-v1",
         prompt_version="event-thesis-v1",
-        data_version="fixture-decision",
+        data_version=data_version or f"fixture-vintage-{decision_id}",
         features=features or {},
         evidence=[],
         reasons=["fixture"],
@@ -159,12 +225,15 @@ def test_sector_label_uses_only_point_in_time_members_and_equal_weight_returns(t
         ],
     )
 
-    result = ForecastFeedback(store).label_due("2026-07-15T16:00:00+08:00")
+    _confirm_all(store)
+
+    _confirm_all(store)
+    result = ForecastFeedback(store).label_due("2026-07-15T16:00:00+08:00", include_inferred=True)
 
     assert result["eligible_count"] == 0  # Legacy stock-only counter remains compatible.
     assert result["total_eligible_count"] == 1
     assert result["by_scope"]["sector"]["labelled_count"] == 1
-    matured = ledger.matured("2026-07-15T16:00:00+08:00", scope="sector")
+    matured = ledger.matured("2026-07-15T16:00:00+08:00", scope="sector", include_inferred=True)
     assert len(matured) == 1
     outcome = matured[0].outcome
     assert outcome.continuous_return == pytest.approx(0.15)
@@ -278,14 +347,17 @@ def test_sector_label_stays_pending_until_two_members_have_complete_windows(tmp_
         ],
     )
 
-    result = ForecastFeedback(store).label_due("2026-07-15T16:00:00+08:00")
+    _confirm_all(store)
+
+    _confirm_all(store)
+    result = ForecastFeedback(store).label_due("2026-07-15T16:00:00+08:00", include_inferred=True)
 
     sector = result["by_scope"]["sector"]
     assert sector["eligible_count"] == 1
     assert sector["labelled_count"] == 0
     assert sector["pending_count"] == 1
     assert sector["pending"][0]["reason"] == "sector_complete_members_below_2"
-    assert ledger.matured("2026-07-15T16:00:00+08:00", scope="sector") == []
+    assert ledger.matured("2026-07-15T16:00:00+08:00", scope="sector", include_inferred=True) == []
 
 
 def test_sector_label_uses_each_members_own_next_trading_sessions(tmp_path):
@@ -338,10 +410,13 @@ def test_sector_label_uses_each_members_own_next_trading_sessions(tmp_path):
         ],
     )
 
-    result = ForecastFeedback(store).label_due("2026-07-16T16:00:00+08:00")
+    _confirm_all(store)
+
+    _confirm_all(store)
+    result = ForecastFeedback(store).label_due("2026-07-16T16:00:00+08:00", include_inferred=True)
 
     assert result["by_scope"]["sector"]["labelled_count"] == 1
-    outcome = ledger.matured("2026-07-16T16:00:00+08:00", scope="sector")[0].outcome
+    outcome = ledger.matured("2026-07-16T16:00:00+08:00", scope="sector", include_inferred=True)[0].outcome
     assert outcome.continuous_return == pytest.approx(0.15)
     expected_benchmark = ((4040.0 / 4000.0 - 1.0) + (4050.0 / 4010.0 - 1.0)) / 2
     assert outcome.benchmark_return == pytest.approx(expected_benchmark)
@@ -378,7 +453,10 @@ def test_sector_label_requires_five_members_and_sixty_percent_coverage(tmp_path)
         _insert_bars(store, symbol, [("2026-07-13", 10.0, 10.5)])
     _insert_bars(store, "SH000300", [("2026-07-13", 4000.0, 4010.0)])
 
-    result = ForecastFeedback(store).label_due("2026-07-13T16:00:00+08:00")
+    _confirm_all(store)
+
+    _confirm_all(store)
+    result = ForecastFeedback(store).label_due("2026-07-13T16:00:00+08:00", include_inferred=True)
 
     sector = result["by_scope"]["sector"]
     assert sector["labelled_count"] == 0
@@ -390,12 +468,13 @@ def test_sector_label_requires_five_members_and_sixty_percent_coverage(tmp_path)
     assert pending["required_complete_member_count"] == 5
     assert pending["coverage"] == pytest.approx(0.5)
     assert pending["minimum_coverage"] == pytest.approx(0.6)
-    assert ledger.matured("2026-07-13T16:00:00+08:00", scope="sector") == []
+    assert ledger.matured("2026-07-13T16:00:00+08:00", scope="sector", include_inferred=True) == []
 
     _insert_bars(store, symbols[5], [("2026-07-13", 10.0, 10.5)])
-    matured_result = ForecastFeedback(store).label_due("2026-07-13T16:00:00+08:00")
+    _confirm_all(store)
+    matured_result = ForecastFeedback(store).label_due("2026-07-13T16:00:00+08:00", include_inferred=True)
     assert matured_result["by_scope"]["sector"]["labelled_count"] == 1
-    outcome = ledger.matured("2026-07-13T16:00:00+08:00", scope="sector")[0].outcome
+    outcome = ledger.matured("2026-07-13T16:00:00+08:00", scope="sector", include_inferred=True)[0].outcome
     assert outcome.evidence["complete_member_count"] == 6
     assert outcome.evidence["minimum_complete_members"] == 5
     assert outcome.evidence["coverage"] == pytest.approx(0.6)
@@ -418,6 +497,19 @@ def test_evaluate_reports_stock_and_sector_metrics_separately(tmp_path):
         realized_return,
         benchmark_return,
     ) in sector_fixtures:
+        # Full horizon grid so the snapshot can be canonical; only h=5 carries
+        # an outcome, which is what the sector metrics are computed from.
+        for _grid_horizon in (1, 3, 10, 20):
+            ledger.record_forecast(
+                _forecast(
+                    decision_id="sector-decision-a",
+                    subject=subject,
+                    scope="sector",
+                    horizon_days=_grid_horizon,
+                    rank=rank,
+                    probability=probability,
+                )
+            )
         ledger.record_forecast(
             _forecast(
                 decision_id="sector-decision-a",
@@ -450,15 +542,19 @@ def test_evaluate_reports_stock_and_sector_metrics_separately(tmp_path):
                 evidence={"source": "fixture"},
             )
         )
-    ledger.record_forecast(
-        _forecast(
-            decision_id="stock-decision-a",
-            subject="SH600000",
-            scope="stock",
-            horizon_days=5,
-            probability=0.7,
+    for _grid_horizon in (1, 3, 5, 10, 20):
+        ledger.record_forecast(
+            _forecast(
+                decision_id="stock-decision-a",
+                subject="SH600000",
+                scope="stock",
+                horizon_days=_grid_horizon,
+                probability=0.7,
+            )
         )
-    )
+    _confirm(store, decision_id="sector-decision-a",
+             subjects=["mixed_theme", "semiconductors", "oil_gas"], scope="sector")
+    _confirm(store, decision_id="stock-decision-a", subjects=["SH600000"], scope="stock")
     ledger.record_outcome(
         ForecastOutcome(
             decision_id="stock-decision-a",
@@ -526,9 +622,13 @@ def test_sector_backlog_does_not_consume_the_legacy_stock_label_limit(tmp_path):
     _insert_bars(store, "SH600000", [("2026-07-13", 10.0, 10.5)])
     _insert_bars(store, "SH000300", [("2026-07-13", 4000.0, 4010.0)])
 
+    _confirm_all(store)
+
+    _confirm_all(store)
     result = ForecastFeedback(store).label_due(
         "2026-07-13T16:00:00+08:00",
         limit=1,
+        include_inferred=True,
     )
 
     assert result["eligible_count"] == 1
@@ -558,16 +658,20 @@ def test_unready_old_forecast_does_not_starve_later_mature_forecast(tmp_path):
     _insert_bars(store, "SH600002", [("2026-07-13", 10.0, 10.5)])
     _insert_bars(store, "SH000300", [("2026-07-13", 4000.0, 4010.0)])
 
+    _confirm_all(store)
+
+    _confirm_all(store)
     result = ForecastFeedback(store).label_due(
         "2026-07-13T16:00:00+08:00",
         limit=1,
+        include_inferred=True,
     )
 
     assert result["eligible_count"] == 1
     assert result["labelled_count"] == 1
     assert result["pending_count"] == 0
     assert result["labelled"][0]["decision_id"] == "b-later-ready"
-    matured = ledger.matured("2026-07-13T16:00:00+08:00", scope="stock")
+    matured = ledger.matured("2026-07-13T16:00:00+08:00", scope="stock", include_inferred=True)
     assert [row.forecast.decision_id for row in matured] == ["b-later-ready"]
 
 
@@ -596,8 +700,12 @@ def test_label_scan_rotates_so_large_pending_backlog_cannot_starve_forever(tmp_p
     _insert_bars(store, ready_symbol, [("2026-07-13", 10.0, 10.5)])
     _insert_bars(store, "SH000300", [("2026-07-13", 4000.0, 4010.0)])
 
-    first = ForecastFeedback(store).label_due(first_as_of, limit=1)
-    second = ForecastFeedback(store).label_due(first_as_of + timedelta(minutes=5), limit=1)
+    _confirm_all(store)
+
+    _confirm_all(store)
+    first = ForecastFeedback(store).label_due(first_as_of, limit=1, include_inferred=True)
+    _confirm_all(store)
+    second = ForecastFeedback(store).label_due(first_as_of + timedelta(minutes=5), limit=1, include_inferred=True)
 
     assert first["labelled_count"] == 0
     assert first["by_scope"]["stock"]["backlog_count"] == backlog_count
@@ -714,7 +822,10 @@ def test_sector_label_due_batches_member_bars_and_reuses_horizon_windows(
 
     monkeypatch.setattr(store, "fetch_all", counted_fetch_all)
 
-    result = ForecastFeedback(store).label_due("2026-07-17T16:00:00+08:00")
+    _confirm_all(store)
+
+    _confirm_all(store)
+    result = ForecastFeedback(store).label_due("2026-07-17T16:00:00+08:00", include_inferred=True)
 
     assert result["by_scope"]["sector"]["labelled_count"] == 3
     # Six members across three horizons previously caused 18 member-bar reads

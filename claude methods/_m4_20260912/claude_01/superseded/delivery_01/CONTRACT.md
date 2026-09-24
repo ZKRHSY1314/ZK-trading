@@ -1,0 +1,88 @@
+# M4-01 execution contract — `backend/app/research/m4_execution.py` (contract `0.1.0-draft`)
+
+Task `M4-01-EXECUTION-CONTRACT-20260912` (task file sha256 `9eee7c185417e8a658b23bf416d6a6abfaf2cea7d1549d63a9cdf2e6d4b2cc7e`). Status: **ready_for_review — proposed, not accepted, not frozen.** The policy hash below identifies the proposal; freezing by file and policy hash happens only after Codex's independent review (`execution_policy.json` carries `frozen: false`). M3 is untouched (0/50 dual-positive, 32 disputes, `strict_pit=false`, `training_eligible=false`); nothing here uses labels, training or historical data. This task is **not** M4 complete.
+
+* Policy hash: `afbe2baf6b7f9340feab0036fee5539120ea52950597567583a3d79558ca19b6` (`sha256(canonical POLICY)`).
+* Kernel: `backend/app/research/m4_execution.py`; tests: `backend/tests/test_m4_execution.py` (54 tests, 140 recorded result cases, all executed by the guarded runner `run_m4_tests.py`; see `evidence/execution_receipt.json`).
+* Standard library only; no `app` import, settings, database, filesystem, network, clock, environment or randomness; the test suite proves this by AST inspection of the module.
+
+## 1. What one call decides
+
+`execute(ExecutionRequest) -> ExecutionResult` evaluates **one already-sized order at one explicit execution attempt** and returns a status, structured reasons and — only for fills — the exact signed cash/quantity/fee consequences. It never raises for domain problems: malformed input and every failed prerequisite come back as `rejected` with `reasons=[{code, detail, ...}]` and zero effect.
+
+| Status | Meaning | Effects |
+|---|---|---|
+| `rejected` | the order or a prerequisite is invalid (identity, temporal chain, evidence, unknown state, lot policy, fees, cash, inventory) | none; `fill.fill_recorded=false`, `ledger_entry=null`, `order_live_after_attempt=false` |
+| `unfilled` | a valid order did not fill at this attempt (suspended, one-sided limit, price beyond limit, capacity unproven/exhausted) | none; order stays live until its expiry session (`order_live_after_attempt`) |
+| `partially_filled` | capacity allowed less than the order | fill and ledger entry for the filled part; `remaining_quantity` reported |
+| `filled` | full quantity | fill and ledger entry |
+
+Reason codes are enumerated in `POLICY["reject_codes"]` / `POLICY["unfilled_codes"]`; a test asserts every emitted code is declared and belongs to its status.
+
+## 2. Inputs (all frozen dataclasses with `validated()`)
+
+| Type | Distinct facts it carries |
+|---|---|
+| `SessionCalendar` | ordered, unique sessions (`YYYY-MM-DD`), `tz_offset`, `open_time`, `close_time`, `source_ref`, `available_at`, `synthetic`, `halted_sessions` (kept in the order, never dropped) |
+| `Decision` | `decision_id`, symbol, side, `decision_session` (whose close was used), `decided_at`, `inputs: (InputAvailability(name, available_at, source_ref), …)`, `basis_ref` |
+| `Order` | `order_id`, `decision_id`, symbol, side, `quantity`, `limit_price`, `submitted_at`, `eligible_from` (declared first eligible execution instant), `expiry_sessions`, `execution_phase` (`open_auction` / `continuous` / `close_auction`) |
+| `Instrument` | symbol, `role` (only `stock` is executable), declared `board`, `listing_evidence_ref`, `calendar_ref` (must equal the calendar's `source_ref`), `synthetic` |
+| `TradabilityEvidence` | session, `status` (tradable/suspended/unknown), `limit_state` (none/limit_up/limit_down/unknown), `band_state` (band/no_band/unknown), `limit_up_price`, `limit_down_price`, `st_status`, `listing_state`, `observed_at`, `available_at`, `source_ref` |
+| `PriceObservation` | price, `field` (what the print is), `observed_at`, `available_at`, `source_ref`, `kind` (`contemporaneous` / `predeclared_assumption` + `assumption_ref`) |
+| `LiquidityCapacity` (optional) | `capacity_id`, quantity + `unit` (`share` / `CNY`), `basis`, `observed_at`, `available_at`, `source_ref`, `kind`, `consumed_quantity` (cumulative use by earlier fills) |
+| `AccountState` | `account_ref` (simulated), `available_cash` (≤ 2 decimals), `inventory: (InventoryLot(quantity, acquired_session), …)`, `as_of` |
+| `FeeSchedule` | `schedule_id`, `version`, `provenance` (`hypothetical_fixture` / `sourced_verified` + `verification_ref`), `source_ref`, `effective_from/to`, `applies_to_boards`, buy/sell commission rates, `min_commission`, `transfer_fee_rate` (both sides), `sell_stamp_duty_rate`, `currency=CNY`, declared rounding |
+| `ExecutionAssumptions` | `assumption_id`, provenance, `source_ref`, `slippage_rate` (≤ 0.1), `max_participation_rate` (0,1], `tick_size`, `LotPolicy(min_buy_quantity, buy_increment, sell_increment, odd_lot_sell_rule, max_order_quantity)`, `SettlementPolicy(sellable_after_sessions, counts_halted_sessions=True)`, `unknown_state_assumptions` |
+| `ExecutionAttempt` | `attempt_id`, `executed_at`, `session`, `phase` |
+
+Scalar rules: every instant is a timezone-aware ISO-8601 string (naive → `invalid_input`); money/rates accept `Decimal`, `int` or decimal strings — **floats and bools are refused**, NaN/±inf refused, money > 0 (cash ≥ 0), rates within `[0, 0.5]` (slippage ≤ 0.1, participation in (0, 1]), quantities are bounded ints (bool refused). Evidence objects without `source_ref`/`assumption_ref` are rejected with `evidence_without_provenance`: a real-looking symbol or date is never market evidence by itself.
+
+## 3. Temporal chain (checked in this order; first failure is the reason)
+
+1. `input.available_at ≤ decided_at` for every decision input (`input_not_available_at_decision`).
+2. `close(decision_session) ≤ decided_at < open(next_session)` — a prior-close decision (`decision_before_session_close`, `decision_after_next_session_open`, `next_session_beyond_calendar`).
+3. `decided_at ≤ submitted_at ≤ eligible_from`; `eligible_from ≥ open(next_session)` and inside its own session (`submitted_before_decision`, `submitted_after_eligible`, `eligible_before_next_session_open`, `eligible_from_not_in_session`).
+4. `expiry_session = sessions[index(eligible_session) + expiry_sessions − 1]`, `expires_at = close(expiry_session)`; **halted sessions stay in the count** and are listed in `temporal.halted_sessions_in_window` (`expiry_beyond_calendar`).
+5. `eligible_from ≤ executed_at ≤ expires_at`, inside a calendar session, phase consistent (`open_auction` = exactly the open instant, `continuous` strictly inside, `close_auction` = exactly the close), attempt session label equal to the instant's session (`execution_before_eligible`, `order_expired`, `execution_outside_session`, `execution_phase_mismatch`, `attempt_session_mismatch`).
+6. Evidence: tradability for the execution session; every `observed_at ≤ executed_at`; `available_at ≤ executed_at` for tradability and for any `contemporaneous` price/capacity; price/capacity observed on the execution session; `account.as_of ≤ executed_at` (`evidence_session_mismatch`, `evidence_observed_after_execution`, `evidence_available_after_execution`, `account_state_after_execution`).
+
+Consequences proven by tests: the decision close itself can never be the fill (`temporal.same_close_execution`, `temporal.eligible_at_same_close`); a full-day close/high/low/amount is observed at the close and therefore cannot decide an opening fill (`evidence.close_used_for_open`, `evidence.full_day_amount_capacity_for_open`) while the same close print legitimately proves a close-auction attempt (`temporal.close_auction_positive`); a daily-bar `open` captured at 15:05 is refused as contemporaneous evidence and admitted only as a declared assumption that downgrades `evidence_grade` to `assumed` (`evidence.price_available_after_execution`, `evidence.assumed_open_print`).
+
+## 4. Evidence, unknown states, band and price
+
+* Unknown `status` → `tradability_unknown`. Unknown `limit_state` / `band_state` / `st_status` / `listing_state` → `unknown_state` **unless** `ExecutionAssumptions.unknown_state_assumptions` declares the value; declared values are echoed in `evidence.assumed_states` and `assumptions_used`, and `evidence_grade` becomes `assumed`. `st` and `new_listing` are flagged.
+* `suspended` → `unfilled:suspended`; `limit_up` blocks buys only, `limit_down` blocks sells only (`limit_up_no_buy_fill`, `limit_down_no_sell_fill`); the other side may fill.
+* `band`: both band prices required, tick aligned, `down < up`; the order limit and the observed price must lie inside (`band_prices_missing`, `band_prices_invalid`, `limit_price_outside_band`). `no_band` skips the check and sets flag `no_price_band`.
+* Observed price and order limit must be tick aligned (`price_not_tick_aligned`).
+* Fill price: buy `ceil_to_tick(observed × (1 + slippage))`, sell `floor_to_tick(observed × (1 − slippage))`; a slipped price beyond the band edge is capped at the edge with flag `slippage_capped_at_band`; a fill price worse than the order limit is `unfilled` (`fill_price_exceeds_limit_price` / `fill_price_below_limit_price`).
+* `slippage_cost_informational = |fill − observed| × filled` is reported but is **already inside `gross_amount`**; it is never added to cash flow (no double counting).
+
+## 5. Quantity, capacity and settlement
+
+* Buy quantity must satisfy `min_buy_quantity` and `buy_increment`; sells must not exceed the **settled** quantity and must satisfy the declared `odd_lot_sell_rule` (`whole_odd_remainder_only` / `any` / `forbidden`). The kernel never rounds a requested quantity silently (`quantity_not_in_lot_policy`, `odd_lot_rule_violation`, `insufficient_settled_inventory`).
+* Settled quantity: lot acquired in session *s* is sellable from `sessions[index(s) + sellable_after_sessions]` on the exchange calendar, halted sessions included (`counts_halted_sessions` must be `True`). Fixture T+1 rejects same-session inventory while earlier lots stay sellable (`settle.*`). A declared T+0 policy is possible but explicit.
+* Capacity: missing → `unfilled:capacity_unproven`. `allowance = floor(capacity × max_participation_rate)` (CNY capacity converted at the fill price), `remaining = allowance − consumed_quantity`, rounded down to the side increment; `capacity_exhausted` / `capacity_below_minimum_lot` otherwise; `filled = min(order, fillable)`. The result reports `consumed_after` and `remaining_allowance_after` so a caller can chain orders against one capacity evidence (`quantity.cumulative_*`).
+
+## 6. Fees and cash (Decimal, `ROUND_HALF_UP` to 0.01 per charge)
+
+`gross = fill_price × filled`; `commission = max(round(gross × side_rate), min_commission)`; `transfer_fee = round(gross × transfer_fee_rate)` both sides; `stamp_duty = round(gross × sell_stamp_duty_rate)` sells only. Buy: `gross + commission + transfer_fee ≤ available_cash` is checked on the capacity-limited quantity **before** any fill is recorded (`insufficient_cash` with `required/available/shortfall`). Sell: `proceeds = gross − fees`, and `cash + proceeds ≥ 0` (`negative_cash_after_fees`). Schedule applicability (effective window, board) is checked (`fee_schedule_not_applicable`); a `sourced_verified` schedule needs `verification_ref`. The kernel has **no default rates**; the fixtures `HYPOTHETICAL_FIXTURE_FEES_A` (buy/sell 0.0004, min 6.00, transfer 0.00002, stamp 0.0008) and `HYPOTHETICAL_FIXTURE_ASSUMPTIONS_A` (slippage 0.002, participation 0.10, tick 0.01, 100-share lots, T+1) are invented numbers for arithmetic checks and are not cited as real tariffs.
+
+Hand-calculated anchors (all asserted): buy 2000 @ 10.00 → fill 10.02, gross 20 040.00, commission 8.02, transfer 0.40, cash −20 048.42, sellable next session; sell 1000 @ 10.50 → fill 10.47, gross 10 470.00, commission 6.00 (minimum binds), transfer 0.21, stamp 8.38, cash +10 455.41; a buy with cash 20 048.41 is rejected with shortfall 0.01.
+
+## 7. Result record and identities
+
+`ExecutionResult.record` (canonical JSON, `result_hash = sha256(record without result_hash)`) contains: `identity`, `temporal`, `evidence` (states, assumptions, `evidence_grade`), `inventory`, `fee_schedule`, `assumptions`, `fill` (quantities, prices, fee breakdown, capacity accounting, `fill_recorded`), `ledger_entry` (signed `quantity_delta`, `cash_delta`, `cash_after`, gross, fees, `sellable_from_session`, `settled_sellable_after`, `slippage_cost_included_in_gross`), `order_live_after_attempt`, `flags`, `identities` (`input_hash`, `policy_hash`, `contract_version`, `calendar_prefix_fingerprint`), `synthetic`, `review_only=true`, `live_trading_enabled=false`.
+
+`input_hash` binds the consumed inputs with numeric spellings normalized; the calendar contributes **only the prefix through the expiry session**, so a changed future suffix (more sessions, later halts) leaves `input_hash` and `result_hash` unchanged, while a change inside the prefix alters them (`temporal.suffix_*`, `temporal.prefix_changed`). Inputs are never mutated. Domain rejections keep a full `input_hash`; malformed input yields `input_hash=null`.
+
+## 8. What the isolated tests cover vs. what remains portfolio-level (M4-02) or historical (M4-03)
+
+Covered here (isolated, synthetic, one order): temporal ordering and expiry, evidence timing, unknown states, identity matching, side-specific limits, tick/slippage/band interaction, lot policy, participation capacity (partial, cumulative, exhausted), fee arithmetic, affordability, T+1 settlement and odd lots, invalid inputs, status/effect separation, identity stability. Every recorded case is in `evidence/test_case_results.json` keyed by name.
+
+**Not covered — M4-02 (portfolio layer over this kernel):** allocation and maximum exposure (must value positions with prices observed at or before the decision instant, never the execution day's close); stop-loss / exit priority and partial take-profit ordering; cooldown counted in exchange sessions; FIFO lots, realized PnL and cash reconciliation from `ledger_entry`; sequencing of several orders in one session against one capacity evidence (`consumed_quantity`); benchmark series and delisted securities without survivorship leakage; hand-calculated non-zero controlled baseline and time-suffix invariance at portfolio level. Interface the kernel already exposes for it: `POLICY["portfolio_interface"]`.
+
+**Not covered — M4-03 (historical evidence):** an adapter that maps frozen development data to `PriceObservation`/`LiquidityCapacity`/`TradabilityEvidence` must declare, per field, whether it is contemporaneous or a `predeclared_assumption` with `assumption_ref` (daily OHLC cannot prove opening-auction availability or queue depth; unknown ST / adjustment / capacity stay unknown); it must report synthetic-engine proof, assumption-based historical replay and real historical execution evidence separately, with sources, exclusions and reasons for zero or unprovable baselines; it must not select results, consume hold-out periods or widen the universe. No real-data adapter and no historical price extraction were done in this task.
+
+## 9. Safety statement
+
+No SQLite connection, network, subprocess, legacy engine instantiation, settings import, account/credential/funds/order access, market capture, training, M2/M3 modification or Git staging occurred. The runner installs audit hooks that deny SQLite, sockets, subprocesses and writes outside `claude_01/`, self-checks them (all five probes denied, no probe file created) and reports zero denials during the tests. Everything is `review_only=true`, `live_trading_enabled=false`, `synthetic=true` fixtures.

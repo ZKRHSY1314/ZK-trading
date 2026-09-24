@@ -12,3 +12,17 @@
 *.yaml text eol=lf
 *.yml text eol=lf
 *.toml text eol=lf
+
+# Accepted research artifacts use byte-level SHA-256 pins (including original CRLF).
+# Do not silently invalidate those pins during a Windows/Linux cloud handoff.
+backend/app/research/m3_frozen_reader.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+backend/app/research/m3_labels.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+backend/app/research/m4_execution.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+backend/app/research/m4_portfolio.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+backend/app/research/m4_risk.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+backend/tests/test_m3_frozen_reader.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+backend/tests/test_m3_labels.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+backend/tests/test_m4_execution.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+backend/tests/test_m4_portfolio.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+backend/tests/test_m4_risk.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+"claude methods/**" -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

@@ -5662,11 +5662,22 @@ def get_tonghuasun_status() -> dict:
     """Report non-secret local market-data discovery state without probing accounts."""
     from app.data.tonghuasun_provider import TonghuasunMarketDataProvider
 
+    # Resolve the same home the cache service uses. Without product_home the
+    # adapter falls back to TONGHUASUN_AGENT_HOME / %LOCALAPPDATA%, so this
+    # endpoint could report on a different plugin install than refreshes read
+    # from - which is exactly the endpoint/token mismatch that produces HTTP 401.
     result = TonghuasunMarketDataProvider(
-        timeout=settings.realtime_request_timeout_seconds
+        product_home=settings.tonghuasun_product_home or None,
+        timeout=settings.tonghuasun_request_timeout_seconds,
     ).status()
     result.update(
         {
+            "product_home": settings.tonghuasun_product_home or "(adapter discovery)",
+            # Configured status is not market-data readiness: a running host with
+            # a valid endpoint file still returned 401 for every candle. Only
+            # scripts/verify_tonghuasun_session.py answers that question.
+            "market_data_verified": False,
+            "verification_command": "python scripts/verify_tonghuasun_session.py",
             "source_policy": settings.daily_bar_source_policy,
             "enabled": settings.daily_bar_source_policy
             in {"tonghuasun_first", "tonghuasun_only"},

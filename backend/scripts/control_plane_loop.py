@@ -54,7 +54,16 @@ def run_slot(api_base: str, profile: str, limit: int, *, timeout_seconds: int = 
     return request_json(
         "POST",
         f"{api_base}/api/control-plane/run-once",
-        {"profile": profile, "limit": limit, "requested_by": "control_plane_worker"},
+        {
+            "profile": profile,
+            "limit": limit,
+            "requested_by": "control_plane_worker",
+            # The endpoint defaults to "manual" (preview) because an
+            # unspecified caller is not the scheduler. This worker IS the
+            # scheduler, so it is the one caller that asks for the official
+            # claim explicitly.
+            "run_kind": "scheduled",
+        },
         timeout=timeout_seconds,
     )
 

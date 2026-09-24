@@ -1,4 +1,4 @@
-# Shared, read-only preflight. Dot-sourcing this file does not launch anything.
+﻿# Shared, read-only preflight. Dot-sourcing this file does not launch anything.
 $script:TonghuasunStartupScriptRoot = $PSScriptRoot
 
 function Read-TonghuasunStartupJson {
@@ -35,8 +35,14 @@ function Get-TonghuasunReadOnlyContext {
     }
 
     $profile = Import-PowerShellDataFile -LiteralPath $ProfilePath
-    if ($profile.SchemaVersion -ne 1 -or $profile.DailyBarSourcePolicy -cne 'akshare_first') {
-        throw 'The Tonghuashun startup profile must use schema 1 and akshare_first.'
+    # The local plugin is the project's preferred source, so the profile must
+    # declare tonghuasun_first. It used to require akshare_first, which demoted
+    # the plugin before it was ever tried: a full-market refresh then ran
+    # entirely on Sina and Tencent while reading as an ordinary success.
+    # Fallbacks still live inside the tonghuasun_first chain and are reported as
+    # fallbacks; they are not selected by launching the stack.
+    if ($profile.SchemaVersion -ne 1 -or $profile.DailyBarSourcePolicy -cne 'tonghuasun_first') {
+        throw 'The Tonghuashun startup profile must use schema 1 and tonghuasun_first.'
     }
     foreach ($key in @('ProductHome', 'ExecutablePath')) {
         $value = [string]$profile[$key]
@@ -68,7 +74,7 @@ function Get-TonghuasunReadOnlyContext {
         schema_version = 'tonghuasun_readonly_startup.v1'
         product_home = $productDirectory
         executable_path = $executable
-        daily_bar_source_policy = 'akshare_first'
+        daily_bar_source_policy = [string]$profile.DailyBarSourcePolicy
         live_trading_enabled = $false
         market_data_only = $true
         host_status = 'not_running'

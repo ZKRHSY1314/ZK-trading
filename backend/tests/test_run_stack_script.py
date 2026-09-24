@@ -398,7 +398,11 @@ def test_stack_inherits_fixed_readonly_profile_without_launching_or_restarting_c
         assert "Start-TonghuasunReadOnlyClient" not in source
         assert "tonghuasun_readonly = $TonghuasunReadOnly" in source
     assert '$env:TONGHUASUN_AGENT_HOME = $TonghuasunReadOnly.product_home' in run_source
-    assert '$env:DAILY_BAR_SOURCE_POLICY = "akshare_first"' in run_source
+    # The stack must NOT pin a policy of its own: it carries the profile's, which
+    # is tonghuasun_first. Hardcoding akshare_first here demoted the local plugin
+    # before it was ever tried.
+    assert '$env:DAILY_BAR_SOURCE_POLICY = $TonghuasunReadOnly.daily_bar_source_policy' in run_source
+    assert '$env:DAILY_BAR_SOURCE_POLICY = "akshare_first"' not in run_source
     assert run_source.index("$env:TONGHUASUN_AGENT_HOME =") < run_source.index("$backend = Start-Process")
     assert '[Environment]::SetEnvironmentVariable("TONGHUASUN_AGENT_HOME", $priorTonghuasunDirectory, "Process")' in run_source
     assert '[Environment]::SetEnvironmentVariable("DAILY_BAR_SOURCE_POLICY", $priorDailyBarPolicy, "Process")' in run_source
