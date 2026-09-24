@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import json
 import math
 from typing import Any
@@ -14,11 +14,21 @@ from app.forecasting.ledger import (
     ForecastOutcome,
 )
 from app.market_intelligence import SectorExposureResolver
-from app.forecasting.canonical import CANONICAL_POLICY_VERSION, canonical_snapshot_cte
+from app.forecasting.canonical import (
+    CANONICAL_POLICY_VERSION,
+    CANONICAL_SELECTION_PREDICATE,
+    SELECTION_INFERRED,
+    canonical_join,
+    canonical_snapshot_cte,
+)
 from app.storage.sqlite_store import SQLiteStore
 
 
 _CHINA_TZ = timezone(timedelta(hours=8))
+# A daily bar is not final before this local time; used only for the weekday
+# maturity proxy below, which is not an exchange calendar.
+_DAILY_BAR_FINAL_LOCAL_TIME = time(15, 15)
+MATURITY_BASIS = "weekday_proxy_not_exchange_calendar"
 _BENCHMARK_PRIORITY = ("SH000300", "SH000001")
 _MAX_FORECAST_HORIZON = max(FORECAST_HORIZONS)
 _MAX_DAILY_BAR_SYMBOLS_PER_QUERY = 800
@@ -49,6 +59,36 @@ def _datetime(value: str | datetime) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError("forecast feedback timestamps must include a timezone")
     return parsed.astimezone(timezone.utc)
+
+
+def _decision_date(value: str | datetime) -> date:
+    """Shanghai calendar date of a decision cutoff: the unit of an independent fold."""
+
+    return _datetime(value).astimezone(_CHINA_TZ).date()
+
+
+def _add_weekdays(day: date, count: int) -> date:
+    current = day
+    added = 0
+    while added < count:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            added += 1
+    return current
+
+
+def _is_due(decision_day: date, horizon_days: int, as_of_local: datetime) -> bool:
+    """Weekday proxy: entry next session, exit h sessions later, bar final at 15:15.
+
+    Holidays make the real exit later than this proxy, so the proxy can call a
+    forecast due that is still pending; it never calls one pending that is due.
+    """
+
+    exit_day = _add_weekdays(decision_day, horizon_days)
+    today = as_of_local.date()
+    return exit_day < today or (
+        exit_day == today and as_of_local.time() >= _DAILY_BAR_FINAL_LOCAL_TIME
+    )
 
 
 def _round(value: float | None) -> float | None:
@@ -247,12 +287,9 @@ class ForecastFeedback:
         # forecast_decisions: the production ledger has 1,350 unlabelled rows
         # across nine snapshots for a single vintage, so this would have written
         # official outcomes for eight snapshots that are not the day's decision.
-        filters = """
+        filters = f"""
             FROM forecast_decisions d
-            JOIN canonical cs
-              ON cs.decision_id = d.decision_id
-             AND cs.scope = d.scope
-             AND cs.data_version = d.data_version
+            {canonical_join("d")}
             LEFT JOIN forecast_outcomes o
               ON o.decision_id = d.decision_id
              AND o.scope = d.scope
@@ -263,7 +300,7 @@ class ForecastFeedback:
               AND o.id IS NULL
               AND d.decision_cutoff <= ?
               AND d.available_at <= ?
-              AND (cs.selection_kind = 'confirmed' OR ? = 1)
+              AND {CANONICAL_SELECTION_PREDICATE}
         """
         inferred_flag = 1 if include_inferred else 0
         count_row = self.store.fetch_one(
@@ -964,17 +1001,14 @@ class ForecastFeedback:
             WITH {canonical_snapshot_cte()}
             SELECT
                 d.decision_id, d.subject, d.rank, d.score, d.probability,
-                d.features_json,
+                d.features_json, d.decision_cutoff,
                 cs.selection_kind,
                 o.id AS outcome_id,
                 o.continuous_return,
                 o.benchmark_neutral_return,
                 o.observed_at
             FROM forecast_decisions d
-            JOIN canonical cs
-              ON cs.decision_id = d.decision_id
-             AND cs.scope = d.scope
-             AND cs.data_version = d.data_version
+            {canonical_join("d")}
             LEFT JOIN forecast_outcomes o
               ON o.decision_id = d.decision_id
              AND o.scope = d.scope
@@ -986,7 +1020,7 @@ class ForecastFeedback:
               AND d.horizon_days = ?
               AND d.decision_cutoff <= ?
               AND d.available_at <= ?
-              AND (cs.selection_kind = 'confirmed' OR ? = 1)
+              AND {CANONICAL_SELECTION_PREDICATE}
             ORDER BY d.decision_id, d.rank IS NULL, d.rank, d.subject
             """,
             (cutoff, scope, horizon_days, cutoff, cutoff, 1 if include_inferred else 0),
@@ -1036,6 +1070,9 @@ class ForecastFeedback:
             by_decision.append(
                 {
                     "decision_id": decision_id,
+                    "decision_date": min(
+                        _decision_date(row["decision_cutoff"]) for row in fold_rows
+                    ).isoformat(),
                     "forecast_count": len(fold_rows),
                     "sample_count": len(matured),
                     "coverage": _round(len(matured) / len(fold_rows)) if fold_rows else 0.0,
@@ -1058,14 +1095,31 @@ class ForecastFeedback:
                 }
             )
 
-        precision_values = [
-            float(row["precision_at_k"]) for row in by_decision if row["precision_at_k"] is not None
-        ]
-        rank_ic_values = [
-            float(row["spearman_rank_ic"])
-            for row in by_decision
-            if row["spearman_rank_ic"] is not None
-        ]
+        # Independent folds are decision DATES, not snapshots. Canonical
+        # selection keeps one snapshot per bar vintage, but two vintages can
+        # still be decided on the same day; counting them twice would inflate
+        # the fold count exactly as the old repeated snapshots did. Within a
+        # date the snapshot metrics are averaged first, so each date weighs once.
+        folds_by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for fold in by_decision:
+            folds_by_date[fold["decision_date"]].append(fold)
+        precision_values = []
+        rank_ic_values = []
+        for date_folds in folds_by_date.values():
+            date_precisions = [
+                float(fold["precision_at_k"])
+                for fold in date_folds
+                if fold["precision_at_k"] is not None
+            ]
+            date_rank_ics = [
+                float(fold["spearman_rank_ic"])
+                for fold in date_folds
+                if fold["spearman_rank_ic"] is not None
+            ]
+            if date_precisions:
+                precision_values.append(sum(date_precisions) / len(date_precisions))
+            if date_rank_ics:
+                rank_ic_values.append(sum(date_rank_ics) / len(date_rank_ics))
         all_metric_matured = [row for row in all_matured if self._metric_eligible(row, scope=scope)]
         probability_pairs = [
             pair
@@ -1083,7 +1137,31 @@ class ForecastFeedback:
             1 for row in rows if self._metric_eligible(row, scope=scope)
         )
         directional_sample_count = len(all_metric_matured)
-        fold_count = sum(1 for row in by_decision if row["directional_sample_count"] > 0)
+        fold_count = sum(
+            1
+            for date_folds in folds_by_date.values()
+            if any(fold["directional_sample_count"] > 0 for fold in date_folds)
+        )
+        # Maturity: a forecast that is not yet due is pending, not missing. The
+        # legacy `coverage` keeps its all-forecasts denominator; `coverage_of_due`
+        # only counts forecasts whose exit session should have closed by as_of.
+        as_of_local = as_of.astimezone(_CHINA_TZ)
+        metric_rows = [row for row in rows if self._metric_eligible(row, scope=scope)]
+        due_rows = [
+            row
+            for row in metric_rows
+            if _is_due(_decision_date(row["decision_cutoff"]), horizon_days, as_of_local)
+        ]
+        due_count = len(due_rows)
+        matured_due_count = sum(1 for row in due_rows if row.get("outcome_id") is not None)
+        matured_not_due_count = directional_sample_count - matured_due_count
+        excluded_inferred_snapshot_count = (
+            0
+            if include_inferred
+            else self._inferred_snapshot_count(
+                scope=scope, horizon_days=horizon_days, cutoff=cutoff
+            )
+        )
         precision_at_k = sum(precision_values) / len(precision_values) if precision_values else None
         spearman_rank_ic = sum(rank_ic_values) / len(rank_ic_values) if rank_ic_values else None
         brier_score = self._brier(probability_pairs)
@@ -1095,6 +1173,8 @@ class ForecastFeedback:
             insufficient_reasons.append(f"fold_count_below_{min_folds}")
         if all(metric is None for metric in (precision_at_k, spearman_rank_ic, brier_score)):
             insufficient_reasons.append("no_available_evaluation_metric")
+        if metric_rows and due_count == 0:
+            insufficient_reasons.append("horizon_not_yet_mature")
         # Evidence provenance travels with the numbers. Without this a caller
         # cannot tell an official metric from one resting on snapshots that were
         # chosen by shape alone, and 29 of the 30 canonical snapshots in the
@@ -1118,6 +1198,8 @@ class ForecastFeedback:
             for row in rows
             if str(row["selection_kind"]) == "inferred" and row.get("outcome_id") is not None
         )
+        if not include_inferred and not confirmed_folds:
+            insufficient_reasons.append("no_confirmed_snapshots")
         evidence_quality = "exploratory" if inferred_folds else "official"
         status = "insufficient_data" if insufficient_reasons else "ready"
         if evidence_quality == "exploratory" and status == "ready":
@@ -1135,13 +1217,27 @@ class ForecastFeedback:
             "scope": scope,
             "horizon_days": horizon_days,
             "target": self._evaluation_target(scope),
-            "aggregation": "unweighted_mean_across_decision_id_folds",
+            "aggregation": "unweighted_mean_across_decision_dates",
+            "fold_unit": "decision_date",
+            "canonical_snapshot_count": len(by_decision),
+            "repeated_snapshot_date_count": sum(
+                1 for date_folds in folds_by_date.values() if len(date_folds) > 1
+            ),
+            "excluded_inferred_snapshot_count": excluded_inferred_snapshot_count,
             "rank_predictor": "negative_rank_then_score",
             "k": k,
             "forecast_count": forecast_count,
             "sample_count": sample_count,
             "fold_count": fold_count,
             "coverage": _round(sample_count / forecast_count) if forecast_count else 0.0,
+            "coverage_denominator": "all_canonical_forecasts_including_immature",
+            "maturity_basis": MATURITY_BASIS,
+            "due_count": due_count,
+            "matured_due_count": matured_due_count,
+            "matured_not_due_count": matured_not_due_count,
+            "pending_count": directional_forecast_count - directional_sample_count,
+            # None, not 0.0, when nothing is due yet: absent evidence is not a gap.
+            "coverage_of_due": _round(matured_due_count / due_count) if due_count else None,
             "directional_forecast_count": directional_forecast_count,
             "directional_sample_count": directional_sample_count,
             "directional_coverage": (
@@ -1167,6 +1263,26 @@ class ForecastFeedback:
             "insufficient_reasons": insufficient_reasons,
             "review_only": True,
         }
+
+    def _inferred_snapshot_count(self, *, scope: str, horizon_days: int, cutoff: str) -> int:
+        """Canonical snapshots left out of official evidence because they are inferred."""
+
+        row = self.store.fetch_one(
+            f"""
+            WITH {canonical_snapshot_cte()}
+            SELECT COUNT(DISTINCT d.decision_id) AS count
+            FROM forecast_decisions d
+            {canonical_join("d")}
+            WHERE d.scope = ?
+              AND d.review_only = 1
+              AND d.horizon_days = ?
+              AND d.decision_cutoff <= ?
+              AND d.available_at <= ?
+              AND cs.selection_kind = '{SELECTION_INFERRED}'
+            """,
+            (scope, horizon_days, cutoff, cutoff),
+        )
+        return int((row or {}).get("count") or 0)
 
     @staticmethod
     def _forecast(row: dict[str, Any]) -> ForecastDecision:

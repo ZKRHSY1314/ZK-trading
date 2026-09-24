@@ -4,7 +4,11 @@ param(
     [int]$FrontendPort = 3000,
     [int]$StartupTimeoutSeconds = 45,
     [bool]$EnableCodexSearch = $true,
-    [string]$TonghuasunProfile = ""
+    [string]$TonghuasunProfile = "",
+    # "full" keeps the historical behaviour (every worker). "review" starts only
+    # the backend and frontend; see backend\scripts\stack_profiles.py.
+    [ValidateSet("full", "review")]
+    [string]$ServiceProfile = "full"
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,9 +28,11 @@ $InstrumentCatalogScript = Join-Path $BackendRoot "scripts\instrument_catalog_re
 $FullMarketCalibrationScript = Join-Path $BackendRoot "scripts\full_market_calibration_loop.py"
 $CodexPulseScript = Join-Path $BackendRoot "scripts\codex_market_pulse.py"
 $CodexDecisionScript = Join-Path $BackendRoot "scripts\codex_decision_review.py"
+$StackProfileScript = Join-Path $BackendRoot "scripts\stack_profiles.py"
 $ViteCommand = Join-Path $FrontendRoot "node_modules\.bin\vite.cmd"
 $ViteEntry = Join-Path $FrontendRoot "node_modules\vite\bin\vite.js"
 $PidFile = Join-Path $LogsRoot "run_stack.pids.json"
+$PlanFile = Join-Path $LogsRoot "stack_plan.json"
 $HeartbeatFile = Join-Path $BackendRoot "logs\control_plane_heartbeat.json"
 $ReferenceHeartbeatFile = Join-Path $BackendRoot "logs\reference_data_heartbeat.json"
 $FullMarketFeatureHeartbeatFile = Join-Path $BackendRoot "logs\full_market_feature_heartbeat.json"
@@ -239,16 +245,81 @@ function Test-TrackedProcessIdentity {
 
 Assert-FileExists -LiteralPath $DatabasePath -Label "Repository-root database"
 Assert-FileExists -LiteralPath $Python -Label "Backend Python runtime"
-Assert-FileExists -LiteralPath $WorkerScript -Label "Control-plane worker"
-Assert-FileExists -LiteralPath $ReferenceWorkerScript -Label "Reference-data worker"
-Assert-FileExists -LiteralPath $FullMarketFeatureScript -Label "Full-market feature worker"
-Assert-FileExists -LiteralPath $MarketHistoryRefreshScript -Label "Market-history refresh worker"
-Assert-FileExists -LiteralPath $CapitalFlowRefreshScript -Label "Capital-flow refresh worker"
-Assert-FileExists -LiteralPath $InstrumentCatalogScript -Label "Instrument-catalog refresh worker"
-Assert-FileExists -LiteralPath $FullMarketCalibrationScript -Label "Full-market calibration worker"
-if ($EnableCodexSearch) {
-    Assert-FileExists -LiteralPath $CodexPulseScript -Label "Codex market-pulse worker"
-    Assert-FileExists -LiteralPath $CodexDecisionScript -Label "Codex decision-review worker"
+Assert-FileExists -LiteralPath $StackProfileScript -Label "Stack profile planner"
+
+# The profile decides which components start. The planner is pure (no process,
+# network or database access). Once every precondition has passed, the same plan
+# - selected and excluded components, their arguments, target database/manifest
+# paths and every expected write - is recorded in logs\stack_plan.json before
+# anything is launched.
+$planArgs = @(
+    "-B", "-X", "utf8", $StackProfileScript, "plan",
+    "--profile", $ServiceProfile,
+    "--project-root", $ProjectRoot,
+    "--backend-port", [string]$BackendPort,
+    "--frontend-port", [string]$FrontendPort,
+    "--enable-codex-search", $(if ($EnableCodexSearch) { "1" } else { "0" })
+)
+$planText = & $Python @planArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "Stack profile planner rejected service profile '$ServiceProfile'."
+}
+$StackPlan = ($planText -join "`n") | ConvertFrom-Json
+if (
+    $StackPlan.schema_version -ne "stack_plan.v1" -or
+    $StackPlan.profile -ne $ServiceProfile -or
+    $StackPlan.live_trading_enabled -ne $false
+) {
+    throw "Stack profile planner returned an unexpected plan."
+}
+$SelectedComponents = @($StackPlan.selected)
+if (($SelectedComponents -notcontains "backend") -or ($SelectedComponents -notcontains "frontend")) {
+    throw "Every service profile must include the backend and frontend."
+}
+
+function Test-ComponentSelected {
+    param([string]$Name)
+
+    return $SelectedComponents -contains $Name
+}
+
+function New-ExcludedComponentMetadata {
+    param([string]$Name)
+
+    return [ordered]@{
+        enabled = $false
+        reason = [string]$StackPlan.excluded.$Name
+        service_profile = $ServiceProfile
+    }
+}
+
+$CodexComponentsSelected = (
+    (Test-ComponentSelected "codex_market_pulse") -and
+    (Test-ComponentSelected "codex_decision_review")
+)
+if ((-not $CodexComponentsSelected) -and (
+    (Test-ComponentSelected "codex_market_pulse") -or
+    (Test-ComponentSelected "codex_decision_review")
+)) {
+    throw "The Codex workers must be selected together."
+}
+Write-Host "Service profile '$ServiceProfile' starts: $($SelectedComponents -join ', ')"
+
+$workerScripts = [ordered]@{
+    control_worker = @($WorkerScript, "Control-plane worker")
+    reference_data_worker = @($ReferenceWorkerScript, "Reference-data worker")
+    full_market_feature_worker = @($FullMarketFeatureScript, "Full-market feature worker")
+    market_history_refresh_worker = @($MarketHistoryRefreshScript, "Market-history refresh worker")
+    capital_flow_refresh_worker = @($CapitalFlowRefreshScript, "Capital-flow refresh worker")
+    instrument_catalog_refresh_worker = @($InstrumentCatalogScript, "Instrument-catalog refresh worker")
+    full_market_calibration_worker = @($FullMarketCalibrationScript, "Full-market calibration worker")
+    codex_market_pulse = @($CodexPulseScript, "Codex market-pulse worker")
+    codex_decision_review = @($CodexDecisionScript, "Codex decision-review worker")
+}
+foreach ($name in $workerScripts.Keys) {
+    if (Test-ComponentSelected $name) {
+        Assert-FileExists -LiteralPath $workerScripts[$name][0] -Label $workerScripts[$name][1]
+    }
 }
 Assert-FileExists -LiteralPath $ViteCommand -Label "Frontend Vite dependency"
 Assert-FileExists -LiteralPath $ViteEntry -Label "Frontend Vite runtime"
@@ -262,7 +333,7 @@ if ($null -eq $NodeCommand) {
     throw "node.exe is not available on PATH."
 }
 $CodexCommand = Get-Command codex -ErrorAction SilentlyContinue
-if ($EnableCodexSearch -and $null -eq $CodexCommand) {
+if ($CodexComponentsSelected -and $null -eq $CodexCommand) {
     throw "codex is not available on PATH; use -EnableCodexSearch:`$false to run fixed-source capture only."
 }
 
@@ -317,6 +388,17 @@ if ($LASTEXITCODE -ne 0) {
 New-Item -ItemType Directory -Path $LogsRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Split-Path -Parent $HeartbeatFile) -Force | Out-Null
 
+# Record the plan only now, so a refused start never replaces the plan record of
+# a stack that is still running. The recorded plan must be the one resolved above.
+$recordedPlanText = & $Python @planArgs --output $PlanFile
+if ($LASTEXITCODE -ne 0) {
+    throw "Stack profile planner could not record $PlanFile."
+}
+$recordedPlan = ($recordedPlanText -join "`n") | ConvertFrom-Json
+if ([string]$recordedPlan.plan_sha256 -ne [string]$StackPlan.plan_sha256) {
+    throw "The recorded stack plan differs from the plan resolved during preflight."
+}
+
 $env:PYTHONUTF8 = "1"
 $env:DATABASE_PATH = $DatabasePath
 $env:ENABLE_LIVE_TRADING = "false"
@@ -354,6 +436,22 @@ try {
         throw "Backend readiness gate failed: $($ready | ConvertTo-Json -Compress)"
     }
 
+    # Components the profile excludes are never launched; their metadata says so.
+    $worker = $null
+    $workerHeartbeat = $null
+    $referenceWorker = $null
+    $referenceHeartbeat = $null
+    $fullMarketFeatureWorker = $null
+    $fullMarketFeatureHeartbeat = $null
+    $marketHistoryRefreshWorker = $null
+    $marketHistoryRefreshHeartbeat = $null
+    $capitalFlowRefreshWorker = $null
+    $capitalFlowRefreshHeartbeat = $null
+    $instrumentCatalogWorker = $null
+    $instrumentCatalogHeartbeat = $null
+    $fullMarketCalibrationWorker = $null
+    $fullMarketCalibrationHeartbeat = $null
+
     $frontendArgs = @(
         $ViteEntry, "--host", "127.0.0.1",
         "--port", [string]$FrontendPort, "--strictPort"
@@ -366,227 +464,241 @@ try {
     $startedProcesses.Add($frontend)
     Wait-HttpEndpoint -Uri $FrontendBase -TimeoutSeconds $StartupTimeoutSeconds
 
-    $workerArgs = @(
-        "-X", "utf8", $WorkerScript,
-        "--api-base", $ApiBase,
-        "--profile", "adaptive",
-        "--interval-seconds", "900",
-        "--max-cycles", "0"
-    )
-    $worker = Start-Process -FilePath $Python -ArgumentList $workerArgs `
-        -WorkingDirectory $BackendRoot `
-        -RedirectStandardOutput (Join-Path $LogsRoot "control-worker.out.log") `
-        -RedirectStandardError (Join-Path $LogsRoot "control-worker.err.log") `
-        -WindowStyle Hidden -PassThru
-    $startedProcesses.Add($worker)
-    Start-Sleep -Milliseconds 500
-    if ($worker.HasExited) {
-        throw "Control-plane worker exited during startup with code $($worker.ExitCode)."
-    }
-    $workerHeartbeat = Wait-WorkerHeartbeat -LiteralPath $HeartbeatFile -ExpectedPid $worker.Id `
-        -TimeoutSeconds $StartupTimeoutSeconds
-
-    $referenceArgs = @(
-        "-X", "utf8", $ReferenceWorkerScript,
-        "--interval-seconds", "14400",
-        "--max-cycles", "0",
-        "--board-limit", "50",
-        "--disclosure-limit", "500",
-        "--global-days", "30",
-        "--rate-limit-seconds", "0.2",
-        "--cycle-timeout-seconds", "900",
-        "--skip-sox"
-    )
-    $referenceWorker = Start-Process -FilePath $Python -ArgumentList $referenceArgs `
-        -WorkingDirectory $BackendRoot `
-        -RedirectStandardOutput (Join-Path $LogsRoot "reference-data-worker.out.log") `
-        -RedirectStandardError (Join-Path $LogsRoot "reference-data-worker.err.log") `
-        -WindowStyle Hidden -PassThru
-    $startedProcesses.Add($referenceWorker)
-    Start-Sleep -Milliseconds 500
-    if ($referenceWorker.HasExited) {
-        throw "Reference-data worker exited during startup with code $($referenceWorker.ExitCode)."
-    }
-    $referenceHeartbeat = Wait-WorkerHeartbeat `
-        -LiteralPath $ReferenceHeartbeatFile `
-        -ExpectedPid $referenceWorker.Id `
-        -TimeoutSeconds $StartupTimeoutSeconds
-
-    $fullMarketFeatureArgs = @(
-        "-X", "utf8", $FullMarketFeatureScript,
-        "--api-base", $ApiBase,
-        "--interval-seconds", "14400",
-        "--max-cycles", "0",
-        "--candidate-limit", "300",
-        "--lookback-bars", "120",
-        "--timeout-seconds", "300"
-    )
-    $fullMarketFeatureWorker = Start-Process -FilePath $Python `
-        -ArgumentList $fullMarketFeatureArgs `
-        -WorkingDirectory $BackendRoot `
-        -RedirectStandardOutput (Join-Path $LogsRoot "full-market-feature-worker.out.log") `
-        -RedirectStandardError (Join-Path $LogsRoot "full-market-feature-worker.err.log") `
-        -WindowStyle Hidden -PassThru
-    $startedProcesses.Add($fullMarketFeatureWorker)
-    Start-Sleep -Milliseconds 500
-    if ($fullMarketFeatureWorker.HasExited) {
-        throw "Full-market feature worker exited during startup with code $($fullMarketFeatureWorker.ExitCode)."
-    }
-    $fullMarketFeatureHeartbeat = Wait-WorkerHeartbeat `
-        -LiteralPath $FullMarketFeatureHeartbeatFile `
-        -ExpectedPid $fullMarketFeatureWorker.Id `
-        -TimeoutSeconds $StartupTimeoutSeconds
-
-    $marketHistoryRefreshArgs = @(
-        "-X", "utf8", $MarketHistoryRefreshScript,
-        "--api-base", $ApiBase,
-        "--interval-seconds", "14400",
-        "--retry-interval-seconds", "900",
-        "--max-cycles", "0",
-        "--days", "150",
-        "--batch-size", "200",
-        "--max-workers", "20",
-        "--seed-batch-size", "500",
-        "--gap-recovery-limit", "500",
-        "--deadline-seconds", "900"
-    )
-    $marketHistoryRefreshWorker = Start-Process -FilePath $Python `
-        -ArgumentList $marketHistoryRefreshArgs `
-        -WorkingDirectory $BackendRoot `
-        -RedirectStandardOutput (Join-Path $LogsRoot "market-history-refresh-worker.out.log") `
-        -RedirectStandardError (Join-Path $LogsRoot "market-history-refresh-worker.err.log") `
-        -WindowStyle Hidden -PassThru
-    $startedProcesses.Add($marketHistoryRefreshWorker)
-    Start-Sleep -Milliseconds 500
-    if ($marketHistoryRefreshWorker.HasExited) {
-        throw "Market-history refresh worker exited during startup with code $($marketHistoryRefreshWorker.ExitCode)."
-    }
-    $marketHistoryRefreshHeartbeat = Wait-WorkerHeartbeat `
-        -LiteralPath $MarketHistoryRefreshHeartbeatFile `
-        -ExpectedPid $marketHistoryRefreshWorker.Id `
-        -TimeoutSeconds $StartupTimeoutSeconds
-    if (
-        [int]$marketHistoryRefreshHeartbeat.interval_seconds -ne 14400 -or
-        [int]$marketHistoryRefreshHeartbeat.retry_interval_seconds -ne 900 -or
-        [int]$marketHistoryRefreshHeartbeat.deadline_seconds -ne 900 -or
-        [int]$marketHistoryRefreshHeartbeat.days -ne 150 -or
-        [int]$marketHistoryRefreshHeartbeat.batch_size -ne 200 -or
-        [int]$marketHistoryRefreshHeartbeat.max_workers -ne 20 -or
-        [int]$marketHistoryRefreshHeartbeat.seed_batch_size -ne 500 -or
-        [int]$marketHistoryRefreshHeartbeat.gap_recovery_limit -ne 500 -or
-        $marketHistoryRefreshHeartbeat.review_only -ne $true -or
-        $marketHistoryRefreshHeartbeat.simulation_only -ne $true -or
-        $marketHistoryRefreshHeartbeat.live_trading_enabled -ne $false
-    ) {
-        throw "Market-history refresh worker started with an unexpected or unsafe configuration."
+    if (Test-ComponentSelected "control_worker") {
+        $workerArgs = @(
+            "-X", "utf8", $WorkerScript,
+            "--api-base", $ApiBase,
+            "--profile", "adaptive",
+            "--interval-seconds", "900",
+            "--max-cycles", "0"
+        )
+        $worker = Start-Process -FilePath $Python -ArgumentList $workerArgs `
+            -WorkingDirectory $BackendRoot `
+            -RedirectStandardOutput (Join-Path $LogsRoot "control-worker.out.log") `
+            -RedirectStandardError (Join-Path $LogsRoot "control-worker.err.log") `
+            -WindowStyle Hidden -PassThru
+        $startedProcesses.Add($worker)
+        Start-Sleep -Milliseconds 500
+        if ($worker.HasExited) {
+            throw "Control-plane worker exited during startup with code $($worker.ExitCode)."
+        }
+        $workerHeartbeat = Wait-WorkerHeartbeat -LiteralPath $HeartbeatFile -ExpectedPid $worker.Id `
+            -TimeoutSeconds $StartupTimeoutSeconds
     }
 
-    $capitalFlowRefreshArgs = @(
-        "-X", "utf8", $CapitalFlowRefreshScript,
-        "--api-base", $ApiBase,
-        "--interval-seconds", "900",
-        "--retry-seconds", "300",
-        "--max-cycles", "0"
-    )
-    $capitalFlowRefreshWorker = Start-Process -FilePath $Python `
-        -ArgumentList $capitalFlowRefreshArgs `
-        -WorkingDirectory $BackendRoot `
-        -RedirectStandardOutput (Join-Path $LogsRoot "capital-flow-refresh-worker.out.log") `
-        -RedirectStandardError (Join-Path $LogsRoot "capital-flow-refresh-worker.err.log") `
-        -WindowStyle Hidden -PassThru
-    $startedProcesses.Add($capitalFlowRefreshWorker)
-    Start-Sleep -Milliseconds 500
-    if ($capitalFlowRefreshWorker.HasExited) {
-        throw "Capital-flow refresh worker exited during startup with code $($capitalFlowRefreshWorker.ExitCode)."
-    }
-    $capitalFlowRefreshHeartbeat = Wait-WorkerHeartbeat `
-        -LiteralPath $CapitalFlowRefreshHeartbeatFile `
-        -ExpectedPid $capitalFlowRefreshWorker.Id `
-        -TimeoutSeconds $StartupTimeoutSeconds
-    if (
-        [int]$capitalFlowRefreshHeartbeat.interval_seconds -ne 900 -or
-        [int]$capitalFlowRefreshHeartbeat.retry_interval_seconds -ne 300 -or
-        $capitalFlowRefreshHeartbeat.review_only -ne $true -or
-        $capitalFlowRefreshHeartbeat.simulation_only -ne $true -or
-        $capitalFlowRefreshHeartbeat.live_trading_enabled -ne $false
-    ) {
-        throw "Capital-flow refresh worker started with an unexpected or unsafe configuration."
+    if (Test-ComponentSelected "reference_data_worker") {
+        $referenceArgs = @(
+            "-X", "utf8", $ReferenceWorkerScript,
+            "--interval-seconds", "14400",
+            "--max-cycles", "0",
+            "--board-limit", "50",
+            "--disclosure-limit", "500",
+            "--global-days", "30",
+            "--rate-limit-seconds", "0.2",
+            "--cycle-timeout-seconds", "900",
+            "--skip-sox"
+        )
+        $referenceWorker = Start-Process -FilePath $Python -ArgumentList $referenceArgs `
+            -WorkingDirectory $BackendRoot `
+            -RedirectStandardOutput (Join-Path $LogsRoot "reference-data-worker.out.log") `
+            -RedirectStandardError (Join-Path $LogsRoot "reference-data-worker.err.log") `
+            -WindowStyle Hidden -PassThru
+        $startedProcesses.Add($referenceWorker)
+        Start-Sleep -Milliseconds 500
+        if ($referenceWorker.HasExited) {
+            throw "Reference-data worker exited during startup with code $($referenceWorker.ExitCode)."
+        }
+        $referenceHeartbeat = Wait-WorkerHeartbeat `
+            -LiteralPath $ReferenceHeartbeatFile `
+            -ExpectedPid $referenceWorker.Id `
+            -TimeoutSeconds $StartupTimeoutSeconds
     }
 
-    $instrumentCatalogArgs = @(
-        "-X", "utf8", $InstrumentCatalogScript,
-        "--api-base", $ApiBase,
-        "--interval-seconds", "86400",
-        "--retry-seconds", "900",
-        "--minimum-member-count", "4000",
-        "--minimum-retained-ratio", "0.9"
-    )
-    $instrumentCatalogWorker = Start-Process -FilePath $Python `
-        -ArgumentList $instrumentCatalogArgs `
-        -WorkingDirectory $BackendRoot `
-        -RedirectStandardOutput (Join-Path $LogsRoot "instrument-catalog-refresh-worker.out.log") `
-        -RedirectStandardError (Join-Path $LogsRoot "instrument-catalog-refresh-worker.err.log") `
-        -WindowStyle Hidden -PassThru
-    $startedProcesses.Add($instrumentCatalogWorker)
-    Start-Sleep -Milliseconds 500
-    if ($instrumentCatalogWorker.HasExited) {
-        throw "Instrument-catalog refresh worker exited during startup with code $($instrumentCatalogWorker.ExitCode)."
-    }
-    $instrumentCatalogHeartbeat = Wait-WorkerHeartbeat `
-        -LiteralPath $InstrumentCatalogHeartbeatFile `
-        -ExpectedPid $instrumentCatalogWorker.Id `
-        -TimeoutSeconds $StartupTimeoutSeconds
-    if (
-        [int]$instrumentCatalogHeartbeat.interval_seconds -ne 86400 -or
-        [int]$instrumentCatalogHeartbeat.retry_interval_seconds -ne 900 -or
-        [int]$instrumentCatalogHeartbeat.minimum_member_count -ne 4000 -or
-        [double]$instrumentCatalogHeartbeat.minimum_retained_ratio -ne 0.9 -or
-        $instrumentCatalogHeartbeat.review_only -ne $true -or
-        $instrumentCatalogHeartbeat.simulation_only -ne $true -or
-        $instrumentCatalogHeartbeat.live_trading_enabled -ne $false
-    ) {
-        throw "Instrument-catalog refresh worker started with an unexpected or unsafe configuration."
+    if (Test-ComponentSelected "full_market_feature_worker") {
+        $fullMarketFeatureArgs = @(
+            "-X", "utf8", $FullMarketFeatureScript,
+            "--api-base", $ApiBase,
+            "--interval-seconds", "14400",
+            "--max-cycles", "0",
+            "--candidate-limit", "300",
+            "--lookback-bars", "120",
+            "--timeout-seconds", "300"
+        )
+        $fullMarketFeatureWorker = Start-Process -FilePath $Python `
+            -ArgumentList $fullMarketFeatureArgs `
+            -WorkingDirectory $BackendRoot `
+            -RedirectStandardOutput (Join-Path $LogsRoot "full-market-feature-worker.out.log") `
+            -RedirectStandardError (Join-Path $LogsRoot "full-market-feature-worker.err.log") `
+            -WindowStyle Hidden -PassThru
+        $startedProcesses.Add($fullMarketFeatureWorker)
+        Start-Sleep -Milliseconds 500
+        if ($fullMarketFeatureWorker.HasExited) {
+            throw "Full-market feature worker exited during startup with code $($fullMarketFeatureWorker.ExitCode)."
+        }
+        $fullMarketFeatureHeartbeat = Wait-WorkerHeartbeat `
+            -LiteralPath $FullMarketFeatureHeartbeatFile `
+            -ExpectedPid $fullMarketFeatureWorker.Id `
+            -TimeoutSeconds $StartupTimeoutSeconds
     }
 
-    $fullMarketCalibrationArgs = @(
-        "-X", "utf8", $FullMarketCalibrationScript,
-        "--api-base", $ApiBase,
-        "--interval-seconds", "86400",
-        "--retry-seconds", "1800",
-        "--deadline-seconds", "900",
-        "--max-cycles", "0"
-    )
-    $fullMarketCalibrationWorker = Start-Process -FilePath $Python `
-        -ArgumentList $fullMarketCalibrationArgs `
-        -WorkingDirectory $BackendRoot `
-        -RedirectStandardOutput (Join-Path $LogsRoot "full-market-calibration-worker.out.log") `
-        -RedirectStandardError (Join-Path $LogsRoot "full-market-calibration-worker.err.log") `
-        -WindowStyle Hidden -PassThru
-    $startedProcesses.Add($fullMarketCalibrationWorker)
-    Start-Sleep -Milliseconds 500
-    if ($fullMarketCalibrationWorker.HasExited) {
-        throw "Full-market calibration worker exited during startup with code $($fullMarketCalibrationWorker.ExitCode)."
+    if (Test-ComponentSelected "market_history_refresh_worker") {
+        $marketHistoryRefreshArgs = @(
+            "-X", "utf8", $MarketHistoryRefreshScript,
+            "--api-base", $ApiBase,
+            "--interval-seconds", "14400",
+            "--retry-interval-seconds", "900",
+            "--max-cycles", "0",
+            "--days", "150",
+            "--batch-size", "200",
+            "--max-workers", "20",
+            "--seed-batch-size", "500",
+            "--gap-recovery-limit", "500",
+            "--deadline-seconds", "900"
+        )
+        $marketHistoryRefreshWorker = Start-Process -FilePath $Python `
+            -ArgumentList $marketHistoryRefreshArgs `
+            -WorkingDirectory $BackendRoot `
+            -RedirectStandardOutput (Join-Path $LogsRoot "market-history-refresh-worker.out.log") `
+            -RedirectStandardError (Join-Path $LogsRoot "market-history-refresh-worker.err.log") `
+            -WindowStyle Hidden -PassThru
+        $startedProcesses.Add($marketHistoryRefreshWorker)
+        Start-Sleep -Milliseconds 500
+        if ($marketHistoryRefreshWorker.HasExited) {
+            throw "Market-history refresh worker exited during startup with code $($marketHistoryRefreshWorker.ExitCode)."
+        }
+        $marketHistoryRefreshHeartbeat = Wait-WorkerHeartbeat `
+            -LiteralPath $MarketHistoryRefreshHeartbeatFile `
+            -ExpectedPid $marketHistoryRefreshWorker.Id `
+            -TimeoutSeconds $StartupTimeoutSeconds
+        if (
+            [int]$marketHistoryRefreshHeartbeat.interval_seconds -ne 14400 -or
+            [int]$marketHistoryRefreshHeartbeat.retry_interval_seconds -ne 900 -or
+            [int]$marketHistoryRefreshHeartbeat.deadline_seconds -ne 900 -or
+            [int]$marketHistoryRefreshHeartbeat.days -ne 150 -or
+            [int]$marketHistoryRefreshHeartbeat.batch_size -ne 200 -or
+            [int]$marketHistoryRefreshHeartbeat.max_workers -ne 20 -or
+            [int]$marketHistoryRefreshHeartbeat.seed_batch_size -ne 500 -or
+            [int]$marketHistoryRefreshHeartbeat.gap_recovery_limit -ne 500 -or
+            $marketHistoryRefreshHeartbeat.review_only -ne $true -or
+            $marketHistoryRefreshHeartbeat.simulation_only -ne $true -or
+            $marketHistoryRefreshHeartbeat.live_trading_enabled -ne $false
+        ) {
+            throw "Market-history refresh worker started with an unexpected or unsafe configuration."
+        }
     }
-    $fullMarketCalibrationHeartbeat = Wait-WorkerHeartbeat `
-        -LiteralPath $FullMarketCalibrationHeartbeatFile `
-        -ExpectedPid $fullMarketCalibrationWorker.Id `
-        -TimeoutSeconds $StartupTimeoutSeconds
-    if (
-        [int]$fullMarketCalibrationHeartbeat.interval_seconds -ne 86400 -or
-        [int]$fullMarketCalibrationHeartbeat.retry_interval_seconds -ne 1800 -or
-        [int]$fullMarketCalibrationHeartbeat.deadline_seconds -ne 900 -or
-        $fullMarketCalibrationHeartbeat.review_only -ne $true -or
-        $fullMarketCalibrationHeartbeat.simulation_only -ne $true -or
-        $fullMarketCalibrationHeartbeat.live_trading_enabled -ne $false
-    ) {
-        throw "Full-market calibration worker started with an unexpected or unsafe configuration."
+
+    if (Test-ComponentSelected "capital_flow_refresh_worker") {
+        $capitalFlowRefreshArgs = @(
+            "-X", "utf8", $CapitalFlowRefreshScript,
+            "--api-base", $ApiBase,
+            "--interval-seconds", "900",
+            "--retry-seconds", "300",
+            "--max-cycles", "0"
+        )
+        $capitalFlowRefreshWorker = Start-Process -FilePath $Python `
+            -ArgumentList $capitalFlowRefreshArgs `
+            -WorkingDirectory $BackendRoot `
+            -RedirectStandardOutput (Join-Path $LogsRoot "capital-flow-refresh-worker.out.log") `
+            -RedirectStandardError (Join-Path $LogsRoot "capital-flow-refresh-worker.err.log") `
+            -WindowStyle Hidden -PassThru
+        $startedProcesses.Add($capitalFlowRefreshWorker)
+        Start-Sleep -Milliseconds 500
+        if ($capitalFlowRefreshWorker.HasExited) {
+            throw "Capital-flow refresh worker exited during startup with code $($capitalFlowRefreshWorker.ExitCode)."
+        }
+        $capitalFlowRefreshHeartbeat = Wait-WorkerHeartbeat `
+            -LiteralPath $CapitalFlowRefreshHeartbeatFile `
+            -ExpectedPid $capitalFlowRefreshWorker.Id `
+            -TimeoutSeconds $StartupTimeoutSeconds
+        if (
+            [int]$capitalFlowRefreshHeartbeat.interval_seconds -ne 900 -or
+            [int]$capitalFlowRefreshHeartbeat.retry_interval_seconds -ne 300 -or
+            $capitalFlowRefreshHeartbeat.review_only -ne $true -or
+            $capitalFlowRefreshHeartbeat.simulation_only -ne $true -or
+            $capitalFlowRefreshHeartbeat.live_trading_enabled -ne $false
+        ) {
+            throw "Capital-flow refresh worker started with an unexpected or unsafe configuration."
+        }
+    }
+
+    if (Test-ComponentSelected "instrument_catalog_refresh_worker") {
+        $instrumentCatalogArgs = @(
+            "-X", "utf8", $InstrumentCatalogScript,
+            "--api-base", $ApiBase,
+            "--interval-seconds", "86400",
+            "--retry-seconds", "900",
+            "--minimum-member-count", "4000",
+            "--minimum-retained-ratio", "0.9"
+        )
+        $instrumentCatalogWorker = Start-Process -FilePath $Python `
+            -ArgumentList $instrumentCatalogArgs `
+            -WorkingDirectory $BackendRoot `
+            -RedirectStandardOutput (Join-Path $LogsRoot "instrument-catalog-refresh-worker.out.log") `
+            -RedirectStandardError (Join-Path $LogsRoot "instrument-catalog-refresh-worker.err.log") `
+            -WindowStyle Hidden -PassThru
+        $startedProcesses.Add($instrumentCatalogWorker)
+        Start-Sleep -Milliseconds 500
+        if ($instrumentCatalogWorker.HasExited) {
+            throw "Instrument-catalog refresh worker exited during startup with code $($instrumentCatalogWorker.ExitCode)."
+        }
+        $instrumentCatalogHeartbeat = Wait-WorkerHeartbeat `
+            -LiteralPath $InstrumentCatalogHeartbeatFile `
+            -ExpectedPid $instrumentCatalogWorker.Id `
+            -TimeoutSeconds $StartupTimeoutSeconds
+        if (
+            [int]$instrumentCatalogHeartbeat.interval_seconds -ne 86400 -or
+            [int]$instrumentCatalogHeartbeat.retry_interval_seconds -ne 900 -or
+            [int]$instrumentCatalogHeartbeat.minimum_member_count -ne 4000 -or
+            [double]$instrumentCatalogHeartbeat.minimum_retained_ratio -ne 0.9 -or
+            $instrumentCatalogHeartbeat.review_only -ne $true -or
+            $instrumentCatalogHeartbeat.simulation_only -ne $true -or
+            $instrumentCatalogHeartbeat.live_trading_enabled -ne $false
+        ) {
+            throw "Instrument-catalog refresh worker started with an unexpected or unsafe configuration."
+        }
+    }
+
+    if (Test-ComponentSelected "full_market_calibration_worker") {
+        $fullMarketCalibrationArgs = @(
+            "-X", "utf8", $FullMarketCalibrationScript,
+            "--api-base", $ApiBase,
+            "--interval-seconds", "86400",
+            "--retry-seconds", "1800",
+            "--deadline-seconds", "900",
+            "--max-cycles", "0"
+        )
+        $fullMarketCalibrationWorker = Start-Process -FilePath $Python `
+            -ArgumentList $fullMarketCalibrationArgs `
+            -WorkingDirectory $BackendRoot `
+            -RedirectStandardOutput (Join-Path $LogsRoot "full-market-calibration-worker.out.log") `
+            -RedirectStandardError (Join-Path $LogsRoot "full-market-calibration-worker.err.log") `
+            -WindowStyle Hidden -PassThru
+        $startedProcesses.Add($fullMarketCalibrationWorker)
+        Start-Sleep -Milliseconds 500
+        if ($fullMarketCalibrationWorker.HasExited) {
+            throw "Full-market calibration worker exited during startup with code $($fullMarketCalibrationWorker.ExitCode)."
+        }
+        $fullMarketCalibrationHeartbeat = Wait-WorkerHeartbeat `
+            -LiteralPath $FullMarketCalibrationHeartbeatFile `
+            -ExpectedPid $fullMarketCalibrationWorker.Id `
+            -TimeoutSeconds $StartupTimeoutSeconds
+        if (
+            [int]$fullMarketCalibrationHeartbeat.interval_seconds -ne 86400 -or
+            [int]$fullMarketCalibrationHeartbeat.retry_interval_seconds -ne 1800 -or
+            [int]$fullMarketCalibrationHeartbeat.deadline_seconds -ne 900 -or
+            $fullMarketCalibrationHeartbeat.review_only -ne $true -or
+            $fullMarketCalibrationHeartbeat.simulation_only -ne $true -or
+            $fullMarketCalibrationHeartbeat.live_trading_enabled -ne $false
+        ) {
+            throw "Full-market calibration worker started with an unexpected or unsafe configuration."
+        }
     }
 
     $codexPulse = $null
     $codexPulseHeartbeat = $null
     $codexDecision = $null
     $codexDecisionHeartbeat = $null
-    if ($EnableCodexSearch) {
+    if ($CodexComponentsSelected) {
         $codexPulseArgs = @(
             "-X", "utf8", $CodexPulseScript,
             "--api-base", $ApiBase,
@@ -652,76 +764,112 @@ try {
     $backendMetadata["url"] = $ApiBase
     $frontendMetadata = Get-StartedProcessMetadata -Process $frontend -CommandMarker $ViteEntry
     $frontendMetadata["url"] = $FrontendBase
-    $workerMetadata = Get-StartedProcessMetadata -Process $worker -CommandMarker $WorkerScript
-    $workerMetadata["profile"] = "adaptive"
-    $workerMetadata["interval_seconds"] = 900
-    $workerMetadata["heartbeat_path"] = $HeartbeatFile
-    $workerMetadata["runtime_pid"] = [int]$workerHeartbeat.pid
-    $referenceMetadata = Get-StartedProcessMetadata `
-        -Process $referenceWorker `
-        -CommandMarker $ReferenceWorkerScript
-    $referenceMetadata["interval_seconds"] = 14400
-    $referenceMetadata["heartbeat_path"] = $ReferenceHeartbeatFile
-    $referenceMetadata["runtime_pid"] = [int]$referenceHeartbeat.pid
-    $referenceMetadata["review_only"] = $true
-    $fullMarketFeatureMetadata = Get-StartedProcessMetadata `
-        -Process $fullMarketFeatureWorker `
-        -CommandMarker $FullMarketFeatureScript
-    $fullMarketFeatureMetadata["interval_seconds"] = 14400
-    $fullMarketFeatureMetadata["timeout_seconds"] = 300
-    $fullMarketFeatureMetadata["candidate_limit"] = 300
-    $fullMarketFeatureMetadata["lookback_bars"] = 120
-    $fullMarketFeatureMetadata["heartbeat_path"] = $FullMarketFeatureHeartbeatFile
-    $fullMarketFeatureMetadata["runtime_pid"] = [int]$fullMarketFeatureHeartbeat.pid
-    $fullMarketFeatureMetadata["review_only"] = $true
-    $fullMarketFeatureMetadata["simulation_only"] = $true
-    $marketHistoryRefreshMetadata = Get-StartedProcessMetadata `
-        -Process $marketHistoryRefreshWorker `
-        -CommandMarker $MarketHistoryRefreshScript
-    $marketHistoryRefreshMetadata["interval_seconds"] = 14400
-    $marketHistoryRefreshMetadata["retry_interval_seconds"] = 900
-    $marketHistoryRefreshMetadata["deadline_seconds"] = 900
-    $marketHistoryRefreshMetadata["days"] = 150
-    $marketHistoryRefreshMetadata["batch_size"] = 200
-    $marketHistoryRefreshMetadata["max_workers"] = 20
-    $marketHistoryRefreshMetadata["seed_batch_size"] = 500
-    $marketHistoryRefreshMetadata["gap_recovery_limit"] = 500
-    $marketHistoryRefreshMetadata["heartbeat_path"] = $MarketHistoryRefreshHeartbeatFile
-    $marketHistoryRefreshMetadata["runtime_pid"] = [int]$marketHistoryRefreshHeartbeat.pid
-    $marketHistoryRefreshMetadata["review_only"] = $true
-    $marketHistoryRefreshMetadata["simulation_only"] = $true
-    $capitalFlowRefreshMetadata = Get-StartedProcessMetadata `
-        -Process $capitalFlowRefreshWorker `
-        -CommandMarker $CapitalFlowRefreshScript
-    $capitalFlowRefreshMetadata["interval_seconds"] = 900
-    $capitalFlowRefreshMetadata["retry_interval_seconds"] = 300
-    $capitalFlowRefreshMetadata["heartbeat_path"] = $CapitalFlowRefreshHeartbeatFile
-    $capitalFlowRefreshMetadata["runtime_pid"] = [int]$capitalFlowRefreshHeartbeat.pid
-    $capitalFlowRefreshMetadata["review_only"] = $true
-    $capitalFlowRefreshMetadata["simulation_only"] = $true
-    $instrumentCatalogMetadata = Get-StartedProcessMetadata `
-        -Process $instrumentCatalogWorker `
-        -CommandMarker $InstrumentCatalogScript
-    $instrumentCatalogMetadata["interval_seconds"] = 86400
-    $instrumentCatalogMetadata["retry_interval_seconds"] = 900
-    $instrumentCatalogMetadata["minimum_member_count"] = 4000
-    $instrumentCatalogMetadata["minimum_retained_ratio"] = 0.9
-    $instrumentCatalogMetadata["heartbeat_path"] = $InstrumentCatalogHeartbeatFile
-    $instrumentCatalogMetadata["runtime_pid"] = [int]$instrumentCatalogHeartbeat.pid
-    $instrumentCatalogMetadata["review_only"] = $true
-    $instrumentCatalogMetadata["simulation_only"] = $true
-    $fullMarketCalibrationMetadata = Get-StartedProcessMetadata `
-        -Process $fullMarketCalibrationWorker `
-        -CommandMarker $FullMarketCalibrationScript
-    $fullMarketCalibrationMetadata["interval_seconds"] = 86400
-    $fullMarketCalibrationMetadata["retry_interval_seconds"] = 1800
-    $fullMarketCalibrationMetadata["deadline_seconds"] = 900
-    $fullMarketCalibrationMetadata["heartbeat_path"] = $FullMarketCalibrationHeartbeatFile
-    $fullMarketCalibrationMetadata["runtime_pid"] = [int]$fullMarketCalibrationHeartbeat.pid
-    $fullMarketCalibrationMetadata["review_only"] = $true
-    $fullMarketCalibrationMetadata["simulation_only"] = $true
+    if (Test-ComponentSelected "control_worker") {
+        $workerMetadata = Get-StartedProcessMetadata -Process $worker -CommandMarker $WorkerScript
+        $workerMetadata["profile"] = "adaptive"
+        $workerMetadata["interval_seconds"] = 900
+        $workerMetadata["heartbeat_path"] = $HeartbeatFile
+        $workerMetadata["runtime_pid"] = [int]$workerHeartbeat.pid
+    }
+    else {
+        $workerMetadata = New-ExcludedComponentMetadata -Name "control_worker"
+    }
+    if (Test-ComponentSelected "reference_data_worker") {
+        $referenceMetadata = Get-StartedProcessMetadata `
+            -Process $referenceWorker `
+            -CommandMarker $ReferenceWorkerScript
+        $referenceMetadata["interval_seconds"] = 14400
+        $referenceMetadata["heartbeat_path"] = $ReferenceHeartbeatFile
+        $referenceMetadata["runtime_pid"] = [int]$referenceHeartbeat.pid
+        $referenceMetadata["review_only"] = $true
+    }
+    else {
+        $referenceMetadata = New-ExcludedComponentMetadata -Name "reference_data_worker"
+    }
+    if (Test-ComponentSelected "full_market_feature_worker") {
+        $fullMarketFeatureMetadata = Get-StartedProcessMetadata `
+            -Process $fullMarketFeatureWorker `
+            -CommandMarker $FullMarketFeatureScript
+        $fullMarketFeatureMetadata["interval_seconds"] = 14400
+        $fullMarketFeatureMetadata["timeout_seconds"] = 300
+        $fullMarketFeatureMetadata["candidate_limit"] = 300
+        $fullMarketFeatureMetadata["lookback_bars"] = 120
+        $fullMarketFeatureMetadata["heartbeat_path"] = $FullMarketFeatureHeartbeatFile
+        $fullMarketFeatureMetadata["runtime_pid"] = [int]$fullMarketFeatureHeartbeat.pid
+        $fullMarketFeatureMetadata["review_only"] = $true
+        $fullMarketFeatureMetadata["simulation_only"] = $true
+    }
+    else {
+        $fullMarketFeatureMetadata = New-ExcludedComponentMetadata -Name "full_market_feature_worker"
+    }
+    if (Test-ComponentSelected "market_history_refresh_worker") {
+        $marketHistoryRefreshMetadata = Get-StartedProcessMetadata `
+            -Process $marketHistoryRefreshWorker `
+            -CommandMarker $MarketHistoryRefreshScript
+        $marketHistoryRefreshMetadata["interval_seconds"] = 14400
+        $marketHistoryRefreshMetadata["retry_interval_seconds"] = 900
+        $marketHistoryRefreshMetadata["deadline_seconds"] = 900
+        $marketHistoryRefreshMetadata["days"] = 150
+        $marketHistoryRefreshMetadata["batch_size"] = 200
+        $marketHistoryRefreshMetadata["max_workers"] = 20
+        $marketHistoryRefreshMetadata["seed_batch_size"] = 500
+        $marketHistoryRefreshMetadata["gap_recovery_limit"] = 500
+        $marketHistoryRefreshMetadata["heartbeat_path"] = $MarketHistoryRefreshHeartbeatFile
+        $marketHistoryRefreshMetadata["runtime_pid"] = [int]$marketHistoryRefreshHeartbeat.pid
+        $marketHistoryRefreshMetadata["review_only"] = $true
+        $marketHistoryRefreshMetadata["simulation_only"] = $true
+    }
+    else {
+        $marketHistoryRefreshMetadata = New-ExcludedComponentMetadata -Name "market_history_refresh_worker"
+    }
+    if (Test-ComponentSelected "capital_flow_refresh_worker") {
+        $capitalFlowRefreshMetadata = Get-StartedProcessMetadata `
+            -Process $capitalFlowRefreshWorker `
+            -CommandMarker $CapitalFlowRefreshScript
+        $capitalFlowRefreshMetadata["interval_seconds"] = 900
+        $capitalFlowRefreshMetadata["retry_interval_seconds"] = 300
+        $capitalFlowRefreshMetadata["heartbeat_path"] = $CapitalFlowRefreshHeartbeatFile
+        $capitalFlowRefreshMetadata["runtime_pid"] = [int]$capitalFlowRefreshHeartbeat.pid
+        $capitalFlowRefreshMetadata["review_only"] = $true
+        $capitalFlowRefreshMetadata["simulation_only"] = $true
+    }
+    else {
+        $capitalFlowRefreshMetadata = New-ExcludedComponentMetadata -Name "capital_flow_refresh_worker"
+    }
+    if (Test-ComponentSelected "instrument_catalog_refresh_worker") {
+        $instrumentCatalogMetadata = Get-StartedProcessMetadata `
+            -Process $instrumentCatalogWorker `
+            -CommandMarker $InstrumentCatalogScript
+        $instrumentCatalogMetadata["interval_seconds"] = 86400
+        $instrumentCatalogMetadata["retry_interval_seconds"] = 900
+        $instrumentCatalogMetadata["minimum_member_count"] = 4000
+        $instrumentCatalogMetadata["minimum_retained_ratio"] = 0.9
+        $instrumentCatalogMetadata["heartbeat_path"] = $InstrumentCatalogHeartbeatFile
+        $instrumentCatalogMetadata["runtime_pid"] = [int]$instrumentCatalogHeartbeat.pid
+        $instrumentCatalogMetadata["review_only"] = $true
+        $instrumentCatalogMetadata["simulation_only"] = $true
+    }
+    else {
+        $instrumentCatalogMetadata = New-ExcludedComponentMetadata -Name "instrument_catalog_refresh_worker"
+    }
+    if (Test-ComponentSelected "full_market_calibration_worker") {
+        $fullMarketCalibrationMetadata = Get-StartedProcessMetadata `
+            -Process $fullMarketCalibrationWorker `
+            -CommandMarker $FullMarketCalibrationScript
+        $fullMarketCalibrationMetadata["interval_seconds"] = 86400
+        $fullMarketCalibrationMetadata["retry_interval_seconds"] = 1800
+        $fullMarketCalibrationMetadata["deadline_seconds"] = 900
+        $fullMarketCalibrationMetadata["heartbeat_path"] = $FullMarketCalibrationHeartbeatFile
+        $fullMarketCalibrationMetadata["runtime_pid"] = [int]$fullMarketCalibrationHeartbeat.pid
+        $fullMarketCalibrationMetadata["review_only"] = $true
+        $fullMarketCalibrationMetadata["simulation_only"] = $true
+    }
+    else {
+        $fullMarketCalibrationMetadata = New-ExcludedComponentMetadata -Name "full_market_calibration_worker"
+    }
     $codexMetadata = [ordered]@{
-        enabled = $EnableCodexSearch
+        enabled = $false
+        reason = [string]$StackPlan.excluded.codex_market_pulse
         model = $CodexPulseModel
         reasoning_effort = $CodexPulseReasoningEffort
     }
@@ -735,7 +883,8 @@ try {
         $codexMetadata["runtime_pid"] = [int]$codexPulseHeartbeat.pid
     }
     $codexDecisionMetadata = [ordered]@{
-        enabled = $EnableCodexSearch
+        enabled = $false
+        reason = [string]$StackPlan.excluded.codex_decision_review
         model = $CodexPulseModel
         reasoning_effort = $CodexPulseReasoningEffort
     }
@@ -753,11 +902,16 @@ try {
     }
 
     $metadata = [ordered]@{
-        schema_version = "run_stack_pids.v1"
+        schema_version = "run_stack_pids.v2"
         started_at = [DateTimeOffset]::Now.ToString("o")
         project_root = $ProjectRoot
         database_path = $DatabasePath
         live_trading_enabled = $false
+        service_profile = $ServiceProfile
+        plan_sha256 = [string]$StackPlan.plan_sha256
+        plan_file = $PlanFile
+        selected_components = $SelectedComponents
+        write_targets = $StackPlan.write_targets
         tonghuasun_readonly = $TonghuasunReadOnly
         backend = $backendMetadata
         frontend = $frontendMetadata

@@ -41,3 +41,7 @@ PowerShell `-File` / Python CLI 退出码：0 表示全部检查合格，2 表�
 受控恢复应先界定需要恢复的 worker、数据库与 manifest 位置、日期/证券范围、来源回退规则以及停止条件；保存可恢复备份与前后表级核对。保留现有实盘禁用检查，不修改原冻结研究材料，不把休市期间数据源失败当作必须重启整栈的理由。
 
 本次交付是诊断与新鲜度防误报增量，不是自动恢复上线或行情补齐验收。下一增量应把最小运行组合从全量 worker 启动中拆出，经过临时数据库和故障注入验证后，再恢复明确范围的生产任务。
+
+## 服务组合（2026-09-24 增量）
+
+`run_stack.ps1` / `ensure_stack.ps1` 新增 `-ServiceProfile review|full`，默认 `full` 与原行为一致；`review` 只启动后端与前端，不启动任何 worker，但后端启动的 `SQLiteStore.init()` 与界面请求仍会写运行库。诊断把组合排除的 worker 报为 `disabled`，把排除却在运行的报为 `running_but_not_in_profile`，心跳配置回显与组合契约不符报 `configuration_mismatch`；`/readyz` 不再把未来时间心跳当作新鲜。组合定义、写入范围、备份/回滚与本机验收清单见 [RECOVERY_PROFILE.md](RECOVERY_PROFILE.md)。

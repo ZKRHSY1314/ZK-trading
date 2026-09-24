@@ -7,6 +7,10 @@ const observability = readFileSync(
   new URL("../src/components/control-plane/ControlPlaneObservabilityCard.vue", import.meta.url),
   "utf8",
 );
+const evidenceCard = readFileSync(
+  new URL("../src/components/control-plane/ForecastEvidenceCard.vue", import.meta.url),
+  "utf8",
+);
 
 test("K线失败时只显示空态，不渲染占位折线", () => {
   assert.match(dashboard, /<template v-if="klineBars\.length">/);
@@ -76,4 +80,21 @@ test("候选详情只将可用校准值标注为有限历史校准", () => {
   assert.match(dashboard, /校准样本不足/);
   assert.match(dashboard, /calibrated_probability/);
   assert.doesNotMatch(dashboard, /极大概率/);
+});
+
+test("预测证据卡展示规范口径且不写死历史观测", () => {
+  assert.match(dashboard, /<ForecastEvidenceCard \/>/);
+  assert.match(evidenceCard, /fetchForecastEvidence/);
+  for (const label of ["确认快照", "推断快照", "非规范快照", "未完成声明", "独立决策日", "待成熟", "到期覆盖", "策略资格", "口径", "证据策略"]) {
+    assert.ok(evidenceCard.includes(label), `缺少证据文案：${label}`);
+  }
+  // Unknown or absent evidence is shown as unknown, never as zero or as passing.
+  assert.match(evidenceCard, /value == null \? "未知"/);
+  assert.match(evidenceCard, /value == null \? "无到期"/);
+  assert.match(evidenceCard, /缺失证据不计为 0/);
+  assert.match(evidenceCard, /并非交易所日历/);
+  // Dated September 13 observations must come from the API, not the template.
+  for (const observation of ["3630", "3,630", "121", "150 ", "0.004", "0.081", "−0.049", "-0.049"]) {
+    assert.ok(!evidenceCard.includes(observation), `不应写死历史观测：${observation}`);
+  }
 });

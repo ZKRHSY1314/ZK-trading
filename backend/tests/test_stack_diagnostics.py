@@ -37,6 +37,7 @@ def database(root, rows=()):
     ({'completed_at': NOW.isoformat(), 'status': 'failed'}, 'degraded'),
     ({'completed_at': NOW.isoformat(), 'status': 'new_unknown_status'}, 'degraded'),
     ({'completed_at': NOW.isoformat(), 'status': 'completed'}, 'healthy'),
+    ({'completed_at': NOW.isoformat(), 'status': 'skipped'}, 'healthy'),
 ])
 def test_heartbeat_does_not_infer_success_or_trust_future_time(payload, status):
     assert probe.heartbeat(payload, NOW, 1800)['status'] == status
@@ -125,9 +126,10 @@ def test_output_cannot_overwrite_database(tmp_path):
 
 
 def test_check_only_entrypoint_cannot_reach_start_or_stop(tmp_path):
-    shell = probe.shutil.which('powershell.exe')
+    # Windows PowerShell when present; otherwise PowerShell 7 (the CI Linux leg).
+    shell = probe.shutil.which('powershell.exe') or probe.shutil.which('pwsh')
     if not shell:
-        pytest.skip('Windows PowerShell integration')
+        pytest.skip('PowerShell integration')
     root = tmp_path
     scripts = root/'scripts'
     scripts.mkdir()
@@ -136,12 +138,14 @@ def test_check_only_entrypoint_cannot_reach_start_or_stop(tmp_path):
     (scripts/'check_stack.ps1').write_text("'{\"read_only\":true}'; exit 2", encoding='utf-8')
     for name in ('run_stack.ps1', 'stop_stack.ps1', 'tonghuasun_readonly.ps1'):
         (scripts/name).write_text("throw 'MUTATING_OR_PLUGIN_PATH_REACHED'")
-    result = subprocess.run([shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                             '-File', str(scripts/'ensure_stack.ps1'), '-CheckOnly'],
-                            capture_output=True, text=True, timeout=20)
-    assert result.returncode == 2
-    assert json.loads(result.stdout)['read_only'] is True
-    assert 'MUTATING_OR_PLUGIN_PATH_REACHED' not in result.stderr
+    # No backend/.venv or stack helpers exist here either: CheckOnly must not need them.
+    for extra in ([], ['-ServiceProfile', 'review']):
+        result = subprocess.run([shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                                 '-File', str(scripts/'ensure_stack.ps1'), '-CheckOnly', *extra],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 2
+        assert json.loads(result.stdout)['read_only'] is True
+        assert 'MUTATING_OR_PLUGIN_PATH_REACHED' not in result.stderr
 
 
 def test_real_process_identity_rejects_reused_pid_metadata(tmp_path):
@@ -181,3 +185,82 @@ ConvertTo-Json -Depth 3 | Set-Content -LiteralPath '__PATH__' -Encoding UTF8
         except subprocess.TimeoutExpired:
             child.kill()
             child.communicate(timeout=5)
+
+
+def _worker_heartbeat(root, name, **fields):
+    folder = root / 'backend/logs'
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder/f'{name}_heartbeat.json').write_text(json.dumps(
+        {'pid': 10, 'status': 'completed', 'completed_at': NOW.isoformat(), **fields}))
+
+
+def _ok_endpoint(*args, **kwargs):
+    return {'reachable': True, 'http_status': 200, 'status': 'ready', 'live_trading_enabled': False}
+
+
+def test_review_profile_workers_are_disabled_not_dead(tmp_path):
+    (tmp_path/'logs').mkdir()
+    (tmp_path/'logs/run_stack.pids.json').write_text(json.dumps(
+        {'schema_version': 'run_stack_pids.v2', 'service_profile': 'review', 'plan_sha256': 'abc'}))
+    excluded = {key: {'identity': 'missing_metadata', 'runtime_pid': None, 'enabled': False}
+                for key in probe.WORKERS}
+    result = probe.inspect(tmp_path, NOW, runtime={'processes': excluded}, http_get=_ok_endpoint)
+    assert result['service_profile'] == 'review'
+    assert result['plan_sha256'] == 'abc'
+    for key in probe.WORKERS:
+        assert result['workers'][key]['operational_status'] == 'disabled'
+        assert f'{key}_not_running_or_unverified' not in result['issues']
+
+
+def test_excluded_worker_found_running_is_flagged(tmp_path):
+    result = probe.inspect(tmp_path, NOW, runtime={'processes': {'capital_flow_refresh_worker': {
+        'identity': 'matched', 'runtime_pid': 10, 'enabled': False}}}, http_get=_ok_endpoint)
+    worker = result['workers']['capital_flow_refresh_worker']
+    assert worker['operational_status'] == 'running_but_not_in_profile'
+    assert 'capital_flow_refresh_worker_running_but_not_in_profile' in result['issues']
+
+
+def test_v1_metadata_is_the_full_profile(tmp_path):
+    (tmp_path/'logs').mkdir()
+    (tmp_path/'logs/run_stack.pids.json').write_text(json.dumps({'schema_version': 'run_stack_pids.v1'}))
+    assert probe.inspect(tmp_path, NOW, runtime={}, http_get=_ok_endpoint)['service_profile'] == 'full'
+    assert probe.inspect(tmp_path/'absent', NOW, runtime={}, http_get=_ok_endpoint)['service_profile'] is None
+
+
+def test_worker_with_mismatched_configuration_is_not_healthy(tmp_path):
+    good = {'interval_seconds': 900, 'retry_interval_seconds': 300}
+    _worker_heartbeat(tmp_path, 'capital_flow_refresh', **{**good, 'retry_interval_seconds': 60})
+    runtime = {'processes': {'capital_flow_refresh_worker': {'identity': 'matched', 'runtime_pid': 10}}}
+    result = probe.inspect(tmp_path, NOW, runtime=runtime, http_get=_ok_endpoint)
+    worker = result['workers']['capital_flow_refresh_worker']
+    assert worker['status'] == 'healthy'  # the cycle itself completed
+    assert worker['configuration_mismatches'] == ['retry_interval_seconds']
+    assert worker['operational_status'] == 'configuration_mismatch'
+    _worker_heartbeat(tmp_path, 'capital_flow_refresh', **good)
+    fixed = probe.inspect(tmp_path, NOW, runtime=runtime, http_get=_ok_endpoint)
+    assert fixed['workers']['capital_flow_refresh_worker']['operational_status'] == 'healthy'
+
+
+def test_failed_upstream_cycle_is_distinct_from_a_dead_process(tmp_path):
+    _worker_heartbeat(tmp_path, 'control_plane', status='failed')
+    alive = probe.inspect(tmp_path, NOW, runtime={'processes': {
+        'control_worker': {'identity': 'matched', 'runtime_pid': 10}}}, http_get=_ok_endpoint)
+    dead = probe.inspect(tmp_path, NOW, runtime={'processes': {
+        'control_worker': {'identity': 'not_running', 'runtime_pid': 10}}}, http_get=_ok_endpoint)
+    reused = probe.inspect(tmp_path, NOW, runtime={'processes': {
+        'control_worker': {'identity': 'identity_mismatch', 'runtime_pid': 10}}}, http_get=_ok_endpoint)
+    assert alive['workers']['control_worker']['operational_status'] == 'degraded'
+    assert dead['workers']['control_worker']['operational_status'] == 'not_running_or_unverified'
+    assert reused['workers']['control_worker']['operational_status'] == 'not_running_or_unverified'
+    assert reused['workers']['control_worker']['process_identity'] == 'identity_mismatch'
+
+
+def test_future_heartbeat_with_live_process_is_not_healthy(tmp_path):
+    folder = tmp_path / 'backend/logs'
+    folder.mkdir(parents=True)
+    (folder/'control_plane_heartbeat.json').write_text(json.dumps(
+        {'pid': 10, 'status': 'completed', 'completed_at': (NOW+timedelta(hours=3)).isoformat()}))
+    result = probe.inspect(tmp_path, NOW, runtime={'processes': {
+        'control_worker': {'identity': 'matched', 'runtime_pid': 10}}}, http_get=_ok_endpoint)
+    assert result['workers']['control_worker']['operational_status'] == 'future_timestamp'
+    assert 'control_worker_future_timestamp' in result['issues']

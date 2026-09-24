@@ -159,6 +159,9 @@ def readiness_snapshot(
     }
 
 
+_HEARTBEAT_CLOCK_SKEW_SECONDS = 60
+
+
 def _heartbeat_snapshot(path: Path, *, stale_after_seconds: int = 18000) -> dict[str, Any]:
     result: dict[str, Any] = {
         "path": str(path),
@@ -176,10 +179,23 @@ def _heartbeat_snapshot(path: Path, *, stale_after_seconds: int = 18000) -> dict
         timestamp = datetime.fromisoformat(str(completed_at).replace("Z", "+00:00"))
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
-        age_seconds = max(0.0, (datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds())
+        raw_age_seconds = (datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds()
     except (TypeError, ValueError):
         return {**result, "status": "invalid", "heartbeat": payload}
     last_status = str(payload.get("status") or "unknown").strip().lower()
+    if raw_age_seconds < -_HEARTBEAT_CLOCK_SKEW_SECONDS:
+        # A heartbeat from the future proves nothing about the current process;
+        # clamping it to age 0 made it look fresh indefinitely.
+        return {
+            **result,
+            "status": "invalid",
+            "reason": "future_timestamp",
+            "age_seconds": round(raw_age_seconds, 2),
+            "pid": payload.get("pid"),
+            "last_status": last_status,
+            "completed_at": completed_at,
+        }
+    age_seconds = max(0.0, raw_age_seconds)
     if age_seconds > stale_after_seconds:
         runtime_status = "stale"
     elif last_status == "running":

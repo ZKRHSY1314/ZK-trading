@@ -6,6 +6,7 @@ from typing import Any
 
 from app.config import settings
 from app.forecasting.canonical import CANONICAL_POLICY_VERSION
+from app.forecasting.evidence import strategy_evidence_eligibility
 from app.storage.sqlite_store import SQLiteStore
 
 
@@ -215,14 +216,23 @@ class ForecastCalibrationService:
 
     @staticmethod
     def _proposal(metrics: dict[str, Any], *, scope: str) -> dict[str, Any]:
-        coverage_value = (
-            metrics.get("directional_coverage") if scope == "sector" else metrics.get("coverage")
-        )
-        coverage = float(coverage_value or 0.0)
+        # Coverage of forecasts that are actually due. The legacy coverage field
+        # divides by every forecast including immature ones, so a fresh 20-day
+        # snapshot read as a data gap. Metrics that predate the maturity fields
+        # keep the legacy denominator; nothing due yet is not a coverage problem.
+        if "coverage_of_due" in metrics:
+            due_coverage = metrics.get("coverage_of_due")
+            coverage = None if due_coverage is None else float(due_coverage)
+        else:
+            coverage_value = (
+                metrics.get("directional_coverage") if scope == "sector" else metrics.get("coverage")
+            )
+            coverage = float(coverage_value or 0.0)
         precision = metrics.get("precision_at_k")
         rank_ic = metrics.get("spearman_rank_ic")
         brier = metrics.get("brier_score")
-        if coverage < 0.8:
+        eligibility = strategy_evidence_eligibility(metrics)
+        if coverage is not None and coverage < 0.8:
             action = "improve_data_coverage"
             reason = f"Evaluation coverage is {coverage:.1%}, below the 80% review threshold."
         elif (rank_ic is not None and float(rank_ic) < 0) or (
@@ -233,12 +243,23 @@ class ForecastCalibrationService:
         elif brier is not None and float(brier) > 0.25:
             action = "recalibrate_probability"
             reason = "Directional ranking may remain useful, but probability calibration is weak."
-        elif (rank_ic is not None and float(rank_ic) >= 0.05) or (
-            precision is not None and float(precision) >= 0.55
-        ):
+        elif (
+            (rank_ic is not None and float(rank_ic) >= 0.05)
+            or (precision is not None and float(precision) >= 0.55)
+        ) and eligibility["eligible"]:
             action = "retain_champion_validate_challenger"
             reason = (
                 "Out-of-sample evidence is positive enough for continued challenger validation."
+            )
+        elif (rank_ic is not None and float(rank_ic) >= 0.05) or (
+            precision is not None and float(precision) >= 0.55
+        ):
+            # A positive statement needs eligible evidence; an unknown IC, too few
+            # independent decision dates or immature horizons do not qualify.
+            action = "continue_monitoring"
+            reason = (
+                "Metrics look favourable but the evidence is not eligible for a positive "
+                "strategy statement: " + ", ".join(eligibility["reasons"])
             )
         else:
             action = "continue_monitoring"
@@ -246,6 +267,7 @@ class ForecastCalibrationService:
         return {
             "action": action,
             "reason": reason,
+            "strategy_evidence": eligibility,
             "recommendation": (
                 "Run a versioned sandbox/challenger experiment and require human review; "
                 "do not mutate active scoring automatically."

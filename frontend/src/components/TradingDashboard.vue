@@ -272,6 +272,8 @@
             :error="observabilityError"
           />
 
+          <ForecastEvidenceCard />
+
           <article class="card plan-card" data-testid="simulation-plan">
             <div class="order-tabs">
               <button
@@ -480,6 +482,7 @@ import {
 } from "../api/cockpit";
 import { useCockpitObservability } from "../composables/useCockpitObservability";
 import ControlPlaneObservabilityCard from "./control-plane/ControlPlaneObservabilityCard.vue";
+import ForecastEvidenceCard from "./control-plane/ForecastEvidenceCard.vue";
 
 type Stock = {
   name: string;

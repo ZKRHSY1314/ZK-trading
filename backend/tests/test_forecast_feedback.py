@@ -92,6 +92,7 @@ def _forecast(
     scope: str = "stock",
     features: dict | None = None,
     data_version: str | None = None,
+    decision_cutoff: str = "2026-07-10T15:00:00+08:00",
 ) -> ForecastDecision:
     # Distinct decisions come from distinct bar vintages: one snapshot per
     # vintage is now an invariant, and evaluation keeps one snapshot per
@@ -101,8 +102,8 @@ def _forecast(
         decision_id=decision_id,
         scope=scope,
         subject=subject,
-        decision_cutoff="2026-07-10T15:00:00+08:00",
-        available_at="2026-07-10T14:59:00+08:00",
+        decision_cutoff=decision_cutoff,
+        available_at=decision_cutoff.replace("15:00:00", "14:59:00"),
         horizon_days=horizon_days,
         rank=rank,
         score=score,
@@ -281,6 +282,11 @@ def test_evaluate_groups_decisions_and_reports_ranking_probability_and_coverage(
         ("decision-b", "SH600005", 2, 0.4, -0.10),
         ("decision-b", "SH600006", 3, 0.1, -0.20),
     ]
+    # Two decisions on two different days: independent folds are decision dates.
+    cutoffs = {
+        "decision-a": "2026-07-10T15:00:00+08:00",
+        "decision-b": "2026-07-13T15:00:00+08:00",
+    }
     for decision_id, subject, rank, probability, realized_return in fixtures:
         # A real snapshot carries the whole horizon grid; only h=5 is evaluated
         # here, but a snapshot missing horizons is by definition incomplete and
@@ -289,6 +295,7 @@ def test_evaluate_groups_decisions_and_reports_ranking_probability_and_coverage(
             ledger.record_forecast(
                 _forecast(
                     decision_id=decision_id,
+                    decision_cutoff=cutoffs[decision_id],
                     subject=subject,
                     horizon_days=horizon,
                     rank=rank,
