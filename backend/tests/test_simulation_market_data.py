@@ -435,17 +435,20 @@ def test_simulation_account_exposes_verified_parsed_fresh_screen_positions(clien
     ]
 
 
+# Ages, not timestamps: parametrize arguments are evaluated at collection time,
+# and on a slow runner a "fresh" collection-time timestamp had already expired
+# by the time the test ran. The evidence time is taken when the test runs.
 @pytest.mark.parametrize(
-    ("created_at", "status", "parsed", "expected_reason"),
+    ("evidence_age", "status", "parsed", "expected_reason"),
     [
         (
-            datetime.now(timezone.utc) - timedelta(minutes=16),
+            timedelta(minutes=16),
             "positions_parsed",
             True,
             "screen_positions_evidence_expired",
         ),
         (
-            datetime.now(timezone.utc),
+            timedelta(0),
             "screen_table_unparsed",
             False,
             "screen_positions_not_parsed",
@@ -455,7 +458,7 @@ def test_simulation_account_exposes_verified_parsed_fresh_screen_positions(clien
 def test_simulation_account_does_not_claim_expired_or_unparsed_screen_holdings(
     client,
     test_db,
-    created_at,
+    evidence_age,
     status,
     parsed,
     expected_reason,
@@ -463,7 +466,7 @@ def test_simulation_account_does_not_claim_expired_or_unparsed_screen_holdings(
     _insert_screen_positions(
         test_db,
         positions=[{"symbol": "SZ300166", "quantity": 100}],
-        created_at=created_at,
+        created_at=datetime.now(timezone.utc) - evidence_age,
         status=status,
         parsed=parsed,
     )
