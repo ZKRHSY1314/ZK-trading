@@ -8,6 +8,16 @@ from typing import Any
 import pandas as pd
 
 from app.backtest.execution import BacktestExecutionModel, ExecutionDecision
+from app.backtest.execution_contract import (
+    FILL_POLICIES,
+    FILL_POLICY_RETROSPECTIVE,
+    ORDER_MARKET_AT_OPEN,
+    ORDER_RESTING_LIMIT,
+    ORDER_RESTING_STOP,
+    OrderIntent,
+    adjudication_bases,
+    execution_contract,
+)
 from app.backtest.ledger import ClosedTrade, FIFOLedger
 from app.config import settings
 from app.data.fundamentals import FundamentalResolver
@@ -79,7 +89,21 @@ class BacktestEngine:
         benchmark_symbol: str | None = None,
         persist: bool = True,
         allow_projected_fundamentals: bool = False,
+        fill_policy: str = FILL_POLICY_RETROSPECTIVE,
+        include_intents: bool = False,
     ) -> dict[str, Any]:
+        """Run the daily-bar backtest; see app.backtest.execution_contract.
+
+        Order intents are always committed from pre-open information.
+        ``fill_policy`` names how fills are adjudicated afterwards:
+        ``daily_bar_retrospective`` (default, the historical assumptions) or
+        ``pre_open_causal``. ``include_intents`` returns every committed intent
+        with its fingerprint for audit and metamorphic checks.
+        """
+
+        if fill_policy not in FILL_POLICIES:
+            raise ValueError(f"unknown fill policy: {fill_policy!r}")
+        order_intents: list[OrderIntent] = []
         benchmark_symbol = benchmark_symbol or settings.backtest_default_benchmark_symbol
         cash = initial_cash
         ledger = FIFOLedger()
@@ -145,79 +169,49 @@ class BacktestEngine:
             regime_data = regime_service.get_latest_regime(current_date)
             regime = regime_data.get("regime", "neutral")
 
+            # Pre-open snapshot. Every order of this session is committed from
+            # what is known before the open: start-of-session cash, positions
+            # marked at their last CLOSED bar, and the pre-open position count
+            # (plus the opening print as a market order's reference price). The
+            # old path valued holdings at today's close, let intraday stop and
+            # take-profit proceeds fund open-time buys, and let an earlier fill's
+            # daily-bar capacity resize the next buy - all unknowable at the open.
+            cash_at_open = cash
+            marks_at_open = self._pre_open_positions_value(ledger, dfs, curr_dt)
+            equity_at_open = cash_at_open + marks_at_open
+            positions_at_open = ledger.open_position_count()
+
+            # --- exit intents: closed-bar rules at the open, or resting orders ---
+            exit_plans: list[tuple[str, dict[str, Any], list[OrderIntent]]] = []
             for sym in list(ledger.lots):
                 if sym not in dfs or curr_dt not in dfs[sym].index:
                     continue
                 bar = dict(dfs[sym].loc[curr_dt])
-                avg_cost = ledger.average_cost(sym)
-                sell_price, sell_reason, exit_ratio = self._exit_decision(
+                intents = self._exit_intents(
+                    sym=sym,
+                    session=current_date,
                     df=dfs[sym],
                     curr_dt=curr_dt,
-                    bar=bar,
-                    avg_cost=avg_cost,
+                    opening=float(bar["open"]),
+                    avg_cost=ledger.average_cost(sym),
                     holding_days=self._oldest_holding_days(ledger, sym, current_date),
                     limit_up_avg=(entry_context.get(sym) or {}).get("limit_up_avg_price"),
                     partial_taken=sym in partial_taken,
+                    held_quantity=ledger.quantity(sym),
+                    available=sellable.get(sym, 0),
                 )
+                if intents:
+                    exit_plans.append((sym, bar, intents))
+                    order_intents.extend(intents)
 
-                if sell_price is None:
-                    continue
-
-                held_quantity = ledger.quantity(sym)
-                available = sellable.get(sym, 0)
-                if exit_ratio >= 1.0:
-                    exit_quantity = available
-                else:
-                    scaled = int(held_quantity * exit_ratio) // self.lot_size * self.lot_size
-                    exit_quantity = min(available, scaled)
-                if exit_quantity <= 0:
-                    # A position too small to halve keeps running until a full
-                    # exit reason fires; do not mark the partial as taken.
-                    continue
-
-                previous_close = self._previous_close(dfs[sym], curr_dt)
-                decision = self.execution.decide(
-                    side="sell",
-                    requested_quantity=exit_quantity,
-                    price=round(sell_price * (1 - self.slippage), 4),
-                    bar=bar,
-                    previous_close=previous_close,
-                    limit_pct=self._limit_pct(sym),
-                )
-                self._append_trade(trades, sym, current_date, sell_reason, decision)
-                if decision.fill_status == "rejected":
-                    warnings.append(f"{current_date} {sym} exit blocked: {decision.reject_reason}")
-                    continue
-
-                proceeds = decision.price * decision.filled_quantity - decision.fee - decision.stamp_tax
-                cash += proceeds
-                matched = ledger.sell(
-                    symbol=sym,
-                    quantity=decision.filled_quantity,
-                    exit_price=decision.price,
-                    exit_date=current_date,
-                    fee=decision.fee,
-                    stamp_tax=decision.stamp_tax,
-                    exit_reason=sell_reason,
-                    slippage_cost=abs(sell_price - decision.price) * decision.filled_quantity,
-                )
-                closed_trades.extend(matched)
-                sellable[sym] = max(0, sellable.get(sym, 0) - decision.filled_quantity)
-                exit_reason_counts[sell_reason] += 1
-                if exit_ratio < 1.0:
-                    partial_taken.add(sym)
-                if ledger.quantity(sym) <= 0:
-                    entry_context.pop(sym, None)
-                    partial_taken.discard(sym)
-
+            # --- entry intents: budget from the pre-open snapshot only ---
             entry_candidates = pending_candidates
             deferred_candidates = []
-
-            # Signals are computed after the current session closes and may
-            # only execute on the next available trading bar. This avoids the
-            # former close-to-same-close lookahead path.
+            entry_plans: list[tuple[OrderIntent, dict[str, Any], dict[str, Any]]] = []
+            reserved_cash = 0.0
             for sym, signal_score, snapshot, signal_context in entry_candidates:
-                if ledger.open_position_count() >= max_positions:
+                # Slots freed by this session's exits open up next session.
+                if positions_at_open + len(entry_plans) >= max_positions:
                     deferred_candidates.append((sym, signal_score, snapshot, signal_context))
                     continue
                 if sym not in dfs or curr_dt not in dfs[sym].index:
@@ -226,26 +220,74 @@ class BacktestEngine:
                 bar = dict(dfs[sym].loc[curr_dt])
                 signal_regime = str(signal_context.get("signal_regime") or "neutral")
                 alloc_cap = per_symbol_cap * (0.5 if signal_regime == "weak" else 1.0)
-                equity_before = cash + self._positions_value(ledger, dfs, curr_dt)
-                alloc = min(cash, equity_before * alloc_cap)
-                reference_price = float(bar["open"])
-                buy_price = round(reference_price * (1 + self.slippage), 4)
-                requested_qty = int(alloc / buy_price) // self.lot_size * self.lot_size
+                available_cash = cash_at_open - reserved_cash
+                budget = max(0.0, min(available_cash, equity_at_open * alloc_cap))
+                buy_price = round(float(bar["open"]) * (1 + self.slippage), 4)
+                requested_qty = self._affordable_quantity(budget, buy_price)
+                notional = requested_qty * buy_price
+                intent = OrderIntent(
+                    session=current_date,
+                    symbol=sym,
+                    side="buy",
+                    order_type=ORDER_MARKET_AT_OPEN,
+                    reason="prior_close_strong_signal",
+                    requested_quantity=requested_qty,
+                    reference_price=buy_price,
+                    budget=round(budget, 6),
+                    reserved_cash=round(notional + self.execution.estimated_fee(notional), 6),
+                    sizing_inputs={
+                        "cash_at_open": round(cash_at_open, 6),
+                        "reserved_before": round(reserved_cash, 6),
+                        "positions_marked_at_last_close": round(marks_at_open, 6),
+                        "equity_at_open": round(equity_at_open, 6),
+                        "allocation_cap": alloc_cap,
+                        "signal_regime": signal_regime,
+                    },
+                )
+                reserved_cash += intent.reserved_cash
+                entry_plans.append((intent, bar, signal_context))
+                order_intents.append(intent)
+
+            # --- adjudication, strictly after every intent is committed ---
+            resting_plans = []
+            for sym, bar, intents in exit_plans:
+                if intents[0].order_type == ORDER_MARKET_AT_OPEN:
+                    opening = float(bar["open"])
+                    fill = self._adjudicate_sell(
+                        intents[0], dfs[sym], curr_dt, bar, opening, fill_policy
+                    )
+                    cash += self._apply_sell(
+                        fill, intents[0], opening, ledger, trades, closed_trades, warnings,
+                        sellable, exit_reason_counts, partial_taken, entry_context,
+                    )
+                else:
+                    resting_plans.append((sym, bar, intents))
+
+            for intent, bar, signal_context in entry_plans:
+                sym = intent.symbol
+                bases = adjudication_bases(fill_policy, ORDER_MARKET_AT_OPEN)
                 decision = self.execution.decide(
                     side="buy",
-                    requested_quantity=requested_qty,
-                    price=buy_price,
+                    requested_quantity=intent.requested_quantity,
+                    price=intent.reference_price,
                     bar=bar,
                     previous_close=self._previous_close(dfs[sym], curr_dt),
                     limit_pct=self._limit_pct(sym),
+                    price_band_basis=bases["price_band_basis"],
+                    capacity_basis=bases["capacity_basis"],
+                    capacity_bar=self._prior_bar(dfs[sym], curr_dt),
                 )
                 entry_attempt_count += 1
-                self._append_trade(trades, sym, current_date, "prior_close_strong_signal", decision)
+                total_cost = decision.price * decision.filled_quantity + decision.fee
+                if decision.fill_status != "rejected" and total_cost > cash + 1e-9:
+                    # Unreachable while reservations cover fees; kept fail-closed.
+                    decision = self.execution._rejected(
+                        "buy", intent.requested_quantity, intent.reference_price,
+                        "insufficient_cash_at_fill",
+                    )
+                self._append_trade(trades, sym, current_date, intent.reason, decision, intent=intent)
                 if decision.fill_status == "rejected":
                     warnings.append(f"{current_date} {sym} entry blocked: {decision.reject_reason}")
-                    continue
-                total_cost = decision.price * decision.filled_quantity + decision.fee
-                if total_cost > cash:
                     continue
                 cash -= total_cost
                 ledger.buy(sym, decision.filled_quantity, decision.price, current_date, decision.fee)
@@ -255,6 +297,22 @@ class BacktestEngine:
                     sym,
                     {"limit_up_avg_price": self._signal_average_price(signal_context)},
                 )
+
+            for sym, bar, intents in resting_plans:
+                # Resting orders need the session's path; only its high/low is
+                # known, so the stop is checked before the take-profit.
+                for intent in intents:
+                    triggered_price = self._resting_fill_price(intent, bar)
+                    if triggered_price is None:
+                        continue
+                    fill = self._adjudicate_sell(
+                        intent, dfs[sym], curr_dt, bar, triggered_price, fill_policy
+                    )
+                    cash += self._apply_sell(
+                        fill, intent, triggered_price, ledger, trades, closed_trades, warnings,
+                        sellable, exit_reason_counts, partial_taken, entry_context,
+                    )
+                    break
 
             candidates = []
             for sym, df in dfs.items():
@@ -365,6 +423,10 @@ class BacktestEngine:
             pending_entry_count=len(pending_candidates),
         )
         metrics["fundamental_point_in_time"] = not allow_projected_fundamentals
+        metrics["execution_contract"] = execution_contract(
+            fill_policy, fundamentals_point_in_time=not allow_projected_fundamentals
+        )
+        metrics["order_intent_count"] = len(order_intents)
         metrics["exit_reason_counts"] = metrics_exit_reasons
         metrics["armed_window_days"] = self.armed_window_days
         metrics["armed_window_bar_count"] = armed_entry_count
@@ -426,6 +488,11 @@ class BacktestEngine:
             "benchmark": benchmark,
             "execution_warnings": warnings,
             "simulation_only": True,
+            **(
+                {"order_intents": [intent.to_dict() for intent in order_intents]}
+                if include_intents
+                else {}
+            ),
         }
 
     def _load_symbol_frames(self, symbols: list[str]) -> dict[str, pd.DataFrame]:
@@ -596,37 +663,47 @@ class BacktestEngine:
             return True, False
         return (last_close < float(limit_up_avg)), True
 
-    def _exit_decision(
+    def _exit_intents(
         self,
         *,
+        sym: str,
+        session: str,
         df: pd.DataFrame,
         curr_dt: pd.Timestamp,
-        bar: dict[str, Any],
+        opening: float,
         avg_cost: float,
         holding_days: int,
         limit_up_avg: float | None,
         partial_taken: bool,
-    ) -> tuple[float | None, str, float]:
-        """Resolve rules.yaml ``exit_rules`` into (price, reason, ratio)."""
+        held_quantity: int,
+        available: int,
+    ) -> list[OrderIntent]:
+        """Resolve rules.yaml ``exit_rules`` into orders committed before the open.
 
+        Rules evaluated on closed bars (MA break) or the calendar (holding days)
+        become one market-at-open sell. Otherwise the position carries resting
+        orders for the session - a stop and, once per position, a take-profit -
+        whose trigger prices are fixed from the average cost before the open.
+        Whether they trigger is adjudicated afterwards from the session's range.
+        """
+
+        if available <= 0:
+            return []
         rules = self.exit_rules
 
-        stop_loss_pct = rules.get("stop_loss_pct")
-        if stop_loss_pct is not None:
-            stop = avg_cost * (1 - float(stop_loss_pct) / 100.0)
-            if float(bar["low"]) <= stop:
-                price = float(bar["open"]) if float(bar["open"]) <= stop else stop
-                return price, "stop_loss", 1.0
-
-        take_profit_pct = rules.get("partial_take_profit_pct")
-        if take_profit_pct is not None and not partial_taken:
-            target = avg_cost * (1 + float(take_profit_pct) / 100.0)
-            if float(bar["high"]) >= target:
-                price = float(bar["open"]) if float(bar["open"]) >= target else target
-                ratio = min(1.0, max(0.0, float(rules.get("partial_take_profit_ratio", 0.5))))
-                if ratio > 0:
-                    reason = "partial_take_profit" if ratio < 1.0 else "take_profit"
-                    return price, reason, ratio
+        def sell(order_type, reason, quantity, reference, trigger=None, ratio=1.0):
+            return OrderIntent(
+                session=session,
+                symbol=sym,
+                side="sell",
+                order_type=order_type,
+                reason=reason,
+                requested_quantity=int(quantity),
+                reference_price=float(reference),
+                trigger_price=None if trigger is None else round(float(trigger), 6),
+                sizing_inputs={"average_cost": round(avg_cost, 6), "exit_ratio": ratio,
+                               "held_quantity": held_quantity, "sellable_quantity": available},
+            )
 
         window = rules.get("break_ma_window")
         if window:
@@ -639,13 +716,124 @@ class BacktestEngine:
             )
             if broke:
                 reason = "ma_break" if confirmed else "ma_break_limit_up_avg_unknown"
-                return float(bar["open"]), reason, 1.0
+                return [sell(ORDER_MARKET_AT_OPEN, reason, available, opening)]
 
         max_holding_days = rules.get("max_holding_days")
         if max_holding_days is not None and holding_days >= int(max_holding_days):
-            return float(bar["open"]), "max_holding_days", 1.0
+            return [sell(ORDER_MARKET_AT_OPEN, "max_holding_days", available, opening)]
 
-        return None, "", 1.0
+        intents: list[OrderIntent] = []
+        stop_loss_pct = rules.get("stop_loss_pct")
+        if stop_loss_pct is not None:
+            stop = avg_cost * (1 - float(stop_loss_pct) / 100.0)
+            intents.append(sell(ORDER_RESTING_STOP, "stop_loss", available, stop, trigger=stop))
+
+        take_profit_pct = rules.get("partial_take_profit_pct")
+        if take_profit_pct is not None and not partial_taken:
+            ratio = min(1.0, max(0.0, float(rules.get("partial_take_profit_ratio", 0.5))))
+            if ratio > 0:
+                target = avg_cost * (1 + float(take_profit_pct) / 100.0)
+                if ratio >= 1.0:
+                    quantity = available
+                else:
+                    # A position too small to halve keeps running until a full
+                    # exit reason fires; no take-profit order is placed.
+                    scaled = int(held_quantity * ratio) // self.lot_size * self.lot_size
+                    quantity = min(available, scaled)
+                if quantity > 0:
+                    reason = "partial_take_profit" if ratio < 1.0 else "take_profit"
+                    intents.append(
+                        sell(ORDER_RESTING_LIMIT, reason, quantity, target, trigger=target, ratio=ratio)
+                    )
+        return intents
+
+    @staticmethod
+    def _resting_fill_price(intent: OrderIntent, bar: dict[str, Any]) -> float | None:
+        """Daily-range touch adjudication of a resting order; None if not triggered."""
+
+        opening = float(bar["open"])
+        trigger = float(intent.trigger_price)
+        if intent.order_type == ORDER_RESTING_STOP and float(bar["low"]) <= trigger:
+            return opening if opening <= trigger else trigger
+        if intent.order_type == ORDER_RESTING_LIMIT and float(bar["high"]) >= trigger:
+            return opening if opening >= trigger else trigger
+        return None
+
+    def _adjudicate_sell(
+        self,
+        intent: OrderIntent,
+        df: pd.DataFrame,
+        curr_dt: pd.Timestamp,
+        bar: dict[str, Any],
+        fill_price: float,
+        fill_policy: str,
+    ) -> ExecutionDecision:
+        bases = adjudication_bases(fill_policy, intent.order_type)
+        return self.execution.decide(
+            side="sell",
+            requested_quantity=intent.requested_quantity,
+            price=round(fill_price * (1 - self.slippage), 4),
+            bar=bar,
+            previous_close=self._previous_close(df, curr_dt),
+            limit_pct=self._limit_pct(intent.symbol),
+            price_band_basis=bases["price_band_basis"],
+            capacity_basis=bases["capacity_basis"],
+            capacity_bar=self._prior_bar(df, curr_dt),
+        )
+
+    def _apply_sell(
+        self,
+        decision: ExecutionDecision,
+        intent: OrderIntent,
+        fill_price: float,
+        ledger: FIFOLedger,
+        trades: list[dict[str, Any]],
+        closed_trades: list[ClosedTrade],
+        warnings: list[str],
+        sellable: dict[str, int],
+        exit_reason_counts: Counter[str],
+        partial_taken: set[str],
+        entry_context: dict[str, dict[str, Any]],
+    ) -> float:
+        """Book an adjudicated sell; returns the cash it adds (0 when rejected)."""
+
+        sym = intent.symbol
+        self._append_trade(trades, sym, intent.session, intent.reason, decision, intent=intent)
+        if decision.fill_status == "rejected":
+            warnings.append(f"{intent.session} {sym} exit blocked: {decision.reject_reason}")
+            return 0.0
+        proceeds = decision.price * decision.filled_quantity - decision.fee - decision.stamp_tax
+        matched = ledger.sell(
+            symbol=sym,
+            quantity=decision.filled_quantity,
+            exit_price=decision.price,
+            exit_date=intent.session,
+            fee=decision.fee,
+            stamp_tax=decision.stamp_tax,
+            exit_reason=intent.reason,
+            slippage_cost=abs(fill_price - decision.price) * decision.filled_quantity,
+        )
+        closed_trades.extend(matched)
+        sellable[sym] = max(0, sellable.get(sym, 0) - decision.filled_quantity)
+        exit_reason_counts[intent.reason] += 1
+        if float(intent.sizing_inputs.get("exit_ratio", 1.0)) < 1.0:
+            partial_taken.add(sym)
+        if ledger.quantity(sym) <= 0:
+            entry_context.pop(sym, None)
+            partial_taken.discard(sym)
+        return proceeds
+
+    def _affordable_quantity(self, budget: float, price: float) -> int:
+        """Largest whole-lot quantity whose notional plus commission fits the budget."""
+
+        if budget <= 0 or price <= 0:
+            return 0
+        quantity = int(budget / price) // self.lot_size * self.lot_size
+        while quantity > 0 and (
+            quantity * price + self.execution.estimated_fee(quantity * price) > budget + 1e-9
+        ):
+            quantity -= self.lot_size
+        return max(0, quantity)
 
     def _limit_pct(self, sym: str) -> float:
         return limit_up_threshold(infer_board_type(normalize_a_share_code(sym), ""))
@@ -663,7 +851,30 @@ class BacktestEngine:
         oldest = min(lot.entry_date for lot in lots)
         return max(0, int((datetime.fromisoformat(current_date) - datetime.fromisoformat(oldest)).days))
 
+    @staticmethod
+    def _prior_bar(df: pd.DataFrame | None, current_dt: pd.Timestamp) -> dict[str, Any] | None:
+        """The last bar strictly before ``current_dt``: what was final at its open."""
+
+        if df is None or df.empty:
+            return None
+        position = int(df.index.searchsorted(current_dt, side="left"))
+        return dict(df.iloc[position - 1]) if position > 0 else None
+
+    def _pre_open_positions_value(
+        self, ledger: FIFOLedger, dfs: dict[str, pd.DataFrame], current_dt: pd.Timestamp
+    ) -> float:
+        """Holdings marked at their last closed bar before this session (cost if none)."""
+
+        value = 0.0
+        for sym in list(ledger.lots):
+            prior = self._prior_bar(dfs.get(sym), current_dt)
+            mark = float(prior["close"]) if prior is not None else ledger.average_cost(sym)
+            value += ledger.quantity(sym) * mark
+        return value
+
     def _positions_value(self, ledger: FIFOLedger, dfs: dict[str, pd.DataFrame], current_dt: pd.Timestamp) -> float:
+        """End-of-session mark at the session close; never used for open-time sizing."""
+
         value = 0.0
         for sym in list(ledger.lots):
             qty = ledger.quantity(sym)
@@ -680,9 +891,15 @@ class BacktestEngine:
         trade_date: str,
         reason: str,
         decision: ExecutionDecision,
+        *,
+        intent: OrderIntent | None = None,
     ) -> None:
         trades.append(
             {
+                "intent_id": intent.intent_id if intent else None,
+                "order_type": intent.order_type if intent else None,
+                "price_band_basis": decision.price_band_basis,
+                "capacity_basis": decision.capacity_basis,
                 "symbol": symbol,
                 "side": decision.side,
                 "quantity": decision.filled_quantity,
