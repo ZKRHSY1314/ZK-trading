@@ -15,12 +15,14 @@ failed (result invalid), 2 unusable manifest or input.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import re
 import sqlite3
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 os.environ["ENABLE_LIVE_TRADING"] = "false"
@@ -34,8 +36,10 @@ LABEL = re.compile(r"^[a-z0-9_-]{1,40}$")
 
 
 def copy_database(source: Path, target: Path) -> None:
-    with sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True) as reader:
-        with sqlite3.connect(target) as writer:
+    # closing(), not the connection's own context manager: that one only ends
+    # the transaction and would leave both files open.
+    with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as reader:
+        with closing(sqlite3.connect(target)) as writer:
             reader.backup(writer)
 
 
@@ -65,6 +69,12 @@ def main(argv: list[str] | None = None) -> int:
         except sqlite3.Error as exc:
             print(json.dumps({"status": "unavailable", "reason": type(exc).__name__}))
             return 2
+        finally:
+            # The engine's services open SQLite connections they never close;
+            # some sit in reference cycles and are only finalised by the cycle
+            # collector. Windows refuses to delete a file that is still open,
+            # so finalise them before the temporary directory is removed.
+            gc.collect()
     encoded = json.dumps(report, ensure_ascii=False, indent=2)
     if args.label is not None:
         target = args.project_root.resolve() / "logs" / f"backtest_ab_{args.label}.json"

@@ -167,3 +167,47 @@ def test_cli_runs_on_a_copy_and_never_touches_the_source(tmp_path):
                               "--database", str(database)], capture_output=True, text=True, timeout=120)
     assert refused.returncode == 2
     assert json.loads(refused.stdout)["status"] == "refused"
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="open-handle check needs /proc; "
+                    "on Windows the CLI test above fails instead when a handle stays open")
+def test_cli_leaves_no_open_handle_on_the_working_copy(tmp_path, monkeypatch):
+    # Windows cannot delete an open file, so a connection left open on the
+    # working copy made the CLI crash while removing its temporary directory.
+    import importlib.util
+    import os
+    import tempfile
+
+    spec = importlib.util.spec_from_file_location(
+        "run_backtest_ab_under_test", Path(__file__).resolve().parents[1] / "scripts/run_backtest_ab.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    def handles(name):
+        found = []
+        for fd in os.listdir("/proc/self/fd"):
+            try:
+                target = os.readlink(f"/proc/self/fd/{fd}")
+            except OSError:
+                continue
+            if target.endswith(name):
+                found.append(target)
+        return found
+
+    seen = {}
+
+    class ObservedTemporaryDirectory(tempfile.TemporaryDirectory):
+        def cleanup(self):
+            seen["open"] = handles("ab_input_copy.sqlite3")
+            return super().cleanup()
+
+    monkeypatch.setattr(cli.tempfile, "TemporaryDirectory", ObservedTemporaryDirectory)
+    database = _database(tmp_path)
+    manifest_path = tmp_path / "experiment.json"
+    manifest_path.write_text(json.dumps(_manifest()), encoding="utf-8")
+    assert cli.main(["--manifest", str(manifest_path), "--database", str(database),
+                     "--project-root", str(tmp_path)]) == 0
+    assert seen == {"open": []}
+    copy_target = tmp_path / "copy.sqlite3"
+    cli.copy_database(database, copy_target)
+    assert handles("copy.sqlite3") == []
